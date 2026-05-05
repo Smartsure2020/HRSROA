@@ -113,17 +113,27 @@ class PDFBuilder {
     d.setFillColor(...C.white);
     d.roundedRect(ML, 5, 50, 22, 2, 2, 'F');
 
-   if (this.logo && this.logo.startsWith('data:image')) {
-  console.log('Adding logo to PDF - data length:', this.logo.length);
-  d.addImage(this.logo, 'PNG', ML + 4, 8, 42, 15, undefined, 'MEDIUM');
-} else {
-  console.warn('Logo data invalid - using text fallback');
-  // Fallback text logo
-  d.setFont('helvetica', 'bold');
-  d.setFontSize(10);
-  d.setTextColor(...C.blue);
-  d.text('HRS', ML + 25, 18, { align: 'center' });
-}
+    let logoValid = false;
+    if (this.logo && this.logo.startsWith('data:image')) {
+      // Check if it's a valid data URL and has content beyond the header
+      const parts = this.logo.split(',');
+      if (parts.length > 1 && parts[1].length > 64) {
+        logoValid = true;
+      }
+    }
+
+    if (logoValid) {
+      try {
+        console.log('Adding logo to PDF - data length:', this.logo.length);
+        d.addImage(this.logo, 'PNG', ML + 4, 8, 42, 15, undefined, 'MEDIUM');
+      } catch (err) {
+        console.error('Error adding logo to PDF:', err);
+        this._drawTextLogo(d);
+      }
+    } else {
+      console.warn('Logo data invalid or empty - using text fallback');
+      this._drawTextLogo(d);
+    }
 
     // Rest of header (title, etc.) - same as before
     d.setFont('helvetica', 'bold');
@@ -141,6 +151,13 @@ class PDFBuilder {
     d.setTextColor(165, 170, 205);
     const dt = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' });
     d.text(`Generated: ${dt}`, PAGE_W - MR, 27, { align: 'right' });
+  }
+
+  _drawTextLogo(d) {
+    d.setFont('helvetica', 'bold');
+    d.setFontSize(10);
+    d.setTextColor(...C.blue);
+    d.text('HRS', ML + 25, 18, { align: 'center' });
   }
 
   _drawFooter() {
