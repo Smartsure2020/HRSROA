@@ -3,6 +3,7 @@ import { CheckCircle, PenLine, Trash2, FileDown, FilePlus } from "lucide-react";
 import FormCard from "../FormCard";
 import SignatureCanvas from "../SignatureCanvas";
 import { generatePDF, generateCombinedPDF } from "../../../lib/hrsPdfGenerator";
+import { MANAGER_NAME } from "../../../lib/hrsConstants";
 
 function InfoRow({ label, value }) {
   return (
@@ -113,8 +114,10 @@ export default function StepChecklist({ data, onRestart }) {
   const [trackDates, setTrackDates] = useState({ docs: '', submitted: '', email: '' });
   const [sigs, setSigs] = useState({ broker: null, manager: null });
   const [businessType, setBusinessType] = useState('Personal');
-  const [acctExec, setAcctExec] = useState(data.brokerName || 'Andrew Penney');
+  const [acctExec, setAcctExec] = useState(data.brokerName || MANAGER_NAME);
   const [downloading, setDownloading] = useState(null); // 'roa' | 'combined'
+  const [combinedDownloaded, setCombinedDownloaded] = useState(false);
+  const [confirmRestart, setConfirmRestart] = useState(false);
 
   const netPrem = parseFloat(data.prem2) || 0;
   const feeVal = parseFloat(data.brokerFeePercent) || 0;
@@ -139,6 +142,15 @@ export default function StepChecklist({ data, onRestart }) {
     setDownloading('combined');
     await generateCombinedPDF(data, getChecklistState());
     setDownloading(null);
+    setCombinedDownloaded(true);
+  };
+
+  const handleRestartClick = () => {
+    if (!combinedDownloaded) {
+      setConfirmRestart(true);
+    } else {
+      onRestart();
+    }
   };
 
   return (
@@ -149,7 +161,7 @@ export default function StepChecklist({ data, onRestart }) {
         <div>
           <h2 className="font-heading text-[1.2rem] text-hrs-orange mb-1">Advice Record Submitted</h2>
           <p className="text-[0.82rem] opacity-80 leading-relaxed">
-            Record for <strong>{fullName}</strong> submitted. Notification sent to {data.brokerName || 'the advisor'}.
+            Record for <strong>{fullName}</strong> submitted. Download the PDF below and submit it according to your firm's process.
           </p>
         </div>
       </div>
@@ -157,7 +169,7 @@ export default function StepChecklist({ data, onRestart }) {
       <FormCard>
         {/* Header */}
         <div className="flex items-center justify-between mb-4 pb-3 border-b-2 border-hrs-orange">
-          <img src="https://hrsinsurance.co.za/wp-content/uploads/2020/07/cropped-HRS_Logo-1-118x52.png" alt="HRS" className="h-10" />
+          <img src="/assets/hrs-logo.png" alt="HRS" className="h-10" />
           <div className="text-right">
             <h2 className="font-heading text-[1.1rem] text-hrs-blue">HRS - NEW BUSINESS CHECKLIST</h2>
             <p className="text-[0.7rem] text-hrs-muted uppercase tracking-widest">FSP No. 28582</p>
@@ -302,7 +314,7 @@ export default function StepChecklist({ data, onRestart }) {
         </div>
         <div className="grid grid-cols-2 gap-4 mt-2 text-[0.73rem]">
           <div className="text-center text-hrs-blue font-medium">{data.brokerName || ""}</div>
-          <div className="text-center text-hrs-blue font-medium">Andrew Penney</div>
+          <div className="text-center text-hrs-blue font-medium">{MANAGER_NAME}</div>
         </div>
       </FormCard>
 
@@ -325,12 +337,29 @@ export default function StepChecklist({ data, onRestart }) {
             {downloading === 'combined' ? 'Generating...' : 'Download ROA + Checklist'}
           </button>
         </div>
-        <div className="flex gap-3">
-          <button onClick={onRestart}
-            className="flex-1 px-5 py-2.5 rounded-lg font-body font-semibold text-[0.85rem] bg-transparent text-white/70 border-[1px] border-white/20 transition-all hover:border-white/40 hover:text-white">
-            + New Advice Record
-          </button>
-        </div>
+        {confirmRestart ? (
+          <div className="rounded-lg border border-hrs-orange/60 bg-white/10 px-4 py-3 text-[0.82rem]">
+            <p className="text-white font-semibold mb-2">Have you downloaded the ROA + Checklist PDF?</p>
+            <p className="text-white/70 mb-3 text-[0.78rem]">The checklist data will be lost once you start a new record.</p>
+            <div className="flex gap-3">
+              <button onClick={onRestart}
+                className="flex-1 px-4 py-2 rounded-lg font-body font-semibold text-[0.82rem] bg-hrs-orange text-white transition-all hover:bg-hrs-orange-light">
+                Yes, start new record
+              </button>
+              <button onClick={() => setConfirmRestart(false)}
+                className="flex-1 px-4 py-2 rounded-lg font-body font-semibold text-[0.82rem] bg-transparent text-white border border-white/40 transition-all hover:border-white">
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex gap-3">
+            <button onClick={handleRestartClick}
+              className="flex-1 px-5 py-2.5 rounded-lg font-body font-semibold text-[0.85rem] bg-transparent text-white/70 border-[1px] border-white/20 transition-all hover:border-white/40 hover:text-white">
+              + New Advice Record
+            </button>
+          </div>
+        )}
       </FormCard>
     </div>
   );

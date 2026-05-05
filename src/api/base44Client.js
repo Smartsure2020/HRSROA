@@ -1,14 +1,30 @@
-import { createClient } from '@base44/sdk';
-import { appParams } from '@/lib/app-params';
+// API client that can be configured for local or production use
+const USE_MOCK = import.meta.env.VITE_USE_MOCK_AUTH !== 'false';
 
-const { appId, token, functionsVersion, appBaseUrl } = appParams;
+export const apiClient = {
+  auth: {
+    me: async () => {
+      if (USE_MOCK) {
+        return { name: 'Local User', email: 'user@local.test' };
+      }
+      // Implement real API call here
+      // const response = await fetch('/api/auth/me');
+      // return response.json();
+      throw new Error('Real Auth not implemented yet');
+    },
+    logout: async () => {
+      if (USE_MOCK) return;
+      // Implement real logout
+    },
+    redirectToLogin: () => {
+      if (USE_MOCK) {
+        console.log('Redirecting to login (Mock)');
+        return;
+      }
+      // window.location.href = '/login';
+    },
+  }
+};
 
-//Create a client with authentication required
-export const base44 = createClient({
-  appId,
-  token,
-  functionsVersion,
-  serverUrl: '',
-  requiresAuth: false,
-  appBaseUrl
-});
+// Keep the old name for compatibility with existing imports
+export const base44 = apiClient;

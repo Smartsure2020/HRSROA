@@ -41,7 +41,7 @@ function yn(val) {
   return "Not answered";
 }
 
-export default function StepReview({ data, onPrev, onSubmit }) {
+export default function StepReview({ data, onPrev, onSubmit, isSubmitting }) {
   return (
     <div>
       <FormCard>
@@ -122,9 +122,10 @@ export default function StepReview({ data, onPrev, onSubmit }) {
         <div className="flex gap-3.5 flex-wrap">
           <button
             onClick={onSubmit}
-            className="flex-1 px-6 py-3 rounded-lg font-body font-semibold text-[0.9rem] bg-hrs-orange text-white border-none transition-all hover:bg-hrs-orange-light"
+            disabled={isSubmitting}
+            className="flex-1 px-6 py-3 rounded-lg font-body font-semibold text-[0.9rem] bg-hrs-orange text-white border-none transition-all hover:bg-hrs-orange-light disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            ✓ Submit Advice Record
+            {isSubmitting ? "Sending…" : "✓ Submit Advice Record"}
           </button>
 
         </div>

@@ -4,7 +4,6 @@ import AckRow from "../AckRow";
 import LegalBlock from "../LegalBlock";
 import NavBar from "../NavBar";
 import TextInput from "../TextInput";
-import FormField from "../FormField";
 import { PRINCIPLES } from "../../../lib/hrsConstants";
 
 function PrincipleItem({ number, text }) {

@@ -621,6 +621,22 @@ export async function generatePDF(formData) {
   pdf.save(`HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
+export async function generateROABase64(formData) {
+  const [logo, clientSig, advisorSig] = await Promise.all([
+    loadImgAsDataURL(LOGO_SRC),
+    loadImgAsDataURL(formData.clientSig),
+    loadImgAsDataURL(formData.advisorSig),
+  ]);
+
+  const pdf = new PDFBuilder(logo);
+  buildROA(pdf, formData, clientSig, advisorSig);
+
+  const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
+  const filename = `HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
+  const base64 = pdf.doc.output('datauristring').split(',')[1];
+  return { base64, filename };
+}
+
 export async function generateCombinedPDF(formData, checklistState) {
  const [logo, clientSig, advisorSig] = await Promise.all([
     loadImgAsDataURL(LOGO_SRC),

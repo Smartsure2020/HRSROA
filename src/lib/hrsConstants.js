@@ -27,6 +27,19 @@ export const RISK_CATEGORIES = [
   { name: "Value Added Products (VAPs)", note: "Roadside Assistance", sasria: false },
 ];
 
+export const BROKER_EMAIL_MAP = {
+  'Aedan Doubell':        'aedan@hrsinsurance.co.za',
+  'Andrew Penney':        'andrew@hrsinsurance.co.za',
+  'Charmaine Brogden':    'charmaine@hrsinsurance.co.za',
+  'Daniel Pottier':       'daniel@hrsinsurance.co.za',
+  'Jaryd Browne':         'jaryd@hrsinsurance.co.za',
+  'Juan-Paul vd Merwe':   'juan-paul@hrsinsurance.co.za',
+  'Werner Joubert':       'werner@hrsinsurance.co.za',
+};
+
+export const DEFAULT_BROKER_EMAIL = 'info@hrsinsurance.co.za';
+export const MANAGER_NAME = 'Andrew Penney';
+
 export const ADVISORS = [
   "Aedan Doubell",
   "Andrew Penney",
@@ -71,6 +84,70 @@ export const PRINCIPLES = [
   'SPECIFY all jewellery, bicycles, laptops, cell phones & handheld electronic devices and all other valuable portable items.',
   'Insure all items including SOLAR SYSTEMS at current replacement value, reviewing values annually.',
 ];
+
+export function getStepErrors(step, formData) {
+  switch (step) {
+    case 0: {
+      const fields = [
+        ['firstName', 'First Name'],
+        ['surname', 'Surname'],
+        ['idNumber', 'ID / Passport Number'],
+        ['email', 'Email'],
+        ['cell', 'Cell Number'],
+        ['streetNumber', 'Street Number'],
+        ['streetName', 'Street Name'],
+        ['suburb', 'Suburb'],
+        ['city', 'City'],
+        ['province', 'Province'],
+        ['postalCode', 'Postal Code'],
+        ['brokerName', 'Advisor Name'],
+      ];
+      return fields.filter(([k]) => !String(formData[k] ?? '').trim()).map(([, label]) => label);
+    }
+    case 1: {
+      const errors = [];
+      if (formData.uninterruptedInsurance === null || formData.uninterruptedInsurance === undefined)
+        errors.push('Uninterrupted Insurance (Yes / No)');
+      if (!String(formData.clientNeeds ?? '').trim())
+        errors.push('Client Needs');
+      return errors;
+    }
+    case 2: {
+      const fields = [
+        ['ins2', 'Recommended Option – Insurer'],
+        ['prem2', 'Recommended Option – Premium'],
+        ['recInsurer', 'Recommended Insurer'],
+        ['recReasons', 'Reasons for Recommendation'],
+      ];
+      return fields.filter(([k]) => !String(formData[k] ?? '').trim()).map(([, label]) => label);
+    }
+    case 3: {
+      const assessed = formData.riskState?.some(r => r.cover === 'yes' || r.cover === 'no');
+      return assessed ? [] : ['At least one risk category must be assessed (Yes or No)'];
+    }
+    case 4: {
+      const acks = [
+        ['ackPrinciples', 'Short-Term Insurance Principles'],
+        ['ackAdvisor', "Advisor's Obligations"],
+        ['ackClient', 'Client Obligations'],
+        ['ackPopia', 'POPIA Consent'],
+        ['ackTermination', 'Termination Terms'],
+        ['ackBrokerFee', 'Broker Fee Consent'],
+        ['ackBrokerAppointment', 'Broker Appointment'],
+        ['ackBrokerAuth', 'Broker Authorisation'],
+      ];
+      return acks.filter(([k]) => !formData[k]).map(([, label]) => label);
+    }
+    case 5: {
+      const errors = [];
+      if (!formData.clientSig) errors.push('Client Signature');
+      if (!formData.advisorSig) errors.push('Advisor / Broker Signature');
+      return errors;
+    }
+    default:
+      return [];
+  }
+}
 
 export function getInitialFormData() {
   const today = new Date().toISOString().split("T")[0];

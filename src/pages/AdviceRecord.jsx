@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import AppHeader from "../components/hrs/AppHeader";
 import StepProgress from "../components/hrs/StepProgress";
 import StepClientDetails from "../components/hrs/steps/StepClientDetails";
@@ -10,16 +10,62 @@ import StepPrinciples from "../components/hrs/steps/StepPrinciples";
 import StepSignatures from "../components/hrs/steps/StepSignatures";
 import StepChecklist from "../components/hrs/steps/StepChecklist";
 import StepReview from "../components/hrs/steps/StepReview";
-import { getInitialFormData } from "../lib/hrsConstants";
-
+import { getInitialFormData, getStepErrors, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL } from "../lib/hrsConstants";
+import { generateROABase64 } from "../lib/hrsPdfGenerator";
+import { toast } from "@/components/ui/use-toast";
 
 const TOTAL_STEPS = 7;
+const SESSION_KEY = 'hrs_roa_draft';
+
+function readSession() {
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; }
+}
+function writeSession(data) {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch { /* private browsing */ }
+}
+function clearSession() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+}
 
 export default function AdviceRecord() {
   const [currentStep, setCurrentStep] = useState(0);
   const [formData, setFormData] = useState(getInitialFormData);
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showRestoreBanner, setShowRestoreBanner] = useState(false);
 
+  // Check for saved draft on mount
+  useEffect(() => {
+    if (readSession()) setShowRestoreBanner(true);
+  }, []);
+
+  // Warn before unload unless already submitted
+  useEffect(() => {
+    if (submitted) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [submitted]);
+
+  // setFormData wrapper that auto-saves to sessionStorage
+  const updateFormData = useCallback((updater) => {
+    setFormData((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      writeSession(next);
+      return next;
+    });
+  }, []);
+
+  const handleRestore = () => {
+    const saved = readSession();
+    if (saved) setFormData(saved);
+    setShowRestoreBanner(false);
+  };
+
+  const handleDismissRestore = () => {
+    clearSession();
+    setShowRestoreBanner(false);
+  };
 
   const goTo = useCallback((step) => {
     if (step <= currentStep) {
@@ -28,12 +74,21 @@ export default function AdviceRecord() {
     }
   }, [currentStep]);
 
-  const nextStep = useCallback(() => {
+  const handleNext = useCallback(() => {
+    const errors = getStepErrors(currentStep, formData);
+    if (errors.length > 0) {
+      toast({
+        variant: "destructive",
+        title: "Please complete required fields",
+        description: errors.join(" · "),
+      });
+      return;
+    }
     if (currentStep < TOTAL_STEPS - 1) {
       setCurrentStep((s) => s + 1);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
-  }, [currentStep]);
+  }, [currentStep, formData]);
 
   const prevStep = useCallback(() => {
     if (currentStep > 0) {
@@ -43,19 +98,25 @@ export default function AdviceRecord() {
   }, [currentStep]);
 
   const handleSubmit = async () => {
-    setSubmitted(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    const allErrors = [0, 1, 2, 3, 4, 5].flatMap((step) =>
+      getStepErrors(step, formData).map((e) => `Step ${step + 1}: ${e}`)
+    );
+    if (allErrors.length > 0) {
+      toast({
+        variant: "destructive",
+        title: "Please complete required fields",
+        description: allErrors.join(" · "),
+      });
+      return;
+    }
 
-    // Send notification email to HRS with full summary
-    const riskSummary = formData.riskState
-      .map((s, i) => {
-        const name = formData.riskState[i];
-        return s.cover ? `${i + 1}. ${s.cover === 'yes' ? 'YES' : 'NO'}${s.sasria ? ' (SASRIA)' : ''}` : null;
-      })
-      .filter(Boolean).join('\n');
+    setIsSubmitting(true);
+    try {
+      const { base64, filename } = await generateROABase64(formData);
 
-    const emailBody = `
-New Advice Record Submitted
+      const brokerEmail = BROKER_EMAIL_MAP[formData.brokerName] || DEFAULT_BROKER_EMAIL;
+      const subject = `New Advice Record – ${formData.firstName} ${formData.surname} (${formData.brokerName})`;
+      const body = `New Advice Record Submitted
 ============================
 Broker / Advisor: ${formData.brokerName}
 Client: ${formData.firstName} ${formData.surname}
@@ -81,32 +142,40 @@ Insurer (Debit Order): ${formData.doInsurer}
 Signature Date: ${formData.sigDate}
 
 All acknowledgements completed: ${
-  [formData.ackPrinciples, formData.ackAdvisor, formData.ackClient, formData.ackPopia, formData.ackTermination, formData.ackBrokerFee, formData.ackDebit].every(Boolean)
+  [formData.ackPrinciples, formData.ackAdvisor, formData.ackClient, formData.ackPopia, formData.ackTermination, formData.ackBrokerFee, formData.ackBrokerAppointment, formData.ackBrokerAuth].every(Boolean)
     ? 'Yes' : 'No – some acknowledgements outstanding'
 }
 
 ---
-Holistic Risk Services (Pty) Ltd – FSP 28582
-    `.trim();
+Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
 
-    // Map broker name to email
-    const brokerEmailMap = {
-      'Aedan Doubell': 'aedan@hrsinsurance.co.za',
-      'Andrew Penney': 'andrew@hrsinsurance.co.za',
-      'Charmaine Brogden': 'charmaine@hrsinsurance.co.za',
-      'Daniel Pottier': 'daniel@hrsinsurance.co.za',
-      'Jaryd Browne': 'jaryd@hrsinsurance.co.za',
-      'Juan-Paul vd Merwe': 'juan-paul@hrsinsurance.co.za',
-      'Werner Joubert': 'werner@hrsinsurance.co.za',
-    };
-    const brokerEmail = brokerEmailMap[formData.brokerName] || 'info@hrsinsurance.co.za';
+      const res = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: brokerEmail, subject, body, pdfBase64: base64, pdfFilename: filename }),
+      });
 
-    console.log("Email would be sent to:", brokerEmail);
-console.log("Email subject:", `New Advice Record – ${formData.firstName} ${formData.surname} (${formData.brokerName})`);
-console.log("Email body:", emailBody);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to send email');
+      }
+
+      clearSession();
+      setSubmitted(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Submission failed",
+        description: err.message || "Could not send the email. Please try again.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleRestart = () => {
+    clearSession();
     setFormData(getInitialFormData());
     setCurrentStep(0);
     setSubmitted(false);
@@ -118,7 +187,7 @@ console.log("Email body:", emailBody);
       return <StepChecklist data={formData} onRestart={handleRestart} />;
     }
 
-    const common = { data: formData, onChange: setFormData, onNext: nextStep, onPrev: prevStep };
+    const common = { data: formData, onChange: updateFormData, onNext: handleNext, onPrev: prevStep };
 
     switch (currentStep) {
       case 0: return <StepClientDetails {...common} />;
@@ -127,7 +196,7 @@ console.log("Email body:", emailBody);
       case 3: return <StepRiskCategories {...common} />;
       case 4: return <StepPrinciples {...common} />;
       case 5: return <StepSignatures {...common} />;
-      case 6: return <StepReview data={formData} onPrev={prevStep} onSubmit={handleSubmit} />;
+      case 6: return <StepReview data={formData} onPrev={prevStep} onSubmit={handleSubmit} isSubmitting={isSubmitting} />;
       default: return null;
     }
   };
@@ -135,6 +204,15 @@ console.log("Email body:", emailBody);
   return (
     <div className="min-h-screen bg-background">
       <AppHeader />
+      {showRestoreBanner && (
+        <div className="bg-hrs-blue text-white text-[0.82rem] px-4 py-2.5 flex items-center justify-between gap-4">
+          <span>You have an unsaved ROA in progress — continue?</span>
+          <div className="flex gap-3 flex-shrink-0">
+            <button onClick={handleRestore} className="underline font-semibold">Continue</button>
+            <button onClick={handleDismissRestore} className="opacity-70 hover:opacity-100">Discard</button>
+          </div>
+        </div>
+      )}
       {!submitted && <StepProgress currentStep={currentStep} onGoTo={goTo} />}
       <main className="max-w-[860px] mx-auto px-3 sm:px-5 py-9 pb-20">
         {renderStep()}
