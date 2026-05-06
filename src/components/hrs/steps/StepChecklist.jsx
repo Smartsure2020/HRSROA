@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { CheckCircle, PenLine, Trash2, FileDown, FilePlus } from "lucide-react";
+import { CheckCircle, PenLine, Trash2, FileDown, FilePlus, Upload } from "lucide-react";
 import FormCard from "../FormCard";
 import SignatureCanvas from "../SignatureCanvas";
 import { generatePDF, generateCombinedPDF } from "../../../lib/hrsPdfGenerator";
@@ -54,12 +54,22 @@ function CheckItem({ label, checked, onChange }) {
 
 function SigBox({ label, sigKey, sigs, onChange }) {
   const drawRef = useRef(null);
-  const [show, setShow] = useState(false);
+  const [mode, setMode] = useState("draw");
 
-  const handleSave = (b64) => onChange({ ...sigs, [sigKey]: b64 || null });
+  const handleDraw = (b64) => onChange({ ...sigs, [sigKey]: b64 || null });
+
+  const handleUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => onChange({ ...sigs, [sigKey]: ev.target.result });
+    reader.readAsDataURL(file);
+  };
+
   const handleClear = () => {
     onChange({ ...sigs, [sigKey]: null });
-    if (drawRef.current) drawRef.current.getContext('2d').clearRect(0, 0, drawRef.current.width, drawRef.current.height);
+    if (drawRef.current)
+      drawRef.current.getContext('2d').clearRect(0, 0, drawRef.current.width, drawRef.current.height);
   };
 
   return (
@@ -67,9 +77,13 @@ function SigBox({ label, sigKey, sigs, onChange }) {
       <div className="flex items-center justify-between mb-2">
         <span className="text-[0.75rem] font-semibold text-hrs-blue2 uppercase tracking-wider">{label}</span>
         <div className="flex gap-2">
-          <button type="button" onClick={() => setShow(!show)}
-            className="flex items-center gap-1 text-[0.72rem] text-hrs-blue2 border border-hrs-border px-2 py-0.5 rounded hover:border-hrs-orange transition-colors">
-            <PenLine className="w-3 h-3" /> {show ? 'Hide' : 'Sign'}
+          <button type="button" onClick={() => setMode("draw")}
+            className={`flex items-center gap-1 text-[0.72rem] px-2 py-0.5 rounded border transition-colors ${mode === "draw" ? "bg-hrs-blue text-white border-hrs-blue" : "border-hrs-border text-hrs-blue2 hover:border-hrs-orange"}`}>
+            <PenLine className="w-3 h-3" /> Draw
+          </button>
+          <button type="button" onClick={() => setMode("upload")}
+            className={`flex items-center gap-1 text-[0.72rem] px-2 py-0.5 rounded border transition-colors ${mode === "upload" ? "bg-hrs-blue text-white border-hrs-blue" : "border-hrs-border text-hrs-blue2 hover:border-hrs-orange"}`}>
+            <Upload className="w-3 h-3" /> Upload
           </button>
           {sigs[sigKey] && (
             <button type="button" onClick={handleClear}
@@ -79,11 +93,20 @@ function SigBox({ label, sigKey, sigs, onChange }) {
           )}
         </div>
       </div>
-      {sigs[sigKey] && !show && (
-        <img src={sigs[sigKey]} alt={label} className="h-14 border border-hrs-border rounded bg-white p-1 w-full object-contain" />
+      {mode === "draw" && <SignatureCanvas canvasRef={drawRef} label="" onSave={handleDraw} />}
+      {mode === "upload" && (
+        <div>
+          <label className="flex flex-col items-center justify-center w-full h-[80px] border-2 border-dashed border-hrs-border rounded-lg bg-secondary cursor-pointer hover:border-hrs-orange transition-colors">
+            <Upload className="w-4 h-4 text-hrs-muted mb-1" />
+            <span className="text-[0.72rem] text-hrs-muted">Click to upload (PNG or JPG)</span>
+            <input type="file" accept="image/png,image/jpeg" onChange={handleUpload} className="hidden" />
+          </label>
+          {sigs[sigKey] && (
+            <img src={sigs[sigKey]} alt={label} className="mt-2 h-14 border border-hrs-border rounded bg-white p-1 w-full object-contain" />
+          )}
+        </div>
       )}
-      {show && <SignatureCanvas canvasRef={drawRef} label="" onSave={handleSave} />}
-      {!sigs[sigKey] && !show && <div className="h-10 border-b border-dotted border-hrs-border" />}
+      {!sigs[sigKey] && mode === "draw" && <div className="h-10 border-b border-dotted border-hrs-border" />}
     </div>
   );
 }
@@ -96,7 +119,7 @@ const COMPLIANCE_DOCS = [
 ];
 
 const ADDITIONAL_DOCS = [
-  "MAKE | MODEL | IMEI NO'S", "MAKE | MODEL | SERIAL NO'S",
+  "CELLPHONES | MAKE | MODEL | IMEI NO'S", "ELECTRONICS | MAKE | MODEL | SERIAL NO'S",
   "VEHICLE REGISTRATION CERTIFICATES", "VEHICLE REGISTRATION - ENGINE AND VIN NO'S",
   "PROOF OF TRACKING DEVICE INSTALLATIONS", "PROOF OF PURCHASES ON HIGH VALUE ITEMS",
   "VALUATION CERTIFICATES ON HIGH VALUE JEWELLERY",

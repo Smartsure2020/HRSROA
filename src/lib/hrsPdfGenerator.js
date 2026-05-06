@@ -14,21 +14,26 @@ function fmt(val) {
 async function loadImgAsDataURL(src) {
   if (!src) return null;
   if (src.startsWith('data:')) return src;
-  try {
-    const resp = await fetch(src);
-    if (!resp.ok) return null;
-    const blob = await resp.blob();
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
+  
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      try {
+        resolve(canvas.toDataURL('image/png'));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
 }
-
 
 // ─── Colour Palette ───────────────────────────────────────────────────────────
 const C = {
@@ -82,7 +87,7 @@ class PDFBuilder {
     d.rect(0, 34, PAGE_W, 2.5, 'F');
 
     d.setFillColor(...C.white);
-    d.roundedRect(ML, 5, 50, 22, 2, 2, 'F');
+    d.roundedRect(ML, 3, 54, 28, 2, 2, 'F');
 
     let logoValid = false;
    if (this.logo && this.logo.startsWith('data:')) {
@@ -96,7 +101,7 @@ class PDFBuilder {
     if (logoValid) {
       try {
   console.log('Adding logo to PDF - data length:', this.logo.length);
-  d.addImage(this.logo, 'PNG', ML + 4, 8, 42, 15, undefined, 'MEDIUM');
+  d.addImage(this.logo, 'PNG', ML + 2, 4, 50, 22, undefined, 'MEDIUM');
   } catch (err) {
         console.error('Error adding logo to PDF:', err);
         this._drawTextLogo(d);
@@ -554,7 +559,7 @@ function buildChecklist(pdf, formData, checklistState) {
 
   pdf.subHeading('Additional Confirmation');
   sh = false;
-  ["MAKE | MODEL | IMEI NO'S","MAKE | MODEL | SERIAL NO'S",'VEHICLE REGISTRATION CERTIFICATES',
+  ["CELLPHONES | MAKE | MODEL | IMEI NO'S","ELECTRONICS | MAKE | MODEL | SERIAL NO'S",'VEHICLE REGISTRATION CERTIFICATES',
    'VEHICLE REGISTRATION - ENGINE AND VIN NOS','PROOF OF TRACKING DEVICE INSTALLATIONS',
    'PROOF OF PURCHASES ON HIGH VALUE ITEMS','VALUATION CERTIFICATES ON HIGH VALUE JEWELLERY']
     .forEach(item => pdf.ackRow(item, !!additionalDocs?.[item], sh = !sh));
