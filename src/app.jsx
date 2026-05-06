@@ -28,7 +28,7 @@ function App() {
     <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
       <AuthProvider>
         <QueryClientProvider client={queryClientInstance}>
-          <Router>
+          <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AuthenticatedApp />
           </Router>
           <Toaster />
