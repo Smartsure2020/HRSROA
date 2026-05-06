@@ -18,44 +18,23 @@ async function loadImgAsDataURL(src) {
   if (!src) return null;
   if (src.startsWith('data:')) return src;
 
-  console.log('Loading image from:', src);
-
-  try {
-    // Try direct fetch
-    let response = await fetch(src);
-    if (response.ok) {
-      const blob = await response.blob();
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(blob);
-      });
-    }
-  } catch (e) {
-    console.warn('First fetch failed', e);
-  }
-
-  // Vite dev mode fallback
-  try {
-    const baseUrl = window.location.origin;
-    const cleanSrc = src.startsWith('/') ? src : '/' + src;
-    const response = await fetch(baseUrl + cleanSrc);
-    if (response.ok) {
-      const blob = await response.blob();
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(blob);
-      });
-    }
-  } catch (e) {
-    console.warn('Vite fallback failed', e);
-  }
-
-  console.error('❌ Failed to load image:', src);
-  return null;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
 }
 
 
