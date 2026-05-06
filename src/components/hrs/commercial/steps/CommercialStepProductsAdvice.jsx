@@ -6,6 +6,7 @@ import NavBar from "../../NavBar";
 import { INSURERS } from "../../../../lib/hrsConstants";
 
 function InsurerOption({ label, recommended, insKey, premKey, data, onChange }) {
+  const set = (key) => (val) => onChange({ ...data, [key]: val });
   const setE = (key) => (e) => onChange({ ...data, [key]: e.target.value });
   return (
     <div className={`rounded-xl border-2 p-4 ${recommended ? 'border-hrs-orange bg-hrs-blue/5' : 'border-hrs-border'}`}>
@@ -31,7 +32,7 @@ function InsurerOption({ label, recommended, insKey, premKey, data, onChange }) 
           </select>
         </FormField>
         <FormField label="Monthly Premium (R)">
-          <TextInput type="number" value={data[premKey]} onChange={setE(premKey)} placeholder="0.00" />
+          <TextInput type="number" value={data[premKey]} onChange={set(premKey)} placeholder="0.00" />
         </FormField>
       </div>
     </div>
@@ -39,6 +40,7 @@ function InsurerOption({ label, recommended, insKey, premKey, data, onChange }) 
 }
 
 export default function CommercialStepProductsAdvice({ data, onChange, onNext, onPrev }) {
+  const set = (key) => (val) => onChange({ ...data, [key]: val });
   const setE = (key) => (e) => onChange({ ...data, [key]: e.target.value });
 
   const netPrem = parseFloat(data.prem2) || 0;
@@ -109,7 +111,7 @@ export default function CommercialStepProductsAdvice({ data, onChange, onNext, o
                 </button>
               ))}
             </div>
-            <TextInput type="number" value={data.brokerFeePercent} onChange={setE('brokerFeePercent')}
+            <TextInput type="number" value={data.brokerFeePercent} onChange={set('brokerFeePercent')}
               placeholder={data.brokerFeeType === 'percent' ? 'e.g. 5' : 'e.g. 250.00'} />
           </div>
           {data.brokerFeePercent && (
@@ -120,7 +122,7 @@ export default function CommercialStepProductsAdvice({ data, onChange, onNext, o
         </FormField>
 
         <FormField label="Agreed Fees (if applicable)">
-          <TextInput value={data.agreedFees} onChange={setE('agreedFees')} placeholder="Describe any additional agreed fees" />
+          <TextInput value={data.agreedFees} onChange={set('agreedFees')} placeholder="Describe any additional agreed fees" />
         </FormField>
       </FormCard>
       <NavBar onPrev={onPrev} onNext={onNext} />

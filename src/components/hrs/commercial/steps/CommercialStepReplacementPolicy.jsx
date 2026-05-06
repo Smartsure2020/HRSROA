@@ -26,6 +26,7 @@ function YesNo({ value, onChange }) {
 }
 
 export default function CommercialStepReplacementPolicy({ data, onChange, onNext, onPrev }) {
+  const set = (key) => (val) => onChange({ ...data, [key]: val });
   const setE = (key) => (e) => onChange({ ...data, [key]: e.target.value });
 
   return (
@@ -81,10 +82,10 @@ export default function CommercialStepReplacementPolicy({ data, onChange, onNext
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
               <FormField label="Current Insurer">
-                <TextInput value={data.currentInsurer} onChange={setE('currentInsurer')} placeholder="Current insurer name" />
+                <TextInput value={data.currentInsurer} onChange={set('currentInsurer')} placeholder="Current insurer name" />
               </FormField>
               <FormField label="New Insurer">
-                <TextInput value={data.newInsurer} onChange={setE('newInsurer')} placeholder="New insurer name" />
+                <TextInput value={data.newInsurer} onChange={set('newInsurer')} placeholder="New insurer name" />
               </FormField>
             </div>
           </>

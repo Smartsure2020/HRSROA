@@ -19,38 +19,38 @@ export default function CommercialStepClientDetails({ data, onChange, onNext }) 
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
           <FormField label="Company Name" required>
-            <TextInput value={data.companyName} onChange={setE('companyName')} placeholder="Registered company name" />
+            <TextInput value={data.companyName} onChange={set('companyName')} placeholder="Registered company name" />
           </FormField>
           <FormField label="Registration No.">
-            <TextInput value={data.registrationNo} onChange={setE('registrationNo')} placeholder="e.g. 2020/123456/07" />
+            <TextInput value={data.registrationNo} onChange={set('registrationNo')} placeholder="e.g. 2020/123456/07" />
           </FormField>
           <FormField label="VAT No.">
-            <TextInput value={data.vatNo} onChange={setE('vatNo')} placeholder="VAT registration number" />
+            <TextInput value={data.vatNo} onChange={set('vatNo')} placeholder="VAT registration number" />
           </FormField>
           <FormField label="Nature of Business" required>
-            <TextInput value={data.natureOfBusiness} onChange={setE('natureOfBusiness')} placeholder="e.g. Retail, Construction, IT Services" />
+            <TextInput value={data.natureOfBusiness} onChange={set('natureOfBusiness')} placeholder="e.g. Retail, Construction, IT Services" />
           </FormField>
         </div>
 
         <FormField label="Risk Address" required>
-          <TextInput value={data.riskAddress} onChange={setE('riskAddress')} placeholder="Full physical risk address" />
+          <TextInput value={data.riskAddress} onChange={set('riskAddress')} placeholder="Full physical risk address" />
         </FormField>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
           <FormField label="Contact Person" required>
-            <TextInput value={data.contactPerson} onChange={setE('contactPerson')} placeholder="Full name of contact" />
+            <TextInput value={data.contactPerson} onChange={set('contactPerson')} placeholder="Full name of contact" />
           </FormField>
           <FormField label="ID Number">
-            <TextInput value={data.idNo} onChange={setE('idNo')} placeholder="ID / Passport number" />
+            <TextInput value={data.idNo} onChange={set('idNo')} placeholder="ID / Passport number" />
           </FormField>
           <FormField label="Email Address" required>
-            <TextInput type="email" value={data.email} onChange={setE('email')} placeholder="contact@company.co.za" />
+            <TextInput type="email" value={data.email} onChange={set('email')} placeholder="contact@company.co.za" />
           </FormField>
           <FormField label="Contact Number" required>
-            <TextInput type="tel" value={data.contactNo} onChange={setE('contactNo')} placeholder="e.g. 011 123 4567" />
+            <TextInput type="tel" value={data.contactNo} onChange={set('contactNo')} placeholder="e.g. 011 123 4567" />
           </FormField>
           <FormField label="Inception Date">
-            <TextInput type="date" value={data.inceptionDate} onChange={setE('inceptionDate')} />
+            <TextInput type="date" value={data.inceptionDate} onChange={set('inceptionDate')} />
           </FormField>
         </div>
 

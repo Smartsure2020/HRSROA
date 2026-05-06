@@ -26,6 +26,7 @@ function YesNo({ value, onChange }) {
 }
 
 export default function CommercialStepInsuranceHistory({ data, onChange, onNext, onPrev }) {
+  const set = (key) => (val) => onChange({ ...data, [key]: val });
   const setE = (key) => (e) => onChange({ ...data, [key]: e.target.value });
 
   return (
@@ -38,7 +39,7 @@ export default function CommercialStepInsuranceHistory({ data, onChange, onNext,
         </FormField>
 
         <FormField label="Number of years insured">
-          <TextInput type="number" value={data.yearsInsured} onChange={setE('yearsInsured')} placeholder="e.g. 5" />
+          <TextInput type="number" value={data.yearsInsured} onChange={set('yearsInsured')} placeholder="e.g. 5" />
         </FormField>
 
         <FormField label="Have special terms and conditions been imposed, or has cover ever been refused / cancelled for the applicant or any co-insured?" required>
