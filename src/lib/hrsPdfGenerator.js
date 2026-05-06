@@ -1,8 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { RISK_CATEGORIES } from './hrsConstants';
-
-// No import needed for logo
-const LOGO_SRC = '/assets/hrs-logo.png';
+import logoUrl from '../assets/hrs-logo.png';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function yn(val) {
@@ -87,7 +85,7 @@ class PDFBuilder {
     d.roundedRect(ML, 5, 50, 22, 2, 2, 'F');
 
     let logoValid = false;
-   if (this.logo && this.logo.startsWith('data:image')) {
+   if (this.logo && this.logo.startsWith('data:')) {
     // Check if it's a valid data URL and has content beyond the header
       const parts = this.logo.split(',');
       if (parts.length > 1 && parts[1].length > 64) {
@@ -580,11 +578,13 @@ function buildChecklist(pdf, formData, checklistState) {
 // ─── Export ───────────────────────────────────────────────────────────────────
 export async function generatePDF(formData) {
   const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(LOGO_SRC),
+    loadImgAsDataURL(logoUrl),
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
 
+  console.log('Logo URL:', logoUrl);
+  console.log('Logo data preview:', logo ? logo.substring(0, 50) : 'null'); 
   console.log('Logo loaded successfully:', !!logo);
 
   const pdf = new PDFBuilder(logo);
@@ -596,7 +596,7 @@ export async function generatePDF(formData) {
 
 export async function generateROABase64(formData) {
   const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(LOGO_SRC),
+    loadImgAsDataURL(logoUrl),
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
@@ -612,7 +612,7 @@ export async function generateROABase64(formData) {
 
 export async function generateCombinedPDF(formData, checklistState) {
  const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(LOGO_SRC),
+    loadImgAsDataURL(logoUrl),
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
