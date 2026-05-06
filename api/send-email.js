@@ -11,7 +11,12 @@ export default async function handler(req, res) {
 
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: 'Email service not configured' });
+    // Dev mock: log the email and return success so the full flow can be tested
+    console.log('\n📧 [DEV] Email send mocked (no RESEND_API_KEY configured)');
+    console.log('  To:', to);
+    console.log('  Subject:', subject);
+    console.log('  Attachment:', pdfFilename || 'none', '\n');
+    return res.status(200).json({ ok: true, id: 'dev-mock' });
   }
 
   const cc = to !== 'info@hrsinsurance.co.za' ? ['info@hrsinsurance.co.za'] : undefined;

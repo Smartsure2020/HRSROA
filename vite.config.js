@@ -2,6 +2,7 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import path from 'path'
 import fs from 'fs'
+import { pathToFileURL } from 'url'
 
 function apiDevPlugin() {
   // Parse .env so serverless functions get RESEND_API_KEY etc.
@@ -42,7 +43,7 @@ function apiDevPlugin() {
           };
 
           try {
-            const { default: handler } = await import(fnPath);
+            const { default: handler } = await import(pathToFileURL(fnPath).href);
             await handler(req, mockRes);
           } catch (err) {
             if (!res.writableEnded) {
