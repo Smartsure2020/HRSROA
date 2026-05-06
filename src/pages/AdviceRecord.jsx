@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import AppHeader from "../components/hrs/AppHeader";
 import StepProgress from "../components/hrs/StepProgress";
 import StepClientDetails from "../components/hrs/steps/StepClientDetails";
@@ -6,7 +8,6 @@ import StepInsuranceHistory from "../components/hrs/steps/StepInsuranceHistory";
 import StepProductsAdvice from "../components/hrs/steps/StepProductsAdvice";
 import StepRiskCategories from "../components/hrs/steps/StepRiskCategories";
 import StepPrinciples from "../components/hrs/steps/StepPrinciples";
-
 import StepSignatures from "../components/hrs/steps/StepSignatures";
 import StepChecklist from "../components/hrs/steps/StepChecklist";
 import StepReview from "../components/hrs/steps/StepReview";
@@ -28,18 +29,17 @@ function clearSession() {
 }
 
 export default function AdviceRecord() {
+  const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(0);
   const [formData, setFormData] = useState(getInitialFormData);
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
 
-  // Check for saved draft on mount
   useEffect(() => {
     if (readSession()) setShowRestoreBanner(true);
   }, []);
 
-  // Warn before unload unless already submitted
   useEffect(() => {
     if (submitted) return;
     const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
@@ -47,7 +47,6 @@ export default function AdviceRecord() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [submitted]);
 
-  // setFormData wrapper that auto-saves to sessionStorage
   const updateFormData = useCallback((updater) => {
     setFormData((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
@@ -182,6 +181,14 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const handleGoHome = () => {
+    if (!submitted && Object.values(formData).some(v => v)) {
+      const confirm = window.confirm('You have an ROA in progress. Are you sure you want to go back to the home screen? Your progress will be saved in this session.');
+      if (!confirm) return;
+    }
+    navigate('/');
+  };
+
   const renderStep = () => {
     if (submitted) {
       return <StepChecklist data={formData} onRestart={handleRestart} />;
@@ -204,6 +211,22 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
   return (
     <div className="min-h-screen bg-background">
       <AppHeader />
+
+      {/* Back to home bar */}
+      {!submitted && (
+        <div className="bg-hrs-blue/95 border-b border-hrs-orange/40 px-4 py-2 flex items-center gap-3">
+          <button
+            onClick={handleGoHome}
+            className="flex items-center gap-1.5 text-white/70 hover:text-white text-[0.78rem] transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Back to Home
+          </button>
+          <span className="text-white/20 text-[0.75rem]">|</span>
+          <span className="text-white/50 text-[0.75rem]">Personal Lines ROA</span>
+        </div>
+      )}
+
       {showRestoreBanner && (
         <div className="bg-hrs-blue text-white text-[0.82rem] px-4 py-2.5 flex items-center justify-between gap-4">
           <span>You have an unsaved ROA in progress — continue?</span>
@@ -213,6 +236,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
           </div>
         </div>
       )}
+
       {!submitted && <StepProgress currentStep={currentStep} onGoTo={goTo} />}
       <main className="max-w-[860px] mx-auto px-3 sm:px-5 py-9 pb-20">
         {renderStep()}
