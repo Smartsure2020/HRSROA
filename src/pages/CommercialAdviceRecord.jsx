@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { EMAIL_TO_BROKER } from '../lib/hrsConstants';
+import { syncCommercialROAToCRM } from '@/lib/crmSync';
+import { supabase } from '@/lib/supabaseClient';
 import { Check } from 'lucide-react';
 import { Building2 } from 'lucide-react';
 import AppHeader from '../components/hrs/AppHeader';
@@ -65,11 +67,28 @@ export default function CommercialAdviceRecord() {
   const [formData, setFormData] = useState(getCommercialInitialFormData());
   const [stepErrors, setStepErrors] = useState([]);
 
+  const crmSynced = useRef(false);
+
   useEffect(() => {
     if (user?.email && EMAIL_TO_BROKER[user.email] && !formData.brokerName) {
       setFormData(prev => ({ ...prev, brokerName: EMAIL_TO_BROKER[user.email] }));
     }
   }, [user?.email]);
+
+  useEffect(() => {
+    if (step === 7 && !crmSynced.current) {
+      crmSynced.current = true;
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          syncCommercialROAToCRM(formData, session)
+            .then(r => r.success
+              ? console.log('CRM sync OK — client:', r.clientId, 'deal:', r.dealId)
+              : console.warn('CRM sync failed:', r.error)
+            );
+        }
+      });
+    }
+  }, [step, formData]);
 
   const totalSteps = COMMERCIAL_STEPS.length;
   const isChecklist = step === totalSteps - 1;

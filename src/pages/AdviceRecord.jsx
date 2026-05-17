@@ -15,6 +15,8 @@ import { getInitialFormData, getStepErrors, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMA
 import { useAuth } from '@/lib/AuthContext';
 import { generateROABase64 } from "../lib/hrsPdfGenerator";
 import { toast } from "@/components/ui/use-toast";
+import { syncPersonalROAToCRM } from '@/lib/crmSync';
+import { supabase } from '@/lib/supabaseClient';
 
 const TOTAL_STEPS = 7;
 const SESSION_KEY = 'hrs_roa_draft';
@@ -168,6 +170,18 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
       }
 
       clearSession();
+
+      // Sync to CRM in background — fire-and-forget
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          syncPersonalROAToCRM(formData, session)
+            .then(r => r.success
+              ? console.log('CRM sync OK — client:', r.clientId, 'deal:', r.dealId)
+              : console.warn('CRM sync failed:', r.error)
+            );
+        }
+      });
+
       setSubmitted(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
