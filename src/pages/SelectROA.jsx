@@ -1,9 +1,11 @@
 import { useNavigate } from 'react-router-dom';
-import { Building2, User } from 'lucide-react';
+import { Building2, User, LogOut } from 'lucide-react';
 import logoUrl from '../assets/hrs-logo.png';
+import { useAuth } from '@/lib/AuthContext';
 
 export default function SelectROA() {
   const navigate = useNavigate();
+  const { user, logout } = useAuth();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-hrs-blue via-hrs-blue2 to-[#0a1628] flex flex-col items-center justify-center p-6">
@@ -61,9 +63,20 @@ export default function SelectROA() {
         </button>
       </div>
 
-      <p className="mt-10 text-white/30 text-[0.72rem] text-center">
-        New Personal Insurance &nbsp;|&nbsp; New Commercial Insurance
-      </p>
+      <div className="mt-10 flex flex-col items-center gap-2">
+        <p className="text-white/30 text-[0.72rem] text-center">
+          New Personal Insurance &nbsp;|&nbsp; New Commercial Insurance
+        </p>
+        {user && (
+          <button
+            onClick={logout}
+            className="flex items-center gap-1.5 text-white/30 hover:text-white/60 text-[0.72rem] transition-colors"
+          >
+            <LogOut className="w-3 h-3" />
+            Sign out ({user.name})
+          </button>
+        )}
+      </div>
     </div>
   );
 }

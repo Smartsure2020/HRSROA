@@ -11,7 +11,8 @@ import StepPrinciples from "../components/hrs/steps/StepPrinciples";
 import StepSignatures from "../components/hrs/steps/StepSignatures";
 import StepChecklist from "../components/hrs/steps/StepChecklist";
 import StepReview from "../components/hrs/steps/StepReview";
-import { getInitialFormData, getStepErrors, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL } from "../lib/hrsConstants";
+import { getInitialFormData, getStepErrors, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER } from "../lib/hrsConstants";
+import { useAuth } from '@/lib/AuthContext';
 import { generateROABase64 } from "../lib/hrsPdfGenerator";
 import { toast } from "@/components/ui/use-toast";
 
@@ -30,6 +31,7 @@ function clearSession() {
 
 export default function AdviceRecord() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [currentStep, setCurrentStep] = useState(0);
   const [formData, setFormData] = useState(getInitialFormData);
   const [submitted, setSubmitted] = useState(false);
@@ -39,6 +41,12 @@ export default function AdviceRecord() {
   useEffect(() => {
     if (readSession()) setShowRestoreBanner(true);
   }, []);
+
+  useEffect(() => {
+    if (user?.email && EMAIL_TO_BROKER[user.email] && !formData.brokerName) {
+      setFormData(prev => ({ ...prev, brokerName: EMAIL_TO_BROKER[user.email] }));
+    }
+  }, [user?.email]);
 
   useEffect(() => {
     if (submitted) return;

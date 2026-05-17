@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/lib/AuthContext';
+import { EMAIL_TO_BROKER } from '../lib/hrsConstants';
 import { Check } from 'lucide-react';
 import { Building2 } from 'lucide-react';
 import AppHeader from '../components/hrs/AppHeader';
@@ -58,9 +60,16 @@ function CommercialStepProgress({ currentStep, onGoTo }) {
 
 export default function CommercialAdviceRecord() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState(getCommercialInitialFormData());
   const [stepErrors, setStepErrors] = useState([]);
+
+  useEffect(() => {
+    if (user?.email && EMAIL_TO_BROKER[user.email] && !formData.brokerName) {
+      setFormData(prev => ({ ...prev, brokerName: EMAIL_TO_BROKER[user.email] }));
+    }
+  }, [user?.email]);
 
   const totalSteps = COMMERCIAL_STEPS.length;
   const isChecklist = step === totalSteps - 1;
@@ -103,7 +112,7 @@ export default function CommercialAdviceRecord() {
   return (
     <div className="min-h-screen bg-background">
       {/* Same header as personal */}
-      <AppHeader />
+      <AppHeader title="Advice Record – New Commercial Insurance" />
 
       {/* Back to home + breadcrumb bar */}
       {!isChecklist && (

@@ -37,6 +37,10 @@ export const BROKER_EMAIL_MAP = {
   'Werner Joubert':       'werner@hrsinsurance.co.za',
 };
 
+export const EMAIL_TO_BROKER = Object.fromEntries(
+  Object.entries(BROKER_EMAIL_MAP).map(([name, email]) => [email, name])
+);
+
 export const DEFAULT_BROKER_EMAIL = 'info@hrsinsurance.co.za';
 export const MANAGER_NAME = 'Andrew Penney';
 

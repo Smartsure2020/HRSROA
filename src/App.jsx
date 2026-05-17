@@ -1,44 +1,49 @@
-import { Toaster } from "@/components/ui/toaster"
-import { QueryClientProvider } from '@tanstack/react-query'
-import { queryClientInstance } from '@/lib/query-client'
+import { Toaster } from "@/components/ui/toaster";
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClientInstance } from '@/lib/query-client';
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
-import { ClerkProvider, SignedIn, SignedOut, RedirectToSignIn } from '@clerk/clerk-react';
 import PageNotFound from './lib/PageNotFound';
 import SelectROA from './pages/SelectROA';
 import AdviceRecord from './pages/AdviceRecord';
 import CommercialAdviceRecord from './pages/CommercialAdviceRecord';
-import { AuthProvider } from '@/lib/AuthContext';
+import Login from './pages/Login';
+import { AuthProvider, useAuth } from '@/lib/AuthContext';
 
-const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+function AuthGate({ children }) {
+  const { isAuthenticated, isLoadingAuth } = useAuth();
 
-const AuthenticatedApp = () => (
-  <>
-    <SignedIn>
-      <Routes>
-        <Route path="/" element={<SelectROA />} />
-        <Route path="/personal" element={<AdviceRecord />} />
-        <Route path="/commercial" element={<CommercialAdviceRecord />} />
-        <Route path="*" element={<PageNotFound />} />
-      </Routes>
-    </SignedIn>
-    <SignedOut>
-      <RedirectToSignIn />
-    </SignedOut>
-  </>
-);
+  if (isLoadingAuth) {
+    return (
+      <div className="fixed inset-0 bg-gradient-to-br from-hrs-blue via-hrs-blue2 to-[#0a1628] flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-white/20 border-t-hrs-orange rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Login />;
+  }
+
+  return children;
+}
 
 function App() {
   return (
-    <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
-      <AuthProvider>
-        <QueryClientProvider client={queryClientInstance}>
-          <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-            <AuthenticatedApp />
-          </Router>
-          <Toaster />
-        </QueryClientProvider>
-      </AuthProvider>
-    </ClerkProvider>
+    <AuthProvider>
+      <QueryClientProvider client={queryClientInstance}>
+        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <AuthGate>
+            <Routes>
+              <Route path="/" element={<SelectROA />} />
+              <Route path="/personal" element={<AdviceRecord />} />
+              <Route path="/commercial" element={<CommercialAdviceRecord />} />
+              <Route path="*" element={<PageNotFound />} />
+            </Routes>
+          </AuthGate>
+        </Router>
+        <Toaster />
+      </QueryClientProvider>
+    </AuthProvider>
   );
 }
 
