@@ -24,8 +24,11 @@ async function createClient(headers, payload) {
     headers,
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`Client create failed: ${res.status}`);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.warn('CRM client create rejected:', JSON.stringify(data));
+    throw new Error(`Client create failed: ${res.status} — ${JSON.stringify(data.issues || data.error || data)}`);
+  }
   return data.id ?? data.client?.id ?? data.data?.id;
 }
 
@@ -35,8 +38,11 @@ async function createDeal(headers, payload) {
     headers,
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`Deal create failed: ${res.status}`);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.warn('CRM deal create rejected:', JSON.stringify(data));
+    throw new Error(`Deal create failed: ${res.status} — ${JSON.stringify(data.issues || data.error || data)}`);
+  }
   return data.id ?? data.deal?.id ?? data.data?.id;
 }
 

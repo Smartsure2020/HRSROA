@@ -9,10 +9,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
+  const apiKey = process.env.RESEND_API_KEY_R;
   if (!apiKey) {
     // Dev mock: log the email and return success so the full flow can be tested
-    console.log('\n📧 [DEV] Email send mocked (no RESEND_API_KEY configured)');
+    console.log('\n📧 [DEV] Email send mocked (no RESEND_API_KEY_R configured)');
     console.log('  To:', to);
     console.log('  Subject:', subject);
     console.log('  Attachment:', pdfFilename || 'none', '\n');
