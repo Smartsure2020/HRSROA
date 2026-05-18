@@ -276,8 +276,8 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         {step === 1 && <CommercialStepInsuranceHistory {...stepProps} />}
         {step === 2 && <CommercialStepProductsAdvice {...stepProps} />}
         {step === 3 && <CommercialStepReplacementPolicy {...stepProps} />}
-        {step === 4 && <CommercialStepPrinciples {...stepProps} />}
-        {step === 5 && <CommercialStepRiskCategories {...stepProps} />}
+        {step === 4 && <CommercialStepRiskCategories {...stepProps} />}
+        {step === 5 && <CommercialStepPrinciples {...stepProps} />}
         {step === 6 && (
           <CommercialStepSignatures
             {...stepProps}

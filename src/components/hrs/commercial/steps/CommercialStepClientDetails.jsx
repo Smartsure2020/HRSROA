@@ -1,27 +1,53 @@
+import { useEffect } from 'react';
 import FormCard from "../../FormCard";
 import SectionTitle from "../../SectionTitle";
 import FormField from "../../FormField";
 import TextInput from "../../TextInput";
+import SelectInput from "../../SelectInput";
+import YesNoToggle from "../../YesNoToggle";
 import NavBar from "../../NavBar";
 import { ADVISORS } from "../../../../lib/hrsConstants";
 
+const PROVINCES = [
+  "Eastern Cape", "Free State", "Gauteng", "KwaZulu-Natal",
+  "Limpopo", "Mpumalanga", "North West", "Northern Cape", "Western Cape",
+];
+
 export default function CommercialStepClientDetails({ data, onChange, onNext }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
-  const setE = (key) => (e) => onChange({ ...data, [key]: e.target.value });
+
+  useEffect(() => {
+    const parts = [
+      data.streetNumber, data.streetName, data.complexName,
+      data.suburb, data.city, data.province, data.postalCode,
+    ].filter(Boolean);
+    const assembled = parts.join(', ');
+    if (assembled !== data.riskAddress) {
+      onChange({ ...data, riskAddress: assembled });
+    }
+  }, [data.streetNumber, data.streetName, data.complexName, data.suburb, data.city, data.province, data.postalCode]);
+
+  useEffect(() => {
+    const name = [data.contactFirstName, data.contactSurname].filter(Boolean).join(' ');
+    if (name !== data.contactPerson) {
+      onChange({ ...data, contactPerson: name });
+    }
+  }, [data.contactFirstName, data.contactSurname]);
 
   return (
     <div>
       <FormCard>
         <SectionTitle>Client Details</SectionTitle>
-        <p className="text-hrs-muted text-[0.82rem] mb-6">
-          Enter the commercial client and company information below.
+        <p className="text-hrs-muted text-[0.82rem] mb-7">
+          Commercial client and company information
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
+        {/* Company Details */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <FormField label="Company Name" required>
             <TextInput value={data.companyName} onChange={set('companyName')} placeholder="Registered company name" />
           </FormField>
-          <FormField label="Registration No.">
+          <FormField label="Registration No." required>
             <TextInput value={data.registrationNo} onChange={set('registrationNo')} placeholder="e.g. 2020/123456/07" />
           </FormField>
           <FormField label="VAT No.">
@@ -32,15 +58,54 @@ export default function CommercialStepClientDetails({ data, onChange, onNext }) 
           </FormField>
         </div>
 
-        <FormField label="Risk Address" required>
-          <TextInput value={data.riskAddress} onChange={set('riskAddress')} placeholder="Full physical risk address" />
-        </FormField>
+        {/* Risk Address */}
+        <div className="h-px bg-hrs-border my-6" />
+        <SectionTitle size="sm">Risk Address</SectionTitle>
+        <p className="text-hrs-muted text-[0.78rem] mb-4 mt-1">Address of the property / risk to be insured</p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5">
-          <FormField label="Contact Person" required>
-            <TextInput value={data.contactPerson} onChange={set('contactPerson')} placeholder="Full name of contact" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <FormField label="Street Number" required>
+            <TextInput value={data.streetNumber} onChange={set('streetNumber')} placeholder="e.g. 16" />
           </FormField>
-          <FormField label="ID Number">
+          <FormField label="Street Name" required>
+            <TextInput value={data.streetName} onChange={set('streetName')} placeholder="e.g. Monte Carlo Crescent" />
+          </FormField>
+          <FormField label="Complex / Building Name">
+            <TextInput value={data.complexName} onChange={set('complexName')} placeholder="e.g. Kyalami Business Park (optional)" />
+          </FormField>
+          <FormField label="Suburb" required>
+            <TextInput value={data.suburb} onChange={set('suburb')} placeholder="e.g. Kyalami" />
+          </FormField>
+          <FormField label="City" required>
+            <TextInput value={data.city} onChange={set('city')} placeholder="e.g. Midrand" />
+          </FormField>
+          <FormField label="Province" required>
+            <SelectInput value={data.province} onChange={set('province')} options={PROVINCES} placeholder="-- Select Province --" />
+          </FormField>
+          <FormField label="Postal Code" required>
+            <TextInput value={data.postalCode} onChange={set('postalCode')} placeholder="e.g. 1684" />
+          </FormField>
+        </div>
+
+        {/* Contact Person */}
+        <div className="h-px bg-hrs-border my-6" />
+        <SectionTitle size="sm">Contact Person</SectionTitle>
+        <p className="text-hrs-muted text-[0.78rem] mb-4 mt-1">Primary contact at the business</p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <FormField label="Title" required>
+            <SelectInput value={data.contactTitle} onChange={set('contactTitle')} options={["Mr", "Mrs", "Miss", "Ms", "Dr", "Prof"]} placeholder="-- Select Title --" />
+          </FormField>
+          <FormField label="Initial(s)">
+            <TextInput value={data.contactInitials} onChange={set('contactInitials')} placeholder="e.g. J" />
+          </FormField>
+          <FormField label="First Name" required>
+            <TextInput value={data.contactFirstName} onChange={set('contactFirstName')} placeholder="e.g. John" />
+          </FormField>
+          <FormField label="Surname" required>
+            <TextInput value={data.contactSurname} onChange={set('contactSurname')} placeholder="e.g. Smith" />
+          </FormField>
+          <FormField label="ID / Passport Number">
             <TextInput value={data.idNo} onChange={set('idNo')} placeholder="ID / Passport number" />
           </FormField>
           <FormField label="Email Address" required>
@@ -49,42 +114,33 @@ export default function CommercialStepClientDetails({ data, onChange, onNext }) 
           <FormField label="Contact Number" required>
             <TextInput type="tel" value={data.contactNo} onChange={set('contactNo')} placeholder="e.g. 011 123 4567" />
           </FormField>
+          <FormField label="Work / Home Number">
+            <TextInput type="tel" value={data.workNumber} onChange={set('workNumber')} placeholder="e.g. 0112345678" />
+          </FormField>
+        </div>
+
+        {/* Advisor Details */}
+        <div className="h-px bg-hrs-border my-6" />
+        <SectionTitle size="sm">Advisor Details</SectionTitle>
+        <div className="mt-3">
+          <FormField label="Broker / Advisor Name" required>
+            <SelectInput value={data.brokerName} onChange={set('brokerName')} options={ADVISORS} placeholder="-- Select Advisor --" />
+          </FormField>
+        </div>
+        <div className="mt-4">
           <FormField label="Inception Date">
             <TextInput type="date" value={data.inceptionDate} onChange={set('inceptionDate')} />
           </FormField>
         </div>
-
-        <FormField label="Advisor / Broker" required>
-          <select
-            value={data.brokerName}
-            onChange={setE('brokerName')}
-            className="w-full rounded-lg border border-hrs-border bg-secondary px-3 py-2.5 text-[0.88rem] text-hrs-blue outline-none focus:border-hrs-orange transition-colors"
-          >
-            <option value="">Select advisor...</option>
-            {ADVISORS.map(a => <option key={a} value={a}>{a}</option>)}
-          </select>
-        </FormField>
-
-        <FormField label="Was the client provided with a copy of the advisor's FAIS Disclosure and Letter of Authority (Section 13 Certificate)?">
-          <div className="flex gap-3 mt-1">
-            {['yes', 'no'].map(v => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => onChange({ ...data, faisProvided: v })}
-                className={`px-5 py-2 rounded-lg border text-[0.82rem] font-semibold transition-all ${
-                  data.faisProvided === v
-                    ? v === 'yes' ? 'bg-hrs-green text-white border-hrs-green' : 'bg-hrs-red text-white border-hrs-red'
-                    : 'border-hrs-border text-hrs-muted hover:border-hrs-orange'
-                }`}
-              >
-                {v.charAt(0).toUpperCase() + v.slice(1)}
-              </button>
-            ))}
-          </div>
-        </FormField>
+        <div className="mt-4">
+          <p className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2">
+            Was the client provided with the advisor's FAIS Disclosure & Letter of Authority (Sec 13 Certificate)?
+          </p>
+          <YesNoToggle value={data.faisProvided} onChange={set('faisProvided')} />
+        </div>
       </FormCard>
-      <NavBar onNext={onNext} hidePrev />
+
+      <NavBar showPrev={false} onNext={onNext} nextLabel="Next: Insurance History" />
     </div>
   );
 }

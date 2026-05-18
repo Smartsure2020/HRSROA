@@ -3,8 +3,8 @@ export const COMMERCIAL_STEPS = [
   { label: "Insurance History" },
   { label: "Products & Advice" },
   { label: "Replacement Policy" },
-  { label: "Principles & Disclosures" },
   { label: "Risk Categories" },
+  { label: "Principles & Disclosures" },
   { label: "Signatures" },
   { label: "Review" },
 ];
@@ -62,8 +62,14 @@ export function getCommercialStepErrors(step, formData) {
         ['companyName', 'Company Name'],
         ['registrationNo', 'Registration Number'],
         ['natureOfBusiness', 'Nature of Business'],
-        ['riskAddress', 'Risk Address'],
-        ['contactPerson', 'Contact Person'],
+        ['streetNumber', 'Street Number'],
+        ['streetName', 'Street Name'],
+        ['suburb', 'Suburb'],
+        ['city', 'City'],
+        ['province', 'Province'],
+        ['postalCode', 'Postal Code'],
+        ['contactFirstName', 'Contact First Name'],
+        ['contactSurname', 'Contact Surname'],
         ['email', 'Email'],
         ['contactNo', 'Contact Number'],
         ['brokerName', 'Advisor Name'],
@@ -90,6 +96,10 @@ export function getCommercialStepErrors(step, formData) {
     case 3:
       return [];
     case 4: {
+      const assessed = formData.riskState?.some(r => r.cover === 'yes' || r.cover === 'no');
+      return assessed ? [] : ['At least one risk category must be assessed (Yes or No)'];
+    }
+    case 5: {
       const acks = [
         ['ackPrinciples', 'Short-Term Insurance Principles'],
         ['ackAdvisor', "Advisor's Obligations"],
@@ -102,10 +112,6 @@ export function getCommercialStepErrors(step, formData) {
         ['ackIntermediaryAgreement', 'Advice & Intermediary Services Agreement'],
       ];
       return acks.filter(([k]) => !formData[k]).map(([, label]) => label);
-    }
-    case 5: {
-      const assessed = formData.riskState?.some(r => r.cover === 'yes' || r.cover === 'no');
-      return assessed ? [] : ['At least one risk category must be assessed (Yes or No)'];
     }
     case 6: {
       const errors = [];
@@ -128,11 +134,25 @@ export function getCommercialInitialFormData() {
     registrationNo: '',
     vatNo: '',
     natureOfBusiness: '',
+    // Risk address (individual fields; riskAddress assembled by CommercialStepClientDetails)
     riskAddress: '',
+    streetNumber: '',
+    streetName: '',
+    complexName: '',
+    suburb: '',
+    city: '',
+    province: '',
+    postalCode: '',
+    // Contact person (individual fields; contactPerson assembled by CommercialStepClientDetails)
+    contactTitle: '',
+    contactInitials: '',
+    contactFirstName: '',
+    contactSurname: '',
     contactPerson: '',
     idNo: '',
     email: '',
     contactNo: '',
+    workNumber: '',
     brokerName: '',
     faisProvided: null,
 

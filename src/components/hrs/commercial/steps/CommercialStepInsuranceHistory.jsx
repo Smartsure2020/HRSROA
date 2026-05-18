@@ -2,72 +2,56 @@ import FormCard from "../../FormCard";
 import SectionTitle from "../../SectionTitle";
 import FormField from "../../FormField";
 import TextInput from "../../TextInput";
+import YesNoToggle from "../../YesNoToggle";
 import NavBar from "../../NavBar";
-
-function YesNo({ value, onChange }) {
-  return (
-    <div className="flex gap-3 mt-1">
-      {['yes', 'no'].map(v => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => onChange(value === v ? null : v)}
-          className={`px-5 py-2 rounded-lg border text-[0.82rem] font-semibold transition-all ${
-            value === v
-              ? v === 'yes' ? 'bg-hrs-green text-white border-hrs-green' : 'bg-hrs-red text-white border-hrs-red'
-              : 'border-hrs-border text-hrs-muted hover:border-hrs-orange'
-          }`}
-        >
-          {v.charAt(0).toUpperCase() + v.slice(1)}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 export default function CommercialStepInsuranceHistory({ data, onChange, onNext, onPrev }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
-  const setE = (key) => (e) => onChange({ ...data, [key]: e.target.value });
 
   return (
     <div>
       <FormCard>
         <SectionTitle>Insurance History</SectionTitle>
+        <p className="text-hrs-muted text-[0.82rem] mb-7">Summary of the business's previous short-term insurance experience</p>
 
-        <FormField label="Uninterrupted Short Term Insurance?" required>
-          <YesNo value={data.uninterruptedInsurance} onChange={v => onChange({ ...data, uninterruptedInsurance: v })} />
-        </FormField>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <div>
+            <p className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2">
+              Uninterrupted Short-Term Insurance
+            </p>
+            <YesNoToggle value={data.uninterruptedInsurance} onChange={set('uninterruptedInsurance')} />
+          </div>
+          <FormField label="Number of Years Insured">
+            <TextInput type="number" value={data.yearsInsured} onChange={set('yearsInsured')} placeholder="e.g. 5" min="0" />
+          </FormField>
+        </div>
 
-        <FormField label="Number of years insured">
-          <TextInput type="number" value={data.yearsInsured} onChange={set('yearsInsured')} placeholder="e.g. 5" />
-        </FormField>
+        <div className="h-px bg-hrs-border my-6" />
 
-        <FormField label="Have special terms and conditions been imposed, or has cover ever been refused / cancelled for the applicant or any co-insured?" required>
-          <YesNo value={data.specialTerms} onChange={v => onChange({ ...data, specialTerms: v })} />
-        </FormField>
+        <p className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2">
+          Have special terms been imposed, or has cover ever been refused / cancelled?
+        </p>
+        <YesNoToggle value={data.specialTerms} onChange={set('specialTerms')} />
 
         {data.specialTerms === 'yes' && (
-          <FormField label="Cancellation / Refusal Reason">
-            <textarea
-              value={data.cancelReasonText}
-              onChange={setE('cancelReasonText')}
-              rows={3}
-              placeholder="Provide reason..."
-              className="w-full rounded-lg border border-hrs-border bg-secondary px-3 py-2.5 text-[0.88rem] text-hrs-blue outline-none focus:border-hrs-orange transition-colors resize-none"
-            />
-          </FormField>
+          <div className="mt-4">
+            <FormField label="Reason for Refusal / Cancellation / Special Terms">
+              <TextInput type="textarea" value={data.cancelReasonText} onChange={set('cancelReasonText')} placeholder="Please provide details..." />
+            </FormField>
+          </div>
         )}
 
-        <FormField label="Summary of the Business Owner's Specific Needs and Objectives" required>
-          <textarea
-            value={data.clientNeeds}
-            onChange={setE('clientNeeds')}
-            rows={4}
-            className="w-full rounded-lg border border-hrs-border bg-secondary px-3 py-2.5 text-[0.88rem] text-hrs-blue outline-none focus:border-hrs-orange transition-colors resize-none"
-          />
-        </FormField>
+        <div className="h-px bg-hrs-border my-6" />
+
+        <SectionTitle size="sm">Business Needs & Objectives</SectionTitle>
+        <div className="mt-3">
+          <FormField label="Summary of the Business Owner's Specific Needs">
+            <TextInput type="textarea" value={data.clientNeeds} onChange={set('clientNeeds')} rows={3} />
+          </FormField>
+        </div>
       </FormCard>
-      <NavBar onPrev={onPrev} onNext={onNext} />
+
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel="Next: Products & Advice" />
     </div>
   );
 }
