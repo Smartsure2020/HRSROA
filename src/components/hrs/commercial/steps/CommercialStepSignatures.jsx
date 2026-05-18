@@ -67,7 +67,7 @@ function SigSection({ label, sigKey, data, onChange }) {
   );
 }
 
-export default function CommercialStepSignatures({ data, onChange, onNext, onPrev }) {
+export default function CommercialStepSignatures({ data, onChange, onNext, onPrev, isSubmitting, nextLabel }) {
   const setE = (key) => (e) => onChange({ ...data, [key]: e.target.value });
 
   return (
@@ -97,7 +97,7 @@ export default function CommercialStepSignatures({ data, onChange, onNext, onPre
           </p>
         </LegalBlock>
       </FormCard>
-      <NavBar onPrev={onPrev} onNext={onNext} nextLabel="Review & Submit" />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel || "Submit & Send"} isSubmitting={isSubmitting} />
     </div>
   );
 }
