@@ -1,17 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
-import { EMAIL_TO_BROKER } from '../lib/hrsConstants';
+import { BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER } from '../lib/hrsConstants';
 import { syncCommercialROAToCRM } from '@/lib/crmSync';
 import { supabase } from '@/lib/supabaseClient';
 import { Check } from 'lucide-react';
 import { Building2 } from 'lucide-react';
 import AppHeader from '../components/hrs/AppHeader';
+import { toast } from "@/components/ui/use-toast";
 import {
   COMMERCIAL_STEPS,
   getCommercialStepErrors,
   getCommercialInitialFormData,
 } from '../lib/hrsCommercialConstants';
+import { generateCommercialROABase64 } from '../lib/hrsCommercialPdfGenerator';
 import CommercialStepClientDetails from '../components/hrs/commercial/steps/CommercialStepClientDetails';
 import CommercialStepInsuranceHistory from '../components/hrs/commercial/steps/CommercialStepInsuranceHistory';
 import CommercialStepProductsAdvice from '../components/hrs/commercial/steps/CommercialStepProductsAdvice';
@@ -66,11 +68,12 @@ export default function CommercialAdviceRecord() {
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState(getCommercialInitialFormData());
   const [stepErrors, setStepErrors] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const crmSynced = useRef(false);
 
   useEffect(() => {
-    if (user?.email && EMAIL_TO_BROKER[user.email] && !formData.brokerName) {
+    if (user?.email && EMAIL_TO_BROKER?.[user.email] && !formData.brokerName) {
       setFormData(prev => ({ ...prev, brokerName: EMAIL_TO_BROKER[user.email] }));
     }
   }, [user?.email]);
@@ -119,21 +122,111 @@ export default function CommercialAdviceRecord() {
     }
   };
 
+  const handleSubmit = async () => {
+    // Validate all steps
+    const allErrors = [0, 1, 2, 3, 4, 5, 6].flatMap((s) =>
+      getCommercialStepErrors(s, formData).map((e) => `Step ${s + 1}: ${e}`)
+    );
+    if (allErrors.length > 0) {
+      toast({
+        variant: "destructive",
+        title: "Please complete required fields",
+        description: allErrors.join(" · "),
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const { base64, filename } = await generateCommercialROABase64(formData);
+
+      const brokerEmail = BROKER_EMAIL_MAP[formData.brokerName] || DEFAULT_BROKER_EMAIL;
+
+      const subject = `New Commercial Advice Record – ${formData.companyName} (${formData.brokerName})`;
+
+      const body = `New Commercial Advice Record Submitted
+========================================
+Broker / Advisor: ${formData.brokerName}
+Company Name: ${formData.companyName}
+Registration No.: ${formData.registrationNo || '-'}
+VAT No.: ${formData.vatNo || '-'}
+Nature of Business: ${formData.natureOfBusiness}
+Risk Address: ${formData.riskAddress}
+Contact Person: ${formData.contactPerson}
+ID Number: ${formData.idNo || '-'}
+Email: ${formData.email}
+Contact No.: ${formData.contactNo}
+Inception Date: ${formData.inceptionDate}
+
+Recommended Insurer: ${formData.recInsurer}
+Broker Fee: ${formData.brokerFeePercent ? formData.brokerFeePercent + (formData.brokerFeeType === 'percent' ? '%' : ' (fixed)') : '-'}
+Option 1: ${formData.ins0 || '-'} — R${formData.prem0 || '-'}
+Option 2: ${formData.ins1 || '-'} — R${formData.prem1 || '-'}
+Option 3 (Recommended): ${formData.ins2 || '-'} — R${formData.prem2 || '-'}
+
+Replacing Existing Policy: ${formData.replacingExisting === 'yes' ? 'Yes' : formData.replacingExisting === 'no' ? 'No' : 'Not answered'}
+${formData.replacingExisting === 'yes' ? `Current Insurer: ${formData.currentInsurer || '-'} → New Insurer: ${formData.newInsurer || '-'}` : ''}
+
+Signature Date: ${formData.sigDate}
+
+Acknowledgements:
+- Short-Term Insurance Principles: ${formData.ackPrinciples ? 'Acknowledged' : 'Not acknowledged'}
+- POPIA Consent: ${formData.ackPopia ? 'Acknowledged' : 'Not acknowledged'}
+- Intermediary Agreement: ${formData.ackIntermediaryAgreement ? 'Acknowledged' : 'Not acknowledged'}
+
+---
+Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
+
+      const res = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: brokerEmail,
+          subject,
+          body,
+          pdfBase64: base64,
+          pdfFilename: filename,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to send email');
+      }
+
+      setStep(totalSteps - 1);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Submission failed",
+        description: err.message || "Could not send the email. Please try again.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const restart = () => {
     setFormData(getCommercialInitialFormData());
     setStep(0);
     setStepErrors([]);
+    crmSynced.current = false;
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const stepProps = { data: formData, onChange: setFormData, onNext: tryNext, onPrev: goPrev };
+  const stepProps = {
+    data: formData,
+    onChange: setFormData,
+    onNext: tryNext,
+    onPrev: goPrev,
+  };
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Same header as personal */}
       <AppHeader title="Advice Record – New Commercial Insurance" />
 
-      {/* Back to home + breadcrumb bar */}
       {!isChecklist && (
         <div className="bg-hrs-blue/95 border-b border-hrs-orange/40 px-4 py-2 flex items-center gap-3">
           <button
@@ -147,12 +240,10 @@ export default function CommercialAdviceRecord() {
         </div>
       )}
 
-      {/* Step progress — matches personal exactly */}
       {!isChecklist && (
         <CommercialStepProgress currentStep={step} onGoTo={goTo} />
       )}
 
-      {/* Step errors */}
       {stepErrors.length > 0 && (
         <div className="max-w-[860px] mx-auto px-3 sm:px-5 pt-5">
           <div className="bg-red-50 border border-red-200 rounded-lg p-3">
@@ -167,8 +258,6 @@ export default function CommercialAdviceRecord() {
       )}
 
       <main className="max-w-[860px] mx-auto px-3 sm:px-5 py-9 pb-20">
-
-        {/* Info banner — matches personal style */}
         {!isChecklist && (
           <div className="bg-hrs-blue text-white rounded-xl p-5 mb-6 flex items-start gap-4">
             <Building2 className="w-9 h-9 text-hrs-orange flex-shrink-0 mt-0.5" />
@@ -189,7 +278,14 @@ export default function CommercialAdviceRecord() {
         {step === 3 && <CommercialStepReplacementPolicy {...stepProps} />}
         {step === 4 && <CommercialStepPrinciples {...stepProps} />}
         {step === 5 && <CommercialStepRiskCategories {...stepProps} />}
-        {step === 6 && <CommercialStepSignatures {...stepProps} />}
+        {step === 6 && (
+          <CommercialStepSignatures
+            {...stepProps}
+            onNext={handleSubmit}
+            isSubmitting={isSubmitting}
+            nextLabel="Submit & Send"
+          />
+        )}
         {step === 7 && <CommercialStepChecklist data={formData} onRestart={restart} />}
       </main>
     </div>
