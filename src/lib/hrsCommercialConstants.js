@@ -92,7 +92,13 @@ export function getCommercialStepErrors(step, formData) {
     case 4: {
       const acks = [
         ['ackPrinciples', 'Short-Term Insurance Principles'],
+        ['ackAdvisor', "Advisor's Obligations"],
+        ['ackClient', 'Client Obligations'],
         ['ackPopia', 'POPIA Consent'],
+        ['ackTermination', 'Termination Terms'],
+        ['ackBrokerFee', 'Broker Fee Consent'],
+        ['ackBrokerAppointment', 'Broker Appointment'],
+        ['ackBrokerAuth', 'Broker Authorisation'],
         ['ackIntermediaryAgreement', 'Advice & Intermediary Services Agreement'],
       ];
       return acks.filter(([k]) => !formData[k]).map(([, label]) => label);
@@ -166,8 +172,19 @@ export function getCommercialInitialFormData() {
 
     // Acknowledgements
     ackPrinciples: false,
+    ackAdvisor: false,
+    ackClient: false,
     ackPopia: false,
+    ackTermination: false,
+    ackBrokerFee: false,
+    ackBrokerAppointment: false,
+    ackBrokerAuth: false,
     ackIntermediaryAgreement: false,
+
+    // Broker appointment table
+    apptHolder: '',
+    apptInsurer: '',
+    apptPolicyNo: '',
 
     // Signatures
     inceptionDate: today,
