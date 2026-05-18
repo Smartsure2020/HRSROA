@@ -54,7 +54,10 @@ export async function syncPersonalROAToCRM(formData, session) {
     };
 
     const clientName = [formData.initials, formData.surname].filter(Boolean).join(' ') || 'Unnamed';
-    const brokerFeePercent = Number(formData.brokerFeePercent) || undefined;
+    // Only send as a percentage if the fee type is actually 'percent'
+    const brokerFeePercent = formData.brokerFeeType === 'percent'
+      ? (Number(formData.brokerFeePercent) || undefined)
+      : undefined;
     const estimatedPremium = Number(formData.prem2) || 0;
 
     const duplicate = await checkDuplicate(headers, {
@@ -117,7 +120,10 @@ export async function syncCommercialROAToCRM(formData, session) {
     };
 
     const clientName = formData.companyName || 'Unnamed';
-    const brokerFeePercent = Number(formData.brokerFeePercent) || undefined;
+    // Only send as a percentage if the fee type is actually 'percent'
+    const brokerFeePercent = formData.brokerFeeType === 'percent'
+      ? (Number(formData.brokerFeePercent) || undefined)
+      : undefined;
     const estimatedPremium = Number(formData.prem2) || 0;
 
     const duplicate = await checkDuplicate(headers, {
