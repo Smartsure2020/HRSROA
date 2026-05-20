@@ -36,6 +36,9 @@ export const BROKER_EMAIL_MAP = {
   'Jaryd Browne':         'jaryd@hrsinsurance.co.za',
   'Juan-Paul vd Merwe':   'juan-paul@hrsinsurance.co.za',
   'Werner Joubert':       'werner@hrsinsurance.co.za',
+  'Brian Hodges' :        'brian@hrsinsurance.co.za',
+  'Faizel Patel' :        'faizel@hrsinsurance.co.za',
+
 };
 
 export const EMAIL_TO_BROKER = Object.fromEntries(
@@ -53,6 +56,8 @@ export const ADVISORS = [
   "Jaryd Browne",
   "Juan-Paul vd Merwe",
   "Werner Joubert",
+  'Brian Hodges',
+  'Faizel Patel'
 ];
 
 export const BANKS = [
