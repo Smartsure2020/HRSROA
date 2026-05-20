@@ -1,9 +1,9 @@
 import { useState, useRef } from "react";
-import { CheckCircle, PenLine, Trash2, FileDown, FilePlus, Upload } from "lucide-react";
+import { CheckCircle, PenLine, Trash2, FileDown, Upload, Send } from "lucide-react";
 import FormCard from "../../FormCard";
 import SignatureCanvas from "../../SignatureCanvas";
 import { generateCommercialPDF, generateCommercialROABase64 } from "../../../../lib/hrsCommercialPdfGenerator";
-import { MANAGER_NAME } from "../../../../lib/hrsConstants";
+import { MANAGER_NAME, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL } from "../../../../lib/hrsConstants";
 
 function InfoRow({ label, value }) {
   return (
@@ -14,10 +14,11 @@ function InfoRow({ label, value }) {
   );
 }
 
-function SectionBar({ title }) {
+function SectionBar({ title, right }) {
   return (
-    <div className="bg-hrs-blue text-white px-3 py-1.5 mt-4 mb-0 rounded-t-md">
+    <div className="flex items-center justify-between bg-hrs-blue text-white px-3 py-1.5 mt-4 mb-0 rounded-t-md">
       <span className="text-[0.72rem] font-bold uppercase tracking-[0.1em]">{title}</span>
+      {right && <span className="text-[0.68rem] opacity-80">{right}</span>}
     </div>
   );
 }
@@ -125,6 +126,8 @@ const ADDITIONAL_DOCS = [
   "PROOF OF BUSINESS ASSETS",
 ];
 
+const COMMISSION_ROWS = ["Brokerage (HRS)", "Broker", "Referror", "Other"];
+
 export default function CommercialStepChecklist({ data, onRestart }) {
   const [smartsure, setSmartsure] = useState(null);
   const [directInsurer, setDirectInsurer] = useState(null);
@@ -138,11 +141,60 @@ export default function CommercialStepChecklist({ data, onRestart }) {
   const [downloading, setDownloading] = useState(null);
   const [downloaded, setDownloaded] = useState(false);
   const [confirmRestart, setConfirmRestart] = useState(false);
+  const [sigSending, setSigSending] = useState(false);
+  const [sigSent, setSigSent] = useState(false);
+  const [sigError, setSigError] = useState(null);
+
+  // Editable commission fields
+  const [commissions, setCommissions] = useState({
+    "Brokerage (HRS)": "",
+    "Broker": "",
+    "Referror": "",
+    "Other": "",
+  });
 
   const netPrem = parseFloat(data.prem2) || 0;
   const feeVal = parseFloat(data.brokerFeePercent) || 0;
   const feeAmount = data.brokerFeeType === 'fixed' ? feeVal : (netPrem * feeVal / 100);
   const totalPrem = netPrem + feeAmount;
+
+  const handleSendForSignature = async () => {
+    const clientEmail = data.email;
+    const signerName = [data.companyName, data.contactPerson].filter(Boolean).join(' – ');
+    const brokerEmail = BROKER_EMAIL_MAP[data.brokerName] || DEFAULT_BROKER_EMAIL;
+
+    if (!clientEmail) {
+      setSigError('No client email address found. Please ensure the client email was entered.');
+      return;
+    }
+
+    setSigSending(true);
+    setSigError(null);
+    try {
+      const { base64, filename } = await generateCommercialROABase64(data);
+      const res = await fetch('/api/send-for-signature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signerName,
+          signerEmail: clientEmail,
+          brokerName: data.brokerName,
+          brokerEmail,
+          pdfBase64: base64,
+          pdfFilename: filename,
+          subject: `Your Record of Advice – ${data.companyName || signerName} | Holistic Risk Services`,
+          message: `Dear ${data.contactPerson || signerName}, please review and sign your Record of Advice from Holistic Risk Services (Pty) Ltd. This document is required under the Financial Advisory and Intermediary Services (FAIS) Act.`,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to send');
+      setSigSent(true);
+    } catch (err) {
+      setSigError(err.message || 'Could not send signature request. Please try again.');
+    } finally {
+      setSigSending(false);
+    }
+  };
 
   const handleDownload = async () => {
     setDownloading('roa');
@@ -203,26 +255,55 @@ export default function CommercialStepChecklist({ data, onRestart }) {
           <YesNoRow label="Direct Insurer" value={directInsurer} onChange={setDirectInsurer} />
         </div>
 
-        {/* Premium summary */}
-        <SectionBar title="Premium Summary" />
-        <div className="border border-hrs-border border-t-0 p-2 mb-3">
-          {[
-            { label: "NET Premium", value: netPrem ? `R ${netPrem.toFixed(2)}` : "" },
-            { label: "SASRIA", value: "" },
-            { label: "HRS Fee", value: feeAmount ? `R ${feeAmount.toFixed(2)}` : "" },
-          ].map(({ label, value }) => (
-            <div key={label} className="flex justify-between py-1 border-b border-hrs-border">
-              <span className="text-[0.75rem] text-hrs-muted">{label}</span>
-              <span className="text-[0.78rem] font-medium text-hrs-blue">{value}</span>
+        {/* Premium Summary + Commission — editable */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 mt-2">
+          <div>
+            <SectionBar title="Premium Summary" />
+            <div className="border border-hrs-border border-t-0 p-2">
+              {[
+                { label: "NET Premium", value: netPrem ? `R ${netPrem.toFixed(2)}` : "" },
+                { label: "SASRIA", value: "" },
+                { label: "HRS Fee", value: feeAmount ? `R ${feeAmount.toFixed(2)}` : "" },
+              ].map(({ label, value }) => (
+                <div key={label} className="flex justify-between py-1 border-b border-hrs-border">
+                  <span className="text-[0.75rem] text-hrs-muted">{label}</span>
+                  <span className="text-[0.78rem] font-medium text-hrs-blue">{value}</span>
+                </div>
+              ))}
+              <div className="flex justify-between py-1.5 bg-hrs-blue/10 px-2 rounded mt-1">
+                <span className="text-[0.78rem] font-bold text-hrs-blue">Total Premium</span>
+                <span className="text-[0.82rem] font-bold text-hrs-orange">{totalPrem ? `R ${totalPrem.toFixed(2)}` : ""}</span>
+              </div>
             </div>
-          ))}
-          <div className="flex justify-between py-1.5 bg-hrs-blue/10 px-2 rounded mt-1">
-            <span className="text-[0.78rem] font-bold text-hrs-blue">Total Premium</span>
-            <span className="text-[0.82rem] font-bold text-hrs-orange">{totalPrem ? `R ${totalPrem.toFixed(2)}` : ""}</span>
+          </div>
+          <div>
+            <SectionBar title="HRS - Commission Allocation" />
+            <div className="border border-hrs-border border-t-0 p-2 space-y-0.5">
+              {COMMISSION_ROWS.map((label) => (
+                <div key={label} className="flex items-center justify-between py-1 border-b border-hrs-border">
+                  <span className="text-[0.75rem] text-hrs-muted">{label}</span>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={commissions[label]}
+                      onChange={(e) => setCommissions(prev => ({ ...prev, [label]: e.target.value }))}
+                      className="text-[0.72rem] w-12 text-right border-b border-hrs-border bg-transparent outline-none focus:border-hrs-orange text-hrs-blue"
+                      placeholder="0"
+                    />
+                    <span className="text-[0.72rem] text-hrs-muted">%</span>
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-between py-1.5 bg-hrs-blue/10 px-2 rounded mt-1">
+                <span className="text-[0.78rem] font-bold text-hrs-blue">Monthly</span>
+                <span className="text-[0.78rem] font-bold text-hrs-blue">{totalPrem ? `R ${totalPrem.toFixed(2)}` : ""}</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Compliance & Additional docs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 mt-2">
           <div>
             <SectionBar title="Compliance Documentation" />
@@ -246,7 +327,6 @@ export default function CommercialStepChecklist({ data, onRestart }) {
           </div>
         </div>
 
-        {/* Comments */}
         <SectionBar title="Comments" />
         <div className="border border-hrs-border border-t-0 p-3">
           <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3}
@@ -254,8 +334,7 @@ export default function CommercialStepChecklist({ data, onRestart }) {
             className="w-full text-[0.82rem] text-hrs-blue bg-transparent border-none outline-none resize-none placeholder:text-hrs-muted" />
         </div>
 
-        {/* Tracking */}
-        <SectionBar title="Tracking and Admin" />
+        <SectionBar title="Tracking and Admin" right="Dates" />
         <div className="border border-hrs-border border-t-0 p-2">
           {[
             { label: "Full documentation handed in to upload", key: "docs" },
@@ -271,7 +350,6 @@ export default function CommercialStepChecklist({ data, onRestart }) {
           ))}
         </div>
 
-        {/* Signatures */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5 pt-4 border-t-2 border-hrs-border">
           <SigBox label="HRS Broker" sigKey="broker" sigs={sigs} onChange={setSigs} />
           <SigBox label="Manager" sigKey="manager" sigs={sigs} onChange={setSigs} />
@@ -282,7 +360,6 @@ export default function CommercialStepChecklist({ data, onRestart }) {
         </div>
       </FormCard>
 
-      {/* Actions */}
       <FormCard className="bg-gradient-to-br from-hrs-blue to-hrs-blue2 text-white">
         <div className="font-heading text-[1.05rem] text-hrs-orange mb-3">Download Documents</div>
         <div className="flex gap-3 flex-wrap mb-3">
@@ -291,6 +368,26 @@ export default function CommercialStepChecklist({ data, onRestart }) {
             <FileDown className="w-4 h-4" />
             {downloading ? 'Generating...' : 'Download Commercial ROA PDF'}
           </button>
+        </div>
+        <div className="mt-3 pt-3 border-t border-white/20">
+          <p className="text-[0.75rem] text-white/60 mb-2 font-semibold uppercase tracking-wider">E-Signature</p>
+          {sigSent ? (
+            <div className="flex items-center gap-2 bg-hrs-green/20 border border-hrs-green/40 rounded-lg px-4 py-2.5">
+              <span className="text-hrs-green text-[0.82rem] font-semibold">✓ Signature request sent to {data.email}</span>
+            </div>
+          ) : (
+            <button
+              onClick={handleSendForSignature}
+              disabled={sigSending}
+              className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-body font-semibold text-[0.85rem] bg-white/10 text-white border border-white/30 transition-all hover:bg-white/20 hover:border-white/60 disabled:opacity-60"
+            >
+              <Send className="w-4 h-4" />
+              {sigSending ? 'Sending...' : `Send ROA to ${data.email || 'client'} for e-signature`}
+            </button>
+          )}
+          {sigError && (
+            <p className="text-red-300 text-[0.75rem] mt-2">{sigError}</p>
+          )}
         </div>
         {confirmRestart ? (
           <div className="rounded-lg border border-hrs-orange/60 bg-white/10 px-4 py-3 text-[0.82rem]">

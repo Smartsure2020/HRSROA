@@ -1,9 +1,9 @@
 import { useState, useRef } from "react";
-import { CheckCircle, PenLine, Trash2, FileDown, FilePlus, Upload } from "lucide-react";
+import { CheckCircle, PenLine, Trash2, FileDown, FilePlus, Upload, Send } from "lucide-react";
 import FormCard from "../FormCard";
 import SignatureCanvas from "../SignatureCanvas";
-import { generatePDF, generateCombinedPDF } from "../../../lib/hrsPdfGenerator";
-import { MANAGER_NAME } from "../../../lib/hrsConstants";
+import { generatePDF, generateCombinedPDF, generateROABase64 } from "../../../lib/hrsPdfGenerator";
+import { MANAGER_NAME, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL } from "../../../lib/hrsConstants";
 
 function InfoRow({ label, value }) {
   return (
@@ -141,6 +141,9 @@ export default function StepChecklist({ data, onRestart }) {
   const [downloading, setDownloading] = useState(null);
   const [combinedDownloaded, setCombinedDownloaded] = useState(false);
   const [confirmRestart, setConfirmRestart] = useState(false);
+  const [sigSending, setSigSending] = useState(false);
+  const [sigSent, setSigSent] = useState(false);
+  const [sigError, setSigError] = useState(null);
 
   // Editable commission fields
   const [commissions, setCommissions] = useState({
@@ -174,6 +177,44 @@ export default function StepChecklist({ data, onRestart }) {
     await generateCombinedPDF(data, getChecklistState());
     setDownloading(null);
     setCombinedDownloaded(true);
+  };
+
+  const handleSendForSignature = async () => {
+    const clientEmail = data.email;
+    const clientName = [data.title, data.firstName, data.surname].filter(Boolean).join(' ');
+    const brokerEmail = BROKER_EMAIL_MAP[data.brokerName] || DEFAULT_BROKER_EMAIL;
+
+    if (!clientEmail) {
+      setSigError('No client email address found. Please ensure the client email was entered.');
+      return;
+    }
+
+    setSigSending(true);
+    setSigError(null);
+    try {
+      const { base64, filename } = await generateROABase64(data);
+      const res = await fetch('/api/send-for-signature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signerName: clientName,
+          signerEmail: clientEmail,
+          brokerName: data.brokerName,
+          brokerEmail,
+          pdfBase64: base64,
+          pdfFilename: filename,
+          subject: `Your Record of Advice – ${clientName} | Holistic Risk Services`,
+          message: `Dear ${clientName}, please review and sign your Record of Advice from Holistic Risk Services (Pty) Ltd. This document is required under the Financial Advisory and Intermediary Services (FAIS) Act.`,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to send');
+      setSigSent(true);
+    } catch (err) {
+      setSigError(err.message || 'Could not send signature request. Please try again.');
+    } finally {
+      setSigSending(false);
+    }
   };
 
   const handleRestartClick = () => {
@@ -362,6 +403,26 @@ export default function StepChecklist({ data, onRestart }) {
             <FilePlus className="w-4 h-4" />
             {downloading === 'combined' ? 'Generating...' : 'Download ROA + Checklist'}
           </button>
+        </div>
+        <div className="mt-3 pt-3 border-t border-white/20">
+          <p className="text-[0.75rem] text-white/60 mb-2 font-semibold uppercase tracking-wider">E-Signature</p>
+          {sigSent ? (
+            <div className="flex items-center gap-2 bg-hrs-green/20 border border-hrs-green/40 rounded-lg px-4 py-2.5">
+              <span className="text-hrs-green text-[0.82rem] font-semibold">✓ Signature request sent to {data.email}</span>
+            </div>
+          ) : (
+            <button
+              onClick={handleSendForSignature}
+              disabled={sigSending}
+              className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-body font-semibold text-[0.85rem] bg-white/10 text-white border border-white/30 transition-all hover:bg-white/20 hover:border-white/60 disabled:opacity-60"
+            >
+              <Send className="w-4 h-4" />
+              {sigSending ? 'Sending...' : `Send ROA to ${data.email || 'client'} for e-signature`}
+            </button>
+          )}
+          {sigError && (
+            <p className="text-red-300 text-[0.75rem] mt-2">{sigError}</p>
+          )}
         </div>
         {confirmRestart ? (
           <div className="rounded-lg border border-hrs-orange/60 bg-white/10 px-4 py-3 text-[0.82rem]">

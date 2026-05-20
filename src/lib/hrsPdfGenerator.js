@@ -266,11 +266,18 @@ class PDFBuilder {
     this.cy += rh;
   }
 
-  riskRow(name, note, cover, sasria, shade) {
+  riskRow(name, note, cover, sasria, shade, flagged = false) {
     const d = this.doc;
     const rh = note ? 9.5 : 7;
     this._needSpace(rh);
-    if (shade) d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
+    if (flagged) {
+      d.setFillColor(255, 251, 235); // amber-50
+      d.rect(ML, this.cy, CW, rh, 'F');
+      d.setFillColor(251, 191, 36); // amber-400
+      d.rect(ML, this.cy, 3, rh, 'F');
+    } else if (shade) {
+      d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
+    }
 
     d.setDrawColor(...C.border); d.setLineWidth(0.2);
     d.line(ML, this.cy + rh, ML + CW, this.cy + rh);
@@ -471,7 +478,7 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   sh = false;
   RISK_CATEGORIES.forEach((cat, i) => {
     const s = formData.riskState?.[i];
-    pdf.riskRow(cat.name, cat.note, s?.cover, s?.cover === 'yes' && s?.sasria, sh = !sh);
+    pdf.riskRow(cat.name, cat.note, s?.cover, s?.cover === 'yes' && s?.sasria, sh = !sh, !!s?.flagged);
   });
 
   if (formData.additionalComments) {

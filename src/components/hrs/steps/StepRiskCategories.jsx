@@ -4,15 +4,28 @@ import FormField from "../FormField";
 import TextInput from "../TextInput";
 import NavBar from "../NavBar";
 import { RISK_CATEGORIES } from "../../../lib/hrsConstants";
+import { Flag } from "lucide-react";
 
 function RiskRow({ cat, state, onChange, shade }) {
   const setCover = (val) => onChange({ ...state, cover: state.cover === val ? null : val });
   const toggleSasria = () => onChange({ ...state, sasria: !state.sasria });
+  const toggleFlag = () => onChange({ ...state, flagged: !state.flagged });
 
   return (
-    <div className={`flex items-center gap-2 py-2 px-2 border-b border-hrs-border ${shade ? 'bg-hrs-blue/5' : ''}`}>
+    <div className={`flex items-center gap-2 py-2 px-2 border-b border-hrs-border transition-colors ${
+      state.flagged ? 'bg-amber-50 border-l-4 border-l-amber-400' : shade ? 'bg-hrs-blue/5' : ''
+    }`}>
       <div className="flex-1 min-w-0">
-        <p className="text-[0.78rem] font-semibold text-hrs-blue truncate">{cat.name}</p>
+        <div className="flex items-center gap-1.5">
+          <p className={`text-[0.78rem] font-semibold truncate ${state.flagged ? 'text-amber-700' : 'text-hrs-blue'}`}>
+            {cat.name}
+          </p>
+          {state.flagged && (
+            <span className="text-[0.6rem] font-bold bg-amber-400 text-amber-900 px-1.5 py-0.5 rounded uppercase tracking-wide flex-shrink-0">
+              Important
+            </span>
+          )}
+        </div>
         {cat.note && <p className="text-[0.68rem] text-hrs-muted italic">{cat.note}</p>}
       </div>
       <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -39,6 +52,14 @@ function RiskRow({ cat, state, onChange, shade }) {
             SASRIA
           </button>
         )}
+        <button
+          type="button"
+          onClick={toggleFlag}
+          title="Flag as important for client"
+          className={`p-1 rounded border transition-all ${state.flagged ? 'bg-amber-400 border-amber-400 text-amber-900' : 'border-hrs-border text-hrs-muted hover:border-amber-400 hover:text-amber-500'}`}
+        >
+          <Flag className="w-3 h-3" />
+        </button>
       </div>
     </div>
   );
@@ -55,6 +76,7 @@ export default function StepRiskCategories({ data, onChange, onNext, onPrev }) {
 
   const coveredCount = data.riskState?.filter(r => r.cover === 'yes').length || 0;
   const excludedCount = data.riskState?.filter(r => r.cover === 'no').length || 0;
+  const flaggedCount = data.riskState?.filter(r => r.flagged).length || 0;
 
   return (
     <div>
@@ -64,27 +86,46 @@ export default function StepRiskCategories({ data, onChange, onNext, onPrev }) {
           <div className="flex gap-2 text-[0.72rem]">
             <span className="bg-hrs-green/10 text-hrs-green border border-hrs-green/30 px-2 py-0.5 rounded font-semibold">{coveredCount} Covered</span>
             <span className="bg-hrs-red/10 text-hrs-red border border-hrs-red/30 px-2 py-0.5 rounded font-semibold">{excludedCount} Excluded</span>
+            {flaggedCount > 0 && (
+              <span className="bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded font-semibold">{flaggedCount} Flagged</span>
+            )}
           </div>
         </div>
         <p className="text-hrs-muted text-[0.8rem] mb-4">
-          Select YES or NO for each category. Toggle SASRIA for covered risks where applicable.
+          Select YES or NO for each category. Toggle SASRIA where applicable. Use the{' '}
+          <Flag className="w-3 h-3 inline text-amber-500" /> flag to highlight important items for the client in the PDF.
         </p>
 
         <div className="rounded-lg border border-hrs-border overflow-hidden">
           <div className="bg-hrs-blue px-3 py-2 flex justify-between">
             <span className="text-white text-[0.72rem] font-bold uppercase tracking-wider">Risk Category</span>
-            <span className="text-white text-[0.72rem] font-bold uppercase tracking-wider">Cover / SASRIA</span>
+            <span className="text-white text-[0.72rem] font-bold uppercase tracking-wider">Cover / SASRIA / Flag</span>
           </div>
           {RISK_CATEGORIES.map((cat, i) => (
             <RiskRow
               key={cat.name}
               cat={cat}
-              state={data.riskState?.[i] || { cover: null, sasria: false }}
+              state={data.riskState?.[i] || { cover: null, sasria: false, flagged: false }}
               onChange={(val) => updateRisk(i, val)}
               shade={i % 2 === 1}
             />
           ))}
         </div>
+
+        {flaggedCount > 0 && (
+          <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <p className="text-[0.75rem] font-semibold text-amber-700 mb-1">
+              Flagged as Important ({flaggedCount}):
+            </p>
+            <p className="text-[0.72rem] text-amber-600">
+              {data.riskState
+                ?.map((s, i) => s.flagged ? RISK_CATEGORIES[i]?.name : null)
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
+            <p className="text-[0.7rem] text-amber-500 mt-1">These will be highlighted in yellow on the PDF for the client's attention.</p>
+          </div>
+        )}
 
         <div className="h-px bg-hrs-border my-6" />
         <FormField label="Additional Comments" required={false}>
