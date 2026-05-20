@@ -4,6 +4,7 @@ export const STEPS = [
   { label: "Products & Advice" },
   { label: "Risk Categories" },
   { label: "Principles & Disclosures" },
+  { label: "Banking & Debit Order" },
   { label: "Signatures" },
   { label: "Review" },
 ];
@@ -142,7 +143,10 @@ export function getStepErrors(step, formData) {
       ];
       return acks.filter(([k]) => !formData[k]).map(([, label]) => label);
     }
-    case 5: {
+    case 5:
+      // Banking — optional, no hard required fields
+      return [];
+    case 6: {
       const errors = [];
       if (!formData.clientSig) errors.push('Client Signature');
       if (!formData.advisorSig) errors.push('Advisor / Broker Signature');
@@ -156,7 +160,6 @@ export function getStepErrors(step, formData) {
 export function getInitialFormData() {
   const today = new Date().toISOString().split("T")[0];
   return {
-    // Broker fee type
     brokerFeeType: 'percent',
 
     // Client
@@ -200,7 +203,7 @@ export function getInitialFormData() {
     basisDecision: "To take out the proposed and quoted insurance with Holistic Risk Services (Pty) Ltd.",
 
     // Risk categories
-    riskState: RISK_CATEGORIES.map(() => ({ cover: null, sasria: false })),
+    riskState: RISK_CATEGORIES.map(() => ({ cover: null, sasria: false, flagged: false })),
     additionalComments: "",
 
     // Acknowledgements

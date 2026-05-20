@@ -8,6 +8,7 @@ import StepInsuranceHistory from "../components/hrs/steps/StepInsuranceHistory";
 import StepProductsAdvice from "../components/hrs/steps/StepProductsAdvice";
 import StepRiskCategories from "../components/hrs/steps/StepRiskCategories";
 import StepPrinciples from "../components/hrs/steps/StepPrinciples";
+import StepBanking from "../components/hrs/steps/StepBanking";
 import StepSignatures from "../components/hrs/steps/StepSignatures";
 import StepChecklist from "../components/hrs/steps/StepChecklist";
 import StepReview from "../components/hrs/steps/StepReview";
@@ -18,7 +19,7 @@ import { toast } from "@/components/ui/use-toast";
 import { syncPersonalROAToCRM } from '@/lib/crmSync';
 import { supabase } from '@/lib/supabaseClient';
 
-const TOTAL_STEPS = 7;
+const TOTAL_STEPS = 8;
 const SESSION_KEY = 'hrs_roa_draft';
 
 function readSession() {
@@ -107,7 +108,7 @@ export default function AdviceRecord() {
   }, [currentStep]);
 
   const handleSubmit = async () => {
-    const allErrors = [0, 1, 2, 3, 4, 5].flatMap((step) =>
+    const allErrors = [0, 1, 2, 3, 4, 5, 6].flatMap((step) =>
       getStepErrors(step, formData).map((e) => `Step ${step + 1}: ${e}`)
     );
     if (allErrors.length > 0) {
@@ -158,6 +159,7 @@ All acknowledgements completed: ${
 ---
 Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
 
+      // No CC — send only to broker
       const res = await fetch('/api/send-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -171,7 +173,6 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
 
       clearSession();
 
-      // Sync to CRM in background — fire-and-forget
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session) {
           syncPersonalROAToCRM(formData, session)
@@ -224,8 +225,9 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
       case 2: return <StepProductsAdvice {...common} />;
       case 3: return <StepRiskCategories {...common} />;
       case 4: return <StepPrinciples {...common} />;
-      case 5: return <StepSignatures {...common} />;
-      case 6: return <StepReview data={formData} onPrev={prevStep} onSubmit={handleSubmit} isSubmitting={isSubmitting} />;
+      case 5: return <StepBanking {...common} />;
+      case 6: return <StepSignatures {...common} />;
+      case 7: return <StepReview data={formData} onPrev={prevStep} onSubmit={handleSubmit} isSubmitting={isSubmitting} />;
       default: return null;
     }
   };
@@ -234,7 +236,6 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
     <div className="min-h-screen bg-background">
       <AppHeader />
 
-      {/* Back to home bar */}
       {!submitted && (
         <div className="bg-hrs-blue/95 border-b border-hrs-orange/40 px-4 py-2 flex items-center gap-3">
           <button

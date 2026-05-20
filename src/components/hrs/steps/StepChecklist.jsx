@@ -57,7 +57,6 @@ function SigBox({ label, sigKey, sigs, onChange }) {
   const [mode, setMode] = useState("draw");
 
   const handleDraw = (b64) => onChange({ ...sigs, [sigKey]: b64 || null });
-
   const handleUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -65,7 +64,6 @@ function SigBox({ label, sigKey, sigs, onChange }) {
     reader.onload = (ev) => onChange({ ...sigs, [sigKey]: ev.target.result });
     reader.readAsDataURL(file);
   };
-
   const handleClear = () => {
     onChange({ ...sigs, [sigKey]: null });
     if (drawRef.current)
@@ -125,6 +123,8 @@ const ADDITIONAL_DOCS = [
   "VALUATION CERTIFICATES ON HIGH VALUE JEWELLERY",
 ];
 
+const COMMISSION_ROWS = ["Brokerage (HRS)", "Broker", "Referror", "Other"];
+
 export default function StepChecklist({ data, onRestart }) {
   const fullName = [data.title, data.firstName, data.surname].filter(Boolean).join(' ') || '-';
   const address = [data.streetNumber, data.streetName, data.complexName, data.suburb, data.city, data.province, data.postalCode].filter(Boolean).join(', ') || '-';
@@ -138,9 +138,17 @@ export default function StepChecklist({ data, onRestart }) {
   const [sigs, setSigs] = useState({ broker: null, manager: null });
   const [businessType, setBusinessType] = useState('Personal');
   const [acctExec, setAcctExec] = useState(data.brokerName || MANAGER_NAME);
-  const [downloading, setDownloading] = useState(null); // 'roa' | 'combined'
+  const [downloading, setDownloading] = useState(null);
   const [combinedDownloaded, setCombinedDownloaded] = useState(false);
   const [confirmRestart, setConfirmRestart] = useState(false);
+
+  // Editable commission fields
+  const [commissions, setCommissions] = useState({
+    "Brokerage (HRS)": "",
+    "Broker": "",
+    "Referror": "",
+    "Other": "",
+  });
 
   const netPrem = parseFloat(data.prem2) || 0;
   const feeVal = parseFloat(data.brokerFeePercent) || 0;
@@ -152,7 +160,7 @@ export default function StepChecklist({ data, onRestart }) {
 
   const getChecklistState = () => ({
     smartsure, directInsurer, complianceDocs, additionalDocs,
-    comments, trackDates, businessType, acctExec,
+    comments, trackDates, businessType, acctExec, commissions,
   });
 
   const handleDownloadROA = async () => {
@@ -178,7 +186,6 @@ export default function StepChecklist({ data, onRestart }) {
 
   return (
     <div>
-      {/* Success banner */}
       <div className="bg-gradient-to-br from-hrs-blue to-hrs-blue2 text-white rounded-xl p-5 mb-6 flex items-start gap-4">
         <CheckCircle className="w-9 h-9 text-hrs-orange flex-shrink-0 mt-0.5" />
         <div>
@@ -190,7 +197,6 @@ export default function StepChecklist({ data, onRestart }) {
       </div>
 
       <FormCard>
-        {/* Header */}
         <div className="flex items-center justify-between mb-4 pb-3 border-b-2 border-hrs-orange">
           <img src="/assets/hrs-logo.png" alt="HRS" className="h-10" />
           <div className="text-right">
@@ -199,7 +205,6 @@ export default function StepChecklist({ data, onRestart }) {
           </div>
         </div>
 
-        {/* Client Info */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
           <InfoRow label="Insured" value={fullName} />
           <InfoRow label="Co Reg No" value="" />
@@ -214,7 +219,6 @@ export default function StepChecklist({ data, onRestart }) {
           <InfoRow label="Phone (Cell)" value={data.cell} />
         </div>
 
-        {/* Policy Info */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 mt-2">
           <InfoRow label="Insurer" value={data.recInsurer} />
           <InfoRow label="Inception Date" value={data.inceptionDate} />
@@ -233,13 +237,12 @@ export default function StepChecklist({ data, onRestart }) {
           </div>
         </div>
 
-        {/* Smartsure / Direct Insurer */}
         <div className="mt-2 border border-hrs-border rounded-b-md p-2 border-t-0">
           <YesNoRow label="Smartsure Facility" value={smartsure} onChange={setSmartsure} />
           <YesNoRow label="Direct Insurer" value={directInsurer} onChange={setDirectInsurer} />
         </div>
 
-        {/* Premium Summary + Commission */}
+        {/* Premium Summary + Commission — editable */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 mt-2">
           <div>
             <SectionBar title="Premium Summary" />
@@ -264,11 +267,19 @@ export default function StepChecklist({ data, onRestart }) {
           <div>
             <SectionBar title="HRS - Commission Allocation" />
             <div className="border border-hrs-border border-t-0 p-2 space-y-0.5">
-              {["Brokerage (HRS)", "Broker", "Referror", "Other"].map((label) => (
+              {COMMISSION_ROWS.map((label) => (
                 <div key={label} className="flex items-center justify-between py-1 border-b border-hrs-border">
                   <span className="text-[0.75rem] text-hrs-muted">{label}</span>
                   <div className="flex items-center gap-1">
-                    <span className="text-[0.72rem] w-8 text-right border-b border-dotted border-hrs-border">0</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={commissions[label]}
+                      onChange={(e) => setCommissions(prev => ({ ...prev, [label]: e.target.value }))}
+                      className="text-[0.72rem] w-12 text-right border-b border-hrs-border bg-transparent outline-none focus:border-hrs-orange text-hrs-blue"
+                      placeholder="0"
+                    />
                     <span className="text-[0.72rem] text-hrs-muted">%</span>
                   </div>
                 </div>
@@ -305,7 +316,6 @@ export default function StepChecklist({ data, onRestart }) {
           </div>
         </div>
 
-        {/* Comments */}
         <SectionBar title="Comments" />
         <div className="border border-hrs-border border-t-0 p-3">
           <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3}
@@ -313,7 +323,6 @@ export default function StepChecklist({ data, onRestart }) {
             className="w-full text-[0.82rem] text-hrs-blue bg-transparent border-none outline-none resize-none placeholder:text-hrs-muted" />
         </div>
 
-        {/* Tracking & Admin */}
         <SectionBar title="Tracking and Admin" right="Dates" />
         <div className="border border-hrs-border border-t-0 p-2">
           {[
@@ -330,7 +339,6 @@ export default function StepChecklist({ data, onRestart }) {
           ))}
         </div>
 
-        {/* Footer signatures */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5 pt-4 border-t-2 border-hrs-border">
           <SigBox label="HRS Broker" sigKey="broker" sigs={sigs} onChange={setSigs} />
           <SigBox label="Manager" sigKey="manager" sigs={sigs} onChange={setSigs} />
@@ -341,20 +349,15 @@ export default function StepChecklist({ data, onRestart }) {
         </div>
       </FormCard>
 
-      {/* Actions */}
       <FormCard className="bg-gradient-to-br from-hrs-blue to-hrs-blue2 text-white">
         <div className="font-heading text-[1.05rem] text-hrs-orange mb-3">Download Documents</div>
         <div className="flex gap-3 flex-wrap mb-3">
-          <button
-            onClick={handleDownloadROA}
-            disabled={!!downloading}
+          <button onClick={handleDownloadROA} disabled={!!downloading}
             className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-body font-semibold text-[0.88rem] bg-hrs-orange text-white border-none transition-all hover:bg-hrs-orange-light disabled:opacity-60">
             <FileDown className="w-4 h-4" />
             {downloading === 'roa' ? 'Generating...' : 'Download ROA PDF'}
           </button>
-          <button
-            onClick={handleDownloadCombined}
-            disabled={!!downloading}
+          <button onClick={handleDownloadCombined} disabled={!!downloading}
             className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-body font-semibold text-[0.88rem] bg-transparent text-white border-[1.5px] border-white/50 transition-all hover:border-white disabled:opacity-60">
             <FilePlus className="w-4 h-4" />
             {downloading === 'combined' ? 'Generating...' : 'Download ROA + Checklist'}
