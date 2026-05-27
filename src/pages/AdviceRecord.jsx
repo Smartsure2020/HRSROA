@@ -205,7 +205,8 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
   };
 
   const handleGoHome = () => {
-    if (!submitted && Object.values(formData).some(v => v)) {
+    const hasUserInput = formData.firstName || formData.surname || formData.idNumber;
+    if (!submitted && hasUserInput) {
       const confirm = window.confirm('You have an ROA in progress. Are you sure you want to go back to the home screen? Your progress will be saved in this session.');
       if (!confirm) return;
     }
