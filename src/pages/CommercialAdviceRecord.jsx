@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER } from '../lib/hrsConstants';
@@ -24,6 +24,18 @@ import CommercialStepSignatures from '../components/hrs/commercial/steps/Commerc
 import CommercialStepChecklist from '../components/hrs/commercial/steps/CommercialStepChecklist';
 
 
+const SESSION_KEY = 'hrs_commercial_roa_draft';
+
+function readSession() {
+  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; }
+}
+function writeSession(data) {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch { /* private browsing */ }
+}
+function clearSession() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+}
+
 export default function CommercialAdviceRecord() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -31,6 +43,21 @@ export default function CommercialAdviceRecord() {
   const [formData, setFormData] = useState(getCommercialInitialFormData());
   const [stepErrors, setStepErrors] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showRestoreBanner, setShowRestoreBanner] = useState(false);
+
+  const totalSteps = COMMERCIAL_STEPS.length;
+  const isChecklist = step === totalSteps - 1;
+
+  useEffect(() => {
+    if (readSession()) setShowRestoreBanner(true);
+  }, []);
+
+  useEffect(() => {
+    if (isChecklist) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isChecklist]);
 
   useEffect(() => {
     if (user?.email && EMAIL_TO_BROKER?.[user.email] && !formData.brokerName) {
@@ -38,8 +65,24 @@ export default function CommercialAdviceRecord() {
     }
   }, [user?.email]);
 
-  const totalSteps = COMMERCIAL_STEPS.length;
-  const isChecklist = step === totalSteps - 1;
+  const updateFormData = useCallback((updater) => {
+    setFormData((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      writeSession(next);
+      return next;
+    });
+  }, []);
+
+  const handleRestore = () => {
+    const saved = readSession();
+    if (saved) setFormData(saved);
+    setShowRestoreBanner(false);
+  };
+
+  const handleDismissRestore = () => {
+    clearSession();
+    setShowRestoreBanner(false);
+  };
 
   const tryNext = () => {
     const errors = getCommercialStepErrors(step, formData);
@@ -149,6 +192,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         }
       });
 
+      clearSession();
       setStep(totalSteps - 1);
       window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -164,16 +208,16 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
   };
 
   const restart = () => {
+    clearSession();
     setFormData(getCommercialInitialFormData());
     setStep(0);
     setStepErrors([]);
-    crmSynced.current = false;
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const stepProps = {
     data: formData,
-    onChange: setFormData,
+    onChange: updateFormData,
     onNext: tryNext,
     onPrev: goPrev,
   };
@@ -192,6 +236,16 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
           </button>
           <span className="text-white/20 text-[0.75rem]">|</span>
           <span className="text-white/50 text-[0.75rem]">Commercial Lines ROA</span>
+        </div>
+      )}
+
+      {showRestoreBanner && (
+        <div className="bg-hrs-blue text-white text-[0.82rem] px-4 py-2.5 flex items-center justify-between gap-4">
+          <span>You have an unsaved Commercial ROA in progress — continue?</span>
+          <div className="flex gap-3 flex-shrink-0">
+            <button onClick={handleRestore} className="underline font-semibold">Continue</button>
+            <button onClick={handleDismissRestore} className="opacity-70 hover:opacity-100">Discard</button>
+          </div>
         </div>
       )}
 
