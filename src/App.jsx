@@ -1,6 +1,4 @@
 import { Toaster } from "@/components/ui/toaster";
-import { QueryClientProvider } from '@tanstack/react-query';
-import { queryClientInstance } from '@/lib/query-client';
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import SelectROA from './pages/SelectROA';
@@ -30,8 +28,7 @@ function AuthGate({ children }) {
 function App() {
   return (
     <AuthProvider>
-      <QueryClientProvider client={queryClientInstance}>
-        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <AuthGate>
             <Routes>
               <Route path="/" element={<SelectROA />} />
@@ -42,7 +39,6 @@ function App() {
           </AuthGate>
         </Router>
         <Toaster />
-      </QueryClientProvider>
     </AuthProvider>
   );
 }
