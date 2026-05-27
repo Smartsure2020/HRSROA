@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER } from '../lib/hrsConstants';
@@ -70,28 +70,11 @@ export default function CommercialAdviceRecord() {
   const [stepErrors, setStepErrors] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const crmSynced = useRef(false);
-
   useEffect(() => {
     if (user?.email && EMAIL_TO_BROKER?.[user.email] && !formData.brokerName) {
       setFormData(prev => ({ ...prev, brokerName: EMAIL_TO_BROKER[user.email] }));
     }
   }, [user?.email]);
-
-  useEffect(() => {
-    if (step === 7 && !crmSynced.current) {
-      crmSynced.current = true;
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session) {
-          syncCommercialROAToCRM(formData, session)
-            .then(r => r.success
-              ? console.log('CRM sync OK — client:', r.clientId, 'deal:', r.dealId)
-              : console.warn('CRM sync failed:', r.error)
-            );
-        }
-      });
-    }
-  }, [step, formData]);
 
   const totalSteps = COMMERCIAL_STEPS.length;
   const isChecklist = step === totalSteps - 1;
@@ -193,6 +176,16 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Failed to send email');
       }
+
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          syncCommercialROAToCRM(formData, session)
+            .then(r => r.success
+              ? console.log('CRM sync OK — client:', r.clientId, 'deal:', r.dealId)
+              : console.warn('CRM sync failed:', r.error)
+            );
+        }
+      });
 
       setStep(totalSteps - 1);
       window.scrollTo({ top: 0, behavior: 'smooth' });
