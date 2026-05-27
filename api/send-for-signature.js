@@ -42,8 +42,7 @@ export default async function handler(req, res) {
     // Convert base64 PDF to a Buffer
     const pdfBuffer = Buffer.from(pdfBase64, 'base64');
 
-    // Build multipart form data for Dropbox Sign API
-    const { FormData, Blob } = await import('formdata-node');
+    // Build multipart form data for Dropbox Sign API (Node 18+ native globals)
     const form = new FormData();
 
     // Document
