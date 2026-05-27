@@ -4,6 +4,7 @@ import FormCard from "../FormCard";
 import SignatureCanvas from "../SignatureCanvas";
 import { generatePDF, generateCombinedPDF, generateROABase64 } from "../../../lib/hrsPdfGenerator";
 import { MANAGER_NAME, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL } from "../../../lib/hrsConstants";
+import logoUrl from "../../../assets/hrs-logo.png";
 
 function InfoRow({ label, value }) {
   return (
@@ -239,7 +240,7 @@ export default function StepChecklist({ data, onRestart }) {
 
       <FormCard>
         <div className="flex items-center justify-between mb-4 pb-3 border-b-2 border-hrs-orange">
-          <img src="/assets/hrs-logo.png" alt="HRS" className="h-10" />
+          <img src={logoUrl} alt="HRS" className="h-10" />
           <div className="text-right">
             <h2 className="font-heading text-[1.1rem] text-hrs-blue">HRS - NEW BUSINESS CHECKLIST</h2>
             <p className="text-[0.7rem] text-hrs-muted uppercase tracking-widest">FSP No. 28582</p>
