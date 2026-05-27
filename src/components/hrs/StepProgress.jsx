@@ -1,11 +1,11 @@
 import { STEPS } from "../../lib/hrsConstants";
 import { Check } from "lucide-react";
 
-export default function StepProgress({ currentStep, onGoTo }) {
+export default function StepProgress({ currentStep, onGoTo, steps = STEPS }) {
   return (
     <div className="bg-card border-b border-hrs-border overflow-x-auto">
       <div className="flex min-w-[700px] px-4 sm:px-8">
-        {STEPS.map((step, i) => {
+        {steps.map((step, i) => {
           const isActive = i === currentStep;
           const isDone = i < currentStep;
           return (

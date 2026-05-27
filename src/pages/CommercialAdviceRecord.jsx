@@ -4,9 +4,9 @@ import { useAuth } from '@/lib/AuthContext';
 import { BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER } from '../lib/hrsConstants';
 import { syncCommercialROAToCRM } from '@/lib/crmSync';
 import { supabase } from '@/lib/supabaseClient';
-import { Check } from 'lucide-react';
 import { Building2 } from 'lucide-react';
 import AppHeader from '../components/hrs/AppHeader';
+import StepProgress from '../components/hrs/StepProgress';
 import { toast } from "@/components/ui/use-toast";
 import {
   COMMERCIAL_STEPS,
@@ -23,44 +23,6 @@ import CommercialStepRiskCategories from '../components/hrs/commercial/steps/Com
 import CommercialStepSignatures from '../components/hrs/commercial/steps/CommercialStepSignatures';
 import CommercialStepChecklist from '../components/hrs/commercial/steps/CommercialStepChecklist';
 
-function CommercialStepProgress({ currentStep, onGoTo }) {
-  return (
-    <div className="bg-card border-b border-hrs-border overflow-x-auto">
-      <div className="flex min-w-[700px] px-4 sm:px-8">
-        {COMMERCIAL_STEPS.slice(0, -1).map((step, i) => {
-          const isActive = i === currentStep;
-          const isDone = i < currentStep;
-          return (
-            <button
-              key={i}
-              onClick={() => i <= currentStep && onGoTo(i)}
-              className={`
-                flex-1 flex items-center gap-2 py-3.5 px-2.5 border-b-[3px] transition-colors text-[0.78rem] font-medium whitespace-nowrap select-none
-                ${isActive ? "border-hrs-orange text-hrs-blue" : "border-transparent"}
-                ${isDone ? "text-hrs-green cursor-pointer" : ""}
-                ${!isActive && !isDone ? "text-hrs-muted cursor-default" : ""}
-                ${isActive ? "cursor-default" : ""}
-                ${isDone ? "hover:text-hrs-blue2" : ""}
-              `}
-            >
-              <span
-                className={`
-                  w-[22px] h-[22px] rounded-full flex items-center justify-center text-[0.7rem] font-semibold flex-shrink-0 transition-colors
-                  ${isActive ? "bg-hrs-orange text-white" : ""}
-                  ${isDone ? "bg-hrs-green text-white" : ""}
-                  ${!isActive && !isDone ? "bg-muted text-hrs-muted" : ""}
-                `}
-              >
-                {isDone ? <Check className="w-3 h-3" /> : i + 1}
-              </span>
-              <span className="hidden lg:inline">{step.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 export default function CommercialAdviceRecord() {
   const navigate = useNavigate();
@@ -234,7 +196,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
       )}
 
       {!isChecklist && (
-        <CommercialStepProgress currentStep={step} onGoTo={goTo} />
+        <StepProgress currentStep={step} onGoTo={goTo} steps={COMMERCIAL_STEPS.slice(0, -1)} />
       )}
 
       {stepErrors.length > 0 && (
