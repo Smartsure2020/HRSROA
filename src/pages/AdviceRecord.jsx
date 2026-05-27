@@ -26,7 +26,9 @@ function readSession() {
   try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; }
 }
 function writeSession(data) {
-  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch { /* private browsing */ }
+  // Exclude base64 signatures — they can be 100–200KB each and risk hitting the ~5MB sessionStorage quota
+  const { clientSig: _c, advisorSig: _a, ...rest } = data;
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(rest)); } catch { /* private browsing */ }
 }
 function clearSession() {
   try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
