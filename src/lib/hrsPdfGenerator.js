@@ -100,7 +100,6 @@ class PDFBuilder {
 
     if (logoValid) {
       try {
-  console.log('Adding logo to PDF - data length:', this.logo.length);
   d.addImage(this.logo, 'PNG', ML + 2, 4, 50, 22, undefined, 'MEDIUM');
   } catch (err) {
         console.error('Error adding logo to PDF:', err);
@@ -594,10 +593,6 @@ export async function generatePDF(formData) {
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
-
-  console.log('Logo URL:', logoUrl);
-  console.log('Logo data preview:', logo ? logo.substring(0, 50) : 'null'); 
-  console.log('Logo loaded successfully:', !!logo);
 
   const pdf = new PDFBuilder(logo);
   buildROA(pdf, formData, clientSig, advisorSig);
