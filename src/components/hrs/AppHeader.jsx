@@ -1,5 +1,6 @@
 import { useAuth } from '@/lib/AuthContext';
 import { LogOut } from 'lucide-react';
+import logoUrl from '@/assets/hrs-logo.png';
 
 export default function AppHeader({ title = "Advice Record – New Personal Insurance" }) {
   const { user, logout } = useAuth();
@@ -8,7 +9,7 @@ export default function AppHeader({ title = "Advice Record – New Personal Insu
     <header className="bg-card border-b-[3px] border-hrs-orange px-4 sm:px-8 py-3 flex items-center justify-between sticky top-0 z-50 shadow-[0_2px_16px_rgba(55,83,164,0.12)]">
       <div className="flex items-center gap-3">
         <img
-          src="https://hrsinsurance.co.za/wp-content/uploads/2020/07/cropped-HRS_Logo-1-118x52.png"
+          src={logoUrl}
           alt="Holistic Risk Services"
           className="h-11 w-auto block"
         />
