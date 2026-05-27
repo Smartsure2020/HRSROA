@@ -69,11 +69,7 @@ export function AuthProvider({ children }) {
       isLoadingAuth,
       signIn,
       logout: signOut,
-      isLoadingPublicSettings: false,
-      authError: null,
-      appPublicSettings: { id: 'hrs', public_settings: {} },
-      navigateToLogin: () => {},
-      checkAppState: () => {},
+
     }}>
       {children}
     </AuthContext.Provider>
