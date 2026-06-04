@@ -1,13 +1,9 @@
 // api/send-for-signature.js
 // DocuSign eSignature integration using JWT authentication
-// Environment variables required:
-//   DOCUSIGN_INTEGRATION_KEY
-//   DOCUSIGN_SECRET_KEY
-//   DOCUSIGN_ACCOUNT_ID
-//   DOCUSIGN_USER_ID
-//   DOCUSIGN_PRIVATE_KEY
+// Uses 'jose' library for ESM-compatible JWT signing
+// Run: npm install jose
 
-import * as jwt from 'jsonwebtoken';
+import { SignJWT, importPKCS8 } from 'jose';
 
 const DOCUSIGN_AUTH_SERVER = 'account-d.docusign.com'; // sandbox
 const DOCUSIGN_BASE_URL = 'https://demo.docusign.net/restapi'; // sandbox
@@ -19,23 +15,29 @@ const DOCUSIGN_BASE_URL = 'https://demo.docusign.net/restapi'; // sandbox
 async function getJWTAccessToken() {
   const integrationKey = process.env.DOCUSIGN_INTEGRATION_KEY;
   const userId = process.env.DOCUSIGN_USER_ID;
-  const privateKey = process.env.DOCUSIGN_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  const privateKeyRaw = process.env.DOCUSIGN_PRIVATE_KEY;
 
-  if (!integrationKey || !userId || !privateKey) {
+  if (!integrationKey || !userId || !privateKeyRaw) {
     throw new Error('Missing DocuSign JWT credentials');
   }
 
+  // Vercel stores multiline env vars with literal \n — normalise them
+  const privateKeyPem = privateKeyRaw.replace(/\\n/g, '\n');
+
+  const privateKey = await importPKCS8(privateKeyPem, 'RS256');
+
   const now = Math.floor(Date.now() / 1000);
-  const payload = {
+
+  const assertion = await new SignJWT({
     iss: integrationKey,
     sub: userId,
     aud: DOCUSIGN_AUTH_SERVER,
     iat: now,
     exp: now + 3600,
     scope: 'signature impersonation',
-  };
-
-  const assertion = jwt.sign(payload, privateKey, { algorithm: 'RS256' });
+  })
+    .setProtectedHeader({ alg: 'RS256' })
+    .sign(privateKey);
 
   const response = await fetch(`https://${DOCUSIGN_AUTH_SERVER}/oauth/token`, {
     method: 'POST',
@@ -69,7 +71,7 @@ export default async function handler(req, res) {
     pdfFilename,
     subject,
     message,
-    roaType = 'Personal', // 'Personal' or 'Commercial'
+    roaType = 'Personal',
   } = req.body ?? {};
 
   if (!signerName || !signerEmail || !brokerName || !brokerEmail || !pdfBase64 || !pdfFilename) {
@@ -93,7 +95,6 @@ export default async function handler(req, res) {
     const accessToken = await getJWTAccessToken();
     const accountId = process.env.DOCUSIGN_ACCOUNT_ID;
 
-    // Build the DocuSign envelope
     const envelope = {
       emailSubject: subject || `Please sign your Record of Advice – ${signerName} | HRS Insurance`,
       emailBlurb: message || `Dear ${signerName},\n\nPlease review and sign your ${roaType} Lines Record of Advice from Holistic Risk Services (Pty) Ltd. This document is required under the Financial Advisory and Intermediary Services (FAIS) Act.\n\nKind regards,\nHolistic Risk Services (Pty) Ltd\nFSP No. 28582`,
@@ -109,7 +110,6 @@ export default async function handler(req, res) {
       recipients: {
         signers: [
           {
-            // Client signs first
             name: signerName,
             email: signerEmail,
             recipientId: '1',
@@ -117,7 +117,6 @@ export default async function handler(req, res) {
             tabs: {
               signHereTabs: [
                 {
-                  // Position signature on the last page at the client signature area
                   documentId: '1',
                   pageNumber: '1',
                   anchorString: 'Client Signature',
@@ -139,7 +138,6 @@ export default async function handler(req, res) {
             },
           },
           {
-            // Broker signs second
             name: brokerName,
             email: brokerEmail,
             recipientId: '2',
@@ -156,6 +154,14 @@ export default async function handler(req, res) {
                 },
               ],
             },
+          },
+        ],
+        carbonCopies: [
+          {
+            name: 'HRS Insurance',
+            email: 'info@hrsinsurance.co.za',
+            recipientId: '3',
+            routingOrder: '3',
           },
         ],
       },
@@ -199,7 +205,7 @@ export default async function handler(req, res) {
       ok: true,
       envelopeId: data.envelopeId,
       status: data.status,
-      message: `Signature request sent to ${signerEmail}. Broker (${brokerEmail}) will sign after client.`,
+      message: `Signature request sent to ${signerEmail}. ${brokerName} will countersign after client.`,
     });
 
   } catch (err) {
