@@ -4,6 +4,7 @@
 // Run: npm install jose
 
 import { SignJWT, importPKCS8 } from 'jose';
+import { createPrivateKey } from 'crypto';
 
 const DOCUSIGN_AUTH_SERVER = 'account-d.docusign.com'; // sandbox
 const DOCUSIGN_BASE_URL = 'https://demo.docusign.net/restapi'; // sandbox
@@ -24,7 +25,13 @@ async function getJWTAccessToken() {
   // Vercel stores multiline env vars with literal \n — normalise them
   const privateKeyPem = privateKeyRaw.replace(/\\n/g, '\n');
 
-  const privateKey = await importPKCS8(privateKeyPem, 'RS256');
+  // DocuSign exports PKCS#1 keys (BEGIN RSA PRIVATE KEY); jose requires PKCS#8.
+  // Node's createPrivateKey handles both formats, so we normalise here.
+  const pkcs8Pem = privateKeyPem.includes('BEGIN PRIVATE KEY')
+    ? privateKeyPem
+    : createPrivateKey(privateKeyPem).export({ type: 'pkcs8', format: 'pem' });
+
+  const privateKey = await importPKCS8(pkcs8Pem, 'RS256');
 
   const now = Math.floor(Date.now() / 1000);
 
