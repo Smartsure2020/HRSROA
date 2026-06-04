@@ -16,7 +16,7 @@ export default function StepSuccess({ onRestart }) {
         <div className="text-[0.82rem] text-hrs-blue2 leading-[1.7]">
           16 Monte Carlo Crescent, Kyalami Business Park, Midrand, 1684<br />
           P O Box 321 Cramerview 2060 · Tel: 010 447-9800<br />
-          info@hrsinsurance.co.za · www.hrsinsurance.co.za<br />
+          www.hrsinsurance.co.za<br />
           <strong>Holistic Risk Services (Pty) Ltd · FSP 28582</strong>
         </div>
       </div>
