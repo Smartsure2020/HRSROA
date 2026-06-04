@@ -141,11 +141,6 @@ export default function CommercialStepChecklist({ data, onRestart }) {
   const [downloading, setDownloading] = useState(null);
   const [downloaded, setDownloaded] = useState(false);
   const [confirmRestart, setConfirmRestart] = useState(false);
-  const [sigSending, setSigSending] = useState(false);
-  const [sigSent, setSigSent] = useState(false);
-  const [sigError, setSigError] = useState(null);
-
-  // Editable commission fields
   const [commissions, setCommissions] = useState({
     "Brokerage (HRS)": "",
     "Broker": "",
@@ -153,54 +148,66 @@ export default function CommercialStepChecklist({ data, onRestart }) {
     "Other": "",
   });
 
+  // DocuSign e-signature state
+  const [sigSending, setSigSending] = useState(false);
+  const [sigSent, setSigSent] = useState(false);
+  const [sigError, setSigError] = useState(null);
+  const [sigEnvelopeId, setSigEnvelopeId] = useState(null);
+
   const netPrem = parseFloat(data.prem2) || 0;
   const feeVal = parseFloat(data.brokerFeePercent) || 0;
   const feeAmount = data.brokerFeeType === 'fixed' ? feeVal : (netPrem * feeVal / 100);
   const totalPrem = netPrem + feeAmount;
 
-  const handleSendForSignature = async () => {
-    const clientEmail = data.email;
-    const signerName = [data.companyName, data.contactPerson].filter(Boolean).join(' – ');
-    const brokerEmail = BROKER_EMAIL_MAP[data.brokerName] || DEFAULT_BROKER_EMAIL;
-
-    if (!clientEmail) {
-      setSigError('No client email address found. Please ensure the client email was entered.');
-      return;
-    }
-
-    setSigSending(true);
-    setSigError(null);
-    try {
-      const { base64, filename } = await generateCommercialROABase64(data);
-      const res = await fetch('/api/send-for-signature', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          signerName,
-          signerEmail: clientEmail,
-          brokerName: data.brokerName,
-          brokerEmail,
-          pdfBase64: base64,
-          pdfFilename: filename,
-          subject: `Your Record of Advice – ${data.companyName || signerName} | Holistic Risk Services`,
-          message: `Dear ${data.contactPerson || signerName}, please review and sign your Record of Advice from Holistic Risk Services (Pty) Ltd. This document is required under the Financial Advisory and Intermediary Services (FAIS) Act.`,
-        }),
-      });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Failed to send');
-      setSigSent(true);
-    } catch (err) {
-      setSigError(err.message || 'Could not send signature request. Please try again.');
-    } finally {
-      setSigSending(false);
-    }
-  };
+  const signerName = data.contactPerson || data.companyName || 'Client';
+  const signerEmail = data.email;
 
   const handleDownload = async () => {
     setDownloading('roa');
     await generateCommercialPDF(data);
     setDownloading(null);
     setDownloaded(true);
+  };
+
+  const handleSendForSignature = async () => {
+    if (!signerEmail) {
+      setSigError('No client email address found. Please ensure the email was entered in Step 1.');
+      return;
+    }
+
+    const brokerEmail = BROKER_EMAIL_MAP[data.brokerName] || DEFAULT_BROKER_EMAIL;
+
+    setSigSending(true);
+    setSigError(null);
+    try {
+      const { base64, filename } = await generateCommercialROABase64(data);
+
+      const res = await fetch('/api/send-for-signature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signerName,
+          signerEmail,
+          brokerName: data.brokerName,
+          brokerEmail,
+          pdfBase64: base64,
+          pdfFilename: filename,
+          roaType: 'Commercial',
+          subject: `Please sign your Record of Advice – ${data.companyName} | HRS Insurance`,
+          message: `Dear ${signerName},\n\nPlease review and sign the Commercial Lines Record of Advice for ${data.companyName} from Holistic Risk Services (Pty) Ltd. This document is required under the Financial Advisory and Intermediary Services (FAIS) Act.\n\nKind regards,\n${data.brokerName}\nHolistic Risk Services (Pty) Ltd\nFSP No. 28582`,
+        }),
+      });
+
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Failed to send signature request');
+
+      setSigSent(true);
+      setSigEnvelopeId(result.envelopeId);
+    } catch (err) {
+      setSigError(err.message || 'Could not send signature request. Please try again.');
+    } finally {
+      setSigSending(false);
+    }
   };
 
   return (
@@ -210,7 +217,7 @@ export default function CommercialStepChecklist({ data, onRestart }) {
         <div>
           <h2 className="font-heading text-[1.2rem] text-hrs-orange mb-1">Commercial Advice Record Submitted</h2>
           <p className="text-[0.82rem] opacity-80 leading-relaxed">
-            Record for <strong>{data.companyName || 'Client'}</strong> submitted. Complete the checklist below and download the PDF.
+            Record for <strong>{data.companyName || 'Client'}</strong> submitted. Complete the checklist and download or send for signature below.
           </p>
         </div>
       </div>
@@ -255,7 +262,7 @@ export default function CommercialStepChecklist({ data, onRestart }) {
           <YesNoRow label="Direct Insurer" value={directInsurer} onChange={setDirectInsurer} />
         </div>
 
-        {/* Premium Summary + Commission — editable */}
+        {/* Premium Summary + Editable Commission */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 mt-2">
           <div>
             <SectionBar title="Premium Summary" />
@@ -360,8 +367,10 @@ export default function CommercialStepChecklist({ data, onRestart }) {
         </div>
       </FormCard>
 
+      {/* Actions */}
       <FormCard className="bg-gradient-to-br from-hrs-blue to-hrs-blue2 text-white">
-        <div className="font-heading text-[1.05rem] text-hrs-orange mb-3">Download Documents</div>
+        <div className="font-heading text-[1.05rem] text-hrs-orange mb-3">Documents</div>
+
         <div className="flex gap-3 flex-wrap mb-3">
           <button onClick={handleDownload} disabled={!!downloading}
             className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-body font-semibold text-[0.88rem] bg-hrs-orange text-white border-none transition-all hover:bg-hrs-orange-light disabled:opacity-60">
@@ -369,47 +378,60 @@ export default function CommercialStepChecklist({ data, onRestart }) {
             {downloading ? 'Generating...' : 'Download Commercial ROA PDF'}
           </button>
         </div>
-        <div className="mt-3 pt-3 border-t border-white/20">
-          <p className="text-[0.75rem] text-white/60 mb-2 font-semibold uppercase tracking-wider">E-Signature</p>
+
+        {/* DocuSign e-signature */}
+        <div className="mt-1 pt-3 border-t border-white/20">
+          <p className="text-[0.72rem] text-white/60 mb-2 font-semibold uppercase tracking-wider">
+            Send for Remote E-Signature via DocuSign
+          </p>
           {sigSent ? (
-            <div className="flex items-center gap-2 bg-hrs-green/20 border border-hrs-green/40 rounded-lg px-4 py-2.5">
-              <span className="text-hrs-green text-[0.82rem] font-semibold">✓ Signature request sent to {data.email}</span>
+            <div className="bg-hrs-green/20 border border-hrs-green/40 rounded-lg px-4 py-3">
+              <p className="text-[0.82rem] font-semibold text-white">
+                ✓ Signature request sent to {signerEmail}
+              </p>
+              <p className="text-[0.75rem] text-white/60 mt-0.5">
+                {data.brokerName} will be notified to countersign once {signerName} completes. Envelope ID: {sigEnvelopeId}
+              </p>
             </div>
           ) : (
             <button
               onClick={handleSendForSignature}
-              disabled={sigSending}
+              disabled={sigSending || !!downloading}
               className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-body font-semibold text-[0.85rem] bg-white/10 text-white border border-white/30 transition-all hover:bg-white/20 hover:border-white/60 disabled:opacity-60"
             >
               <Send className="w-4 h-4" />
-              {sigSending ? 'Sending...' : `Send ROA to ${data.email || 'client'} for e-signature`}
+              {sigSending ? 'Sending to DocuSign...' : `Send to ${signerEmail || 'client'} for e-signature`}
             </button>
           )}
           {sigError && (
             <p className="text-red-300 text-[0.75rem] mt-2">{sigError}</p>
           )}
         </div>
-        {confirmRestart ? (
-          <div className="rounded-lg border border-hrs-orange/60 bg-white/10 px-4 py-3 text-[0.82rem]">
-            <p className="text-white font-semibold mb-2">Have you downloaded the ROA PDF?</p>
-            <p className="text-white/70 mb-3 text-[0.78rem]">All data will be lost once you start a new record.</p>
-            <div className="flex gap-3">
-              <button onClick={onRestart}
-                className="flex-1 px-4 py-2 rounded-lg font-body font-semibold text-[0.82rem] bg-hrs-orange text-white transition-all hover:bg-hrs-orange-light">
-                Yes, start new record
-              </button>
-              <button onClick={() => setConfirmRestart(false)}
-                className="flex-1 px-4 py-2 rounded-lg font-body font-semibold text-[0.82rem] bg-transparent text-white border border-white/40 transition-all hover:border-white">
-                Cancel
-              </button>
+
+        {/* Restart */}
+        <div className="mt-3 pt-3 border-t border-white/20">
+          {confirmRestart ? (
+            <div className="rounded-lg border border-hrs-orange/60 bg-white/10 px-4 py-3 text-[0.82rem]">
+              <p className="text-white font-semibold mb-2">Have you downloaded the ROA PDF?</p>
+              <p className="text-white/70 mb-3 text-[0.78rem]">All data will be lost once you start a new record.</p>
+              <div className="flex gap-3">
+                <button onClick={onRestart}
+                  className="flex-1 px-4 py-2 rounded-lg font-body font-semibold text-[0.82rem] bg-hrs-orange text-white transition-all hover:bg-hrs-orange-light">
+                  Yes, start new record
+                </button>
+                <button onClick={() => setConfirmRestart(false)}
+                  className="flex-1 px-4 py-2 rounded-lg font-body font-semibold text-[0.82rem] bg-transparent text-white border border-white/40 transition-all hover:border-white">
+                  Cancel
+                </button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <button onClick={() => !downloaded ? setConfirmRestart(true) : onRestart()}
-            className="w-full px-5 py-2.5 rounded-lg font-body font-semibold text-[0.85rem] bg-transparent text-white/70 border-[1px] border-white/20 transition-all hover:border-white/40 hover:text-white">
-            + New Advice Record
-          </button>
-        )}
+          ) : (
+            <button onClick={() => !downloaded ? setConfirmRestart(true) : onRestart()}
+              className="w-full px-5 py-2.5 rounded-lg font-body font-semibold text-[0.85rem] bg-transparent text-white/70 border-[1px] border-white/20 transition-all hover:border-white/40 hover:text-white">
+              + New Advice Record
+            </button>
+          )}
+        </div>
       </FormCard>
     </div>
   );
