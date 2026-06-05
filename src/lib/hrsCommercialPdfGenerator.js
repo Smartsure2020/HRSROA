@@ -71,68 +71,42 @@ class CommercialPDFBuilder {
 
   _drawHeader() {
     const d = this.doc;
-    d.setFillColor(...C.blue);
-    d.rect(0, 0, PAGE_W, 34, 'F');
-    d.setFillColor(...C.orange);
-    d.rect(0, 34, PAGE_W, 2.5, 'F');
-
-    d.setFillColor(...C.white);
-    d.roundedRect(ML, 3, 54, 28, 2, 2, 'F');
-
+    d.setFillColor(...C.blue); d.rect(0, 0, PAGE_W, 34, 'F');
+    d.setFillColor(...C.orange); d.rect(0, 34, PAGE_W, 2.5, 'F');
+    d.setFillColor(...C.white); d.roundedRect(ML, 3, 54, 28, 2, 2, 'F');
     let logoValid = false;
     if (this.logo && this.logo.startsWith('data:')) {
       const parts = this.logo.split(',');
       if (parts.length > 1 && parts[1].length > 64) logoValid = true;
     }
     if (logoValid) {
-      try {
-        d.addImage(this.logo, 'PNG', ML + 2, 4, 50, 22, undefined, 'MEDIUM');
-      } catch {
-        this._drawTextLogo(d);
-      }
-    } else {
-      this._drawTextLogo(d);
-    }
-
-    d.setFont('helvetica', 'bold');
-    d.setFontSize(13.5);
-    d.setTextColor(...C.white);
+      try { d.addImage(this.logo, 'PNG', ML + 2, 4, 50, 22, undefined, 'MEDIUM'); }
+      catch { this._drawTextLogo(d); }
+    } else { this._drawTextLogo(d); }
+    d.setFont('helvetica', 'bold'); d.setFontSize(13.5); d.setTextColor(...C.white);
     d.text('RECORD OF ADVICE', PAGE_W - MR, 13, { align: 'right' });
-
-    d.setFont('helvetica', 'normal');
-    d.setFontSize(7.2);
-    d.setTextColor(200, 205, 230);
+    d.setFont('helvetica', 'normal'); d.setFontSize(7.2); d.setTextColor(200, 205, 230);
     d.text('New Commercial Insurance  |  Holistic Risk Services (Pty) Ltd  |  FSP 28582', PAGE_W - MR, 20, { align: 'right' });
-
-    d.setFontSize(6.8);
-    d.setTextColor(165, 170, 205);
+    d.setFontSize(6.8); d.setTextColor(165, 170, 205);
     const dt = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' });
     d.text(`Generated: ${dt}`, PAGE_W - MR, 27, { align: 'right' });
   }
 
   _drawTextLogo(d) {
-    d.setFont('helvetica', 'bold');
-    d.setFontSize(10);
-    d.setTextColor(...C.blue);
+    d.setFont('helvetica', 'bold'); d.setFontSize(10); d.setTextColor(...C.blue);
     d.text('HRS', ML + 25, 18, { align: 'center' });
   }
 
   _drawFooter() {
     const d = this.doc;
     const fy = PAGE_H - 13;
-    d.setFillColor(...C.lightBg);
-    d.rect(0, fy, PAGE_W, 13, 'F');
-    d.setDrawColor(...C.border);
-    d.setLineWidth(0.3);
+    d.setFillColor(...C.lightBg); d.rect(0, fy, PAGE_W, 13, 'F');
+    d.setDrawColor(...C.border); d.setLineWidth(0.3);
     d.line(ML, fy + 0.8, PAGE_W - MR, fy + 0.8);
-    d.setFont('helvetica', 'normal');
-    d.setFontSize(6.3);
-    d.setTextColor(...C.grey);
+    d.setFont('helvetica', 'normal'); d.setFontSize(6.3); d.setTextColor(...C.grey);
     d.text('Holistic Risk Services (Pty) Ltd  |  FSP 28582  |  16 Monte Carlo Crescent, Kyalami Business Park, Midrand 1684', ML, fy + 5);
     d.text('010 447-9800  |  info@hrsinsurance.co.za  |  www.hrsinsurance.co.za', ML, fy + 9.5);
-    d.setFont('helvetica', 'bold');
-    d.setFontSize(7.5);
-    d.setTextColor(...C.blue);
+    d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
     d.text(`Page ${this.pageNum}`, PAGE_W - MR, fy + 7, { align: 'right' });
   }
 
@@ -251,15 +225,31 @@ class CommercialPDFBuilder {
     this.cy += rh;
   }
 
+  disclosureBlock(title, bodyText, ackLabel, checked) {
+    this._needSpace(20);
+    const d = this.doc;
+    d.setFillColor(...C.lightBg); d.rect(ML, this.cy, CW, 7, 'F');
+    d.setFillColor(...C.orange); d.rect(ML, this.cy, 2.5, 7, 'F');
+    d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
+    d.text(title.toUpperCase(), ML + 6, this.cy + 5);
+    this.cy += 9;
+    const allLines = d.splitTextToSize(bodyText, CW - 6);
+    const bodyH = Math.max(10, allLines.length * 4.5 + 4);
+    this._needSpace(bodyH);
+    d.setFont('helvetica', 'normal'); d.setFontSize(7); d.setTextColor(...C.black);
+    allLines.forEach((line, i) => d.text(line, ML + 3, this.cy + 5 + i * 4.5));
+    this.cy += bodyH;
+    this.ackRow(ackLabel, checked, false);
+    this.gap(2);
+  }
+
   riskRow(name, note, cover, sasria, shade, flagged = false) {
     const d = this.doc;
     const rh = note ? 9.5 : 7;
     this._needSpace(rh);
     if (flagged) {
-      d.setFillColor(255, 251, 235); // amber-50
-      d.rect(ML, this.cy, CW, rh, 'F');
-      d.setFillColor(251, 191, 36); // amber-400
-      d.rect(ML, this.cy, 3, rh, 'F');
+      d.setFillColor(255, 251, 235); d.rect(ML, this.cy, CW, rh, 'F');
+      d.setFillColor(251, 191, 36); d.rect(ML, this.cy, 3, rh, 'F');
     } else if (shade) {
       d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
     }
@@ -315,19 +305,16 @@ class CommercialPDFBuilder {
         d.roundedRect(cx + cw / 2 - 17, topY - badgeH, 34, badgeH - 0.5, 2, 2, 'F');
         d.setFont('helvetica', 'bold'); d.setFontSize(6.5); d.setTextColor(...C.goldTxt);
         d.text('RECOMMENDED', cx + cw / 2, topY - 1.5, { align: 'center' });
-        d.setFillColor(...C.blue);
-        d.roundedRect(cx, topY, cw, ch, 2, 2, 'F');
+        d.setFillColor(...C.blue); d.roundedRect(cx, topY, cw, ch, 2, 2, 'F');
         d.setTextColor(...C.white);
       } else {
-        d.setFillColor(...C.lightBg);
-        d.roundedRect(cx, topY, cw, ch, 2, 2, 'F');
+        d.setFillColor(...C.lightBg); d.roundedRect(cx, topY, cw, ch, 2, 2, 'F');
         d.setDrawColor(...C.border); d.setLineWidth(0.3);
         d.roundedRect(cx, topY, cw, ch, 2, 2, 'S');
         d.setTextColor(...C.grey);
       }
       d.setFont('helvetica', 'bold'); d.setFontSize(6.5);
       d.text(label, cx + cw / 2, topY + 7, { align: 'center' });
-      d.setDrawColor(recommended ? 70 : C.border[0], recommended ? 90 : C.border[1], recommended ? 140 : C.border[2]);
       d.setLineWidth(0.2);
       d.line(cx + 4, topY + 9, cx + cw - 4, topY + 9);
       d.setFont('helvetica', 'normal'); d.setFontSize(7);
@@ -378,6 +365,7 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
     : '-';
 
   let sh = false;
+  const d = pdf.doc;
 
   // 1. CLIENT DETAILS
   pdf.sectionHeading('1.  CLIENT DETAILS');
@@ -391,7 +379,7 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   pdf.twoColRow({ label: 'Inception Date', value: formData.inceptionDate }, { label: 'FAIS Disclosure Provided', value: yn(formData.faisProvided) }, sh = !sh);
   pdf.gap();
 
-  // 2. INSURANCE HISTORY & NEEDS
+  // 2. INSURANCE HISTORY
   pdf.sectionHeading('2.  INSURANCE HISTORY');
   sh = false;
   pdf.twoColRow({ label: 'Uninterrupted STI', value: yn(formData.uninterruptedInsurance) }, { label: 'Years Insured', value: formData.yearsInsured }, sh = !sh);
@@ -412,13 +400,11 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   pdf.dataRow('Recommended Insurer', formData.recInsurer, sh = !sh);
   pdf.multiLineDataRow('Reasons Why Suitable', formData.recReasons);
   pdf.gap(2);
-
   pdf.subHeading('Basis of Advice');
   pdf.multiLineDataRow('Information Considered', formData.basisInfo);
   pdf.multiLineDataRow('Recommendations Made', formData.basisRec);
   pdf.multiLineDataRow('Client Decision', formData.basisDecision);
   pdf.gap(2);
-
   pdf.subHeading('Commission & Fees');
   sh = false;
   pdf.dataRow('Standard Commission', '12.5% on Motor  |  20% on Non-Motor', sh = !sh);
@@ -441,28 +427,78 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
     pdf.gap();
   }
 
-  // 5. PRINCIPLES
-  pdf.sectionHeading('5.  SHORT-TERM INSURANCE PRINCIPLES');
+  // 5. PRINCIPLES & DISCLOSURES — full text, all sections
+  pdf.sectionHeading('5.  PRINCIPLES & LEGAL DISCLOSURES');
   pdf._needSpace(8);
-  const d = pdf.doc;
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
   d.text('NO', ML + 3, pdf.cy + 5);
-  d.text('THE IMPORTANT TERMS & FEATURES OF SHORT-TERM INSURANCE TO UNDERSTAND', ML + 12, pdf.cy + 5);
+  d.text('SHORT-TERM INSURANCE PRINCIPLES', ML + 12, pdf.cy + 5);
   pdf.cy += 8;
   COMMERCIAL_PRINCIPLES.forEach((text, i) => {
     pdf.principleRow(i + 1, text, formData.ackPrinciples, i % 2 === 1);
   });
-  pdf.gap(2);
+  pdf.ackRow('I confirm that I understand the above short-term insurance principles.', formData.ackPrinciples, false);
+  pdf.gap(3);
 
-  // POPIA
-  pdf.subHeading('POPIA Requirements');
-  const popiaText = 'In order to provide you with insurance, we have to process your personal information. We will share your personal information with other insurers, industry bodies, credit agencies and service providers. This includes information about your insurance, claims and premium payments. We do this to provide insurance services, prevent fraud, assess claims and conduct surveys. We will treat your personal information with caution and have put reasonable security measures in place to protect it. By signing this form, you agree to the processing and sharing of your personal information.';
-  pdf.multiLineDataRow('', popiaText);
-  pdf.ackRow('POPIA Consent — I agree to the processing and sharing of my personal information', formData.ackPopia, false);
+  pdf.disclosureBlock(
+    "Advice & Intermediary Services Agreement – Advisor's Obligations",
+    "Holistic Risk Services (Pty) Ltd & the Adviser undertake to: provide all statutory disclosure information and advice records; determine the Short-term Insurance goals and objectives of the Client and give effect to them in written recommendations; explain product features, restrictions, exclusions, terms and conditions; offer expertise and advice to enable the Client to make informed decisions; notify the Short-term Insurer of this appointment; render ongoing intermediary service to the Client; assist the Client in successful submission and settlement of claims; provide ongoing advice and assistance; renegotiate adequate cover and ensure competitive premiums during renewal; keep accurate records of discussions with the Client; treat the Client's information with the utmost confidentiality; ensure that the Client is not induced to waive any right in terms of any law; notify the client in writing should they wish to terminate this agreement.",
+    "I acknowledge the advisor's obligations as set out above.",
+    formData.ackAdvisor
+  );
+
+  pdf.disclosureBlock(
+    "Client Obligations",
+    "The Client agrees to: offer full cooperation and acknowledge ultimate responsibility for informed decisions; disclose all information that is factually true, accurate and material; instruct the Intermediary in writing when wishing to effect any changes or additions; study the policy schedule, wording and accompanying documentation upon receipt; notify the Intermediary of any change of contact details or banking details in writing; ensure that premiums and applicable fees are paid timeously; respond timeously to requests for cooperation when the annual review is due.",
+    "I confirm and accept my obligations as the client.",
+    formData.ackClient
+  );
+
+  pdf.disclosureBlock(
+    "POPIA Requirements",
+    "In order to provide you with insurance, we have to process your personal information. We will share your personal information with other insurers, industry bodies, credit agencies and service providers. This includes information about your insurance, claims and premium payments. We do this to provide insurance services, prevent fraud, assess claims and conduct surveys. We will treat your personal information with caution and have put reasonable security measures in place to protect it. By signing this form, you agree to the processing and sharing of your personal information.",
+    "I consent to the processing and sharing of my personal information as described above.",
+    formData.ackPopia
+  );
+
+  pdf.disclosureBlock(
+    "Termination of Agreement",
+    "Any party may terminate this agreement with 30 days' written notice. Holistic Risk Services (Pty) Ltd and the Adviser are from such date no longer responsible to provide the Client with any services or annual reports/statements.",
+    "I understand the termination terms of this agreement.",
+    formData.ackTermination
+  );
+
+  pdf.disclosureBlock(
+    "Broker (Intermediary) Fee Consent",
+    "A broker fee is an amount charged by Holistic Risk Services (Pty) Ltd (FSP 28582) for additional services rendered to you, which include but are not limited to: risk profiling, claims intervention, onsite visits, assistance with rejected claims, car hire management, accident support, and ongoing portfolio management. The broker fee amount is disclosed in Step 3 of this advice record. You have the right to withdraw your consent at any time by notifying Holistic Risk Services (Pty) Ltd in writing.",
+    "I have read and understood the Broker Fee Consent above, and I consent to the payment of the broker (intermediary) fee.",
+    formData.ackBrokerFee
+  );
+
+  pdf.disclosureBlock(
+    "Broker Appointment Confirmation",
+    "I, the undersigned, hereby confirm that I have appointed Holistic Risk Services (Pty) Ltd – HRS as my short-term insurance broker. You are hereby authorised to provide the bearer of this note with any information requested in connection with any of the policy contracts which constitute my insurance portfolio. This appointment shall remain in force until cancelled in writing by either party with 30 days' notice.",
+    "I confirm my appointment of Holistic Risk Services (Pty) Ltd as my short-term insurance broker.",
+    formData.ackBrokerAppointment
+  );
+
+  pdf.disclosureBlock(
+    "Broker Authorisation to Act",
+    "I/We hereby authorise Holistic Risk Services (Pty) Ltd to act as my/our intermediary and to render financial services on my/our behalf, including but not limited to: obtaining quotations, submitting applications, managing claims, and liaising with insurers on my/our behalf. This authorisation shall remain in force until revoked in writing.",
+    "I authorise Holistic Risk Services (Pty) Ltd to act as my intermediary and access my insurance portfolio information.",
+    formData.ackBrokerAuth
+  );
+
+  pdf.disclosureBlock(
+    "Advice & Intermediary Services Agreement",
+    "The Adviser undertakes to provide all statutory disclosures, determine goals and objectives, explain product features and restrictions, render ongoing intermediary service, assist with claims, renegotiate cover at renewal, keep accurate records, maintain confidentiality, and notify the client in writing upon termination. The Client agrees to cooperate fully, disclose all material information, instruct the Intermediary in writing for any changes, study all documentation received, notify of any contact or banking detail changes, pay premiums timeously, and cooperate during annual reviews.",
+    "I have read and agree to the Advice & Intermediary Services Agreement.",
+    formData.ackIntermediaryAgreement
+  );
   pdf.gap();
 
-  // Signatures Page 1
+  // 6. SIGNATURES — SINGLE signature block for DocuSign (client + broker)
   pdf.sectionHeading('6.  SIGNATURES — DECLARATION');
   pdf.gap(3);
   d.setFont('helvetica', 'italic'); d.setFontSize(7); d.setTextColor(...C.grey);
@@ -491,8 +527,11 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   d.setFont('helvetica', 'normal'); d.setFontSize(6.5); d.setTextColor(...C.grey);
   d.text('Client / Authorised Representative', ML + hw / 2, pdf.cy, { align: 'center' });
   d.text('Broker / Financial Advisor', ML + hw + 8 + hw / 2, pdf.cy, { align: 'center' });
+  pdf.cy += 5;
+  d.setFont('helvetica', 'normal'); d.setFontSize(6.5); d.setTextColor(...C.grey);
+  d.text('An authorised FSP No 28582', ML + CW / 2, pdf.cy, { align: 'center' });
 
-  // 7. RISK CATEGORIES (new page)
+  // 7. RISK CATEGORIES — force new page to avoid orphaned header
   pdf._newPage();
   pdf.sectionHeading('7.  INSURED RISKS AND / OR RISKS EXCLUDED FROM INSURANCE POLICY');
   pdf._needSpace(8);
@@ -511,24 +550,76 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
     pdf.gap(2);
     pdf.multiLineDataRow('Additional Comments', formData.additionalComments);
   }
+}
+
+function buildCommercialChecklist(pdf, formData, checklistState) {
+  pdf._newPage();
+  const d = pdf.doc;
+  const { smartsure, directInsurer, complianceDocs, additionalDocs, comments, trackDates, businessType, acctExec, commissions } = checklistState || {};
+
+  d.setFillColor(...C.orange); d.rect(ML, pdf.cy, CW, 8.5, 'F');
+  d.setFillColor(...C.blue); d.rect(ML, pdf.cy, 3.5, 8.5, 'F');
+  d.setFont('helvetica', 'bold'); d.setFontSize(8.5); d.setTextColor(...C.white);
+  d.text('HRS - NEW BUSINESS CHECKLIST (COMMERCIAL)', ML + 8, pdf.cy + 6);
+  pdf.cy += 12;
+
+  let sh = false;
+  pdf.twoColRow({ label: 'Insured', value: formData.companyName }, { label: 'Insurer', value: formData.recInsurer }, sh = !sh);
+  pdf.twoColRow({ label: 'Reg No.', value: formData.registrationNo }, { label: 'Inception Date', value: formData.inceptionDate }, sh = !sh);
+  pdf.twoColRow({ label: 'Business Type', value: businessType }, { label: 'Accounts Executive', value: acctExec }, sh = !sh);
+  pdf.twoColRow(
+    { label: 'Smartsure Facility', value: smartsure === 'yes' ? 'Yes' : smartsure === 'no' ? 'No' : '-' },
+    { label: 'Direct Insurer', value: directInsurer === 'yes' ? 'Yes' : directInsurer === 'no' ? 'No' : '-' },
+    sh = !sh
+  );
   pdf.gap(3);
 
-  // Intermediary Agreement Summary
-  pdf.subHeading('Advice & Intermediary Services Agreement');
-  pdf.ackRow('I have read and agree to the Advice & Intermediary Services Agreement', formData.ackIntermediaryAgreement, false);
-  pdf.gap(6);
+  pdf.subHeading('Premium Summary & Commission');
+  sh = false;
+  const netPrem = parseFloat(formData.prem2) || 0;
+  const feeVal = parseFloat(formData.brokerFeePercent) || 0;
+  const feeAmount = formData.brokerFeeType === 'fixed' ? feeVal : (netPrem * feeVal / 100);
+  const totalPrem = netPrem + feeAmount;
+  pdf.dataRow('NET Premium', netPrem ? `R ${netPrem.toFixed(2)}` : '-', sh = !sh);
+  pdf.dataRow('HRS Fee', feeAmount ? `R ${feeAmount.toFixed(2)}` : '-', sh = !sh);
+  pdf.dataRow('Total Premium', totalPrem ? `R ${totalPrem.toFixed(2)}` : '-', sh = !sh);
+  if (commissions) {
+    Object.entries(commissions).forEach(([label, val]) => {
+      if (val) pdf.dataRow(`Commission – ${label}`, `${val}%`, sh = !sh);
+    });
+  }
+  pdf.gap(3);
 
-  // Final signatures on risk page
-  pdf._needSpace(42);
-  pdf.sigBox('Client / Authorised Rep.', clientSig, ML, pdf.cy, hw, 38);
-  pdf.sigBox('Advisor / Broker Signature', advisorSig, ML + hw + 8, pdf.cy, hw, 38);
-  pdf.cy += 42;
-  d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
-  d.text(formData.companyName || 'Client', ML + hw / 2, pdf.cy, { align: 'center' });
-  d.text(formData.brokerName || 'Advisor', ML + hw + 8 + hw / 2, pdf.cy, { align: 'center' });
-  pdf.cy += 5;
-  d.setFont('helvetica', 'normal'); d.setFontSize(6.5); d.setTextColor(...C.grey);
-  d.text('An authorised FSP No 28582', ML + CW / 2, pdf.cy + 4, { align: 'center' });
+  pdf.subHeading('Compliance Documentation');
+  sh = false;
+  ['PROPOSAL','BROKER APPOINTMENT','DEBIT ORDER AUTHORITY','ROA | RECORD OF ADVICE',
+   'CURRENT POLICY SCHEDULE','PROOF OF PREVIOUS INSURANCE','SEC 13 CERTIFICATE AND DISCLOSURE',
+   'CLIENT CONSENT TO CHARGE BROKER FEE']
+    .forEach(item => pdf.ackRow(item, !!complianceDocs?.[item], sh = !sh));
+  pdf.gap(3);
+
+  pdf.subHeading('Additional Confirmation');
+  sh = false;
+  ["CELLPHONES | MAKE | MODEL | IMEI NO'S","ELECTRONICS | MAKE | MODEL | SERIAL NO'S",
+   'VEHICLE REGISTRATION CERTIFICATES','VEHICLE REGISTRATION - ENGINE AND VIN NOS',
+   'PROOF OF TRACKING DEVICE INSTALLATIONS','PROOF OF PURCHASES ON HIGH VALUE ITEMS',
+   'VALUATION CERTIFICATES ON HIGH VALUE ITEMS','COMPANY REGISTRATION DOCUMENTS','PROOF OF BUSINESS ASSETS']
+    .forEach(item => pdf.ackRow(item, !!additionalDocs?.[item], sh = !sh));
+  pdf.gap(3);
+
+  pdf.subHeading('Tracking and Admin');
+  sh = false;
+  [
+    { label: 'Full documentation handed in to upload', key: 'docs' },
+    { label: 'Documentation submitted to insurer / UMA', key: 'submitted' },
+    { label: 'Email to commissions@hrsinsurance.co.za', key: 'email' },
+  ].forEach(({ label, key }) => pdf.dataRow(label, trackDates?.[key] || '-', sh = !sh));
+
+  if (comments) {
+    pdf.gap(3);
+    pdf.subHeading('Comments');
+    pdf.multiLineDataRow('', comments);
+  }
 }
 
 export async function generateCommercialPDF(formData) {
@@ -555,4 +646,17 @@ export async function generateCommercialROABase64(formData) {
   const filename = `HRS_Commercial_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
   const base64 = pdf.doc.output('datauristring').split(',')[1];
   return { base64, filename };
+}
+
+export async function generateCommercialCombinedPDF(formData, checklistState) {
+  const [logo, clientSig, advisorSig] = await Promise.all([
+    loadImgAsDataURL(logoUrl),
+    loadImgAsDataURL(formData.clientSig),
+    loadImgAsDataURL(formData.advisorSig),
+  ]);
+  const pdf = new CommercialPDFBuilder(logo);
+  buildCommercialROA(pdf, formData, clientSig, advisorSig);
+  buildCommercialChecklist(pdf, formData, checklistState);
+  const name = (formData.companyName || 'Commercial').replace(/[^a-zA-Z0-9_]/g, '_');
+  pdf.save(`HRS_Commercial_ROA_Checklist_${name}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }

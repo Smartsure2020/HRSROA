@@ -1,20 +1,16 @@
 import { jsPDF } from 'jspdf';
-import { RISK_CATEGORIES } from './hrsConstants';
+import { RISK_CATEGORIES, PRINCIPLES } from './hrsConstants';
 import logoUrl from '../assets/hrs-logo.png';
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 function yn(val) {
   return val === 'yes' ? 'Yes' : val === 'no' ? 'No' : 'Not answered';
 }
-
 function fmt(val) {
   return (val !== null && val !== undefined && val !== '') ? String(val) : '-';
 }
-
 async function loadImgAsDataURL(src) {
   if (!src) return null;
   if (src.startsWith('data:')) return src;
-  
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -24,18 +20,13 @@ async function loadImgAsDataURL(src) {
       canvas.height = img.naturalHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0);
-      try {
-        resolve(canvas.toDataURL('image/png'));
-      } catch {
-        resolve(null);
-      }
+      try { resolve(canvas.toDataURL('image/png')); } catch { resolve(null); }
     };
     img.onerror = () => resolve(null);
     img.src = src;
   });
 }
 
-// ─── Colour Palette ───────────────────────────────────────────────────────────
 const C = {
   blue:    [37, 64, 143],
   orange:  [220, 75, 30],
@@ -55,7 +46,6 @@ const ML = 15, MR = 15;
 const CW = PAGE_W - ML - MR;
 const LW = 60;
 
-// ─── PDF Builder ─────────────────────────────────────────────────────────────
 class PDFBuilder {
   constructor(logoDataURL) {
     this.doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
@@ -79,79 +69,49 @@ class PDFBuilder {
     this.cy = 44;
   }
 
- _drawHeader() {
+  _drawHeader() {
     const d = this.doc;
     d.setFillColor(...C.blue);
     d.rect(0, 0, PAGE_W, 34, 'F');
     d.setFillColor(...C.orange);
     d.rect(0, 34, PAGE_W, 2.5, 'F');
-
     d.setFillColor(...C.white);
     d.roundedRect(ML, 3, 54, 28, 2, 2, 'F');
-
     let logoValid = false;
-   if (this.logo && this.logo.startsWith('data:')) {
-    // Check if it's a valid data URL and has content beyond the header
+    if (this.logo && this.logo.startsWith('data:')) {
       const parts = this.logo.split(',');
-      if (parts.length > 1 && parts[1].length > 64) {
-        logoValid = true;
-      }
+      if (parts.length > 1 && parts[1].length > 64) logoValid = true;
     }
-
     if (logoValid) {
-      try {
-  d.addImage(this.logo, 'PNG', ML + 2, 4, 50, 22, undefined, 'MEDIUM');
-  } catch (err) {
-        console.error('Error adding logo to PDF:', err);
-        this._drawTextLogo(d);
-      }
-} else {
-  console.warn('Logo data invalid or empty - using text fallback');
+      try { d.addImage(this.logo, 'PNG', ML + 2, 4, 50, 22, undefined, 'MEDIUM'); }
+      catch { this._drawTextLogo(d); }
+    } else {
       this._drawTextLogo(d);
-}
-
-    // Rest of header (title, etc.) - same as before
-    d.setFont('helvetica', 'bold');
-    d.setFontSize(13.5);
-    d.setTextColor(...C.white);
+    }
+    d.setFont('helvetica', 'bold'); d.setFontSize(13.5); d.setTextColor(...C.white);
     d.text('RECORD OF ADVICE', PAGE_W - MR, 13, { align: 'right' });
-
-    d.setFont('helvetica', 'normal');
-    d.setFontSize(7.2);
-    d.setTextColor(200, 205, 230);
-    d.text('New Personal Insurance  |  Holistic Risk Services (Pty) Ltd  |  FSP 28582',
-           PAGE_W - MR, 20, { align: 'right' });
-
-    d.setFontSize(6.8);
-    d.setTextColor(165, 170, 205);
+    d.setFont('helvetica', 'normal'); d.setFontSize(7.2); d.setTextColor(200, 205, 230);
+    d.text('New Personal Insurance  |  Holistic Risk Services (Pty) Ltd  |  FSP 28582', PAGE_W - MR, 20, { align: 'right' });
+    d.setFontSize(6.8); d.setTextColor(165, 170, 205);
     const dt = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' });
     d.text(`Generated: ${dt}`, PAGE_W - MR, 27, { align: 'right' });
   }
 
-   _drawTextLogo(d) {
-    d.setFont('helvetica', 'bold');
-    d.setFontSize(10);
-    d.setTextColor(...C.blue);
+  _drawTextLogo(d) {
+    d.setFont('helvetica', 'bold'); d.setFontSize(10); d.setTextColor(...C.blue);
     d.text('HRS', ML + 25, 18, { align: 'center' });
   }
+
   _drawFooter() {
     const d = this.doc;
     const fy = PAGE_H - 13;
-    d.setFillColor(...C.lightBg);
-    d.rect(0, fy, PAGE_W, 13, 'F');
-    d.setDrawColor(...C.border);
-    d.setLineWidth(0.3);
+    d.setFillColor(...C.lightBg); d.rect(0, fy, PAGE_W, 13, 'F');
+    d.setDrawColor(...C.border); d.setLineWidth(0.3);
     d.line(ML, fy + 0.8, PAGE_W - MR, fy + 0.8);
-
-    d.setFont('helvetica', 'normal');
-    d.setFontSize(6.3);
-    d.setTextColor(...C.grey);
+    d.setFont('helvetica', 'normal'); d.setFontSize(6.3); d.setTextColor(...C.grey);
     d.text('Holistic Risk Services (Pty) Ltd  |  FSP 28582  |  16 Monte Carlo Crescent, Kyalami Business Park, Midrand 1684', ML, fy + 5);
     d.text('010 447-9800  |  info@hrsinsurance.co.za  |  www.hrsinsurance.co.za', ML, fy + 9.5);
-
-    d.setFont('helvetica', 'bold');
-    d.setFontSize(7.5);
-    d.setTextColor(...C.blue);
+    d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
     d.text(`Page ${this.pageNum}`, PAGE_W - MR, fy + 7, { align: 'right' });
   }
 
@@ -182,17 +142,13 @@ class PDFBuilder {
     const rh = Math.max(7, lines.length * 4.8 + 2.5);
     this._needSpace(rh);
     if (shade) d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
-
     d.setDrawColor(...C.border); d.setLineWidth(0.2);
     d.line(ML, this.cy + rh, ML + CW, this.cy + rh);
     d.line(ML + LW, this.cy, ML + LW, this.cy + rh);
-
     d.setFont('helvetica', 'normal'); d.setFontSize(7.3); d.setTextColor(...C.grey);
     d.text(label, ML + 3, this.cy + rh / 2 + 1.5);
-
-    d.setFont('helvetica', lines.length > 1 ? 'normal' : 'bold'); 
-    d.setFontSize(7.6); 
-    d.setTextColor(...C.black);
+    d.setFont('helvetica', lines.length > 1 ? 'normal' : 'bold');
+    d.setFontSize(7.6); d.setTextColor(...C.black);
     lines.forEach((l, i) => d.text(l, ML + LW + 3, this.cy + 4.5 + i * 4.8));
     this.cy += rh;
   }
@@ -202,19 +158,14 @@ class PDFBuilder {
     const valStr = fmt(value);
     const lines = d.splitTextToSize(valStr, CW - 8);
     const rh = Math.max(14, lines.length * 5 + 6);
-
     this._needSpace(rh);
     if (shade) d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
-
     d.setDrawColor(...C.border); d.setLineWidth(0.2);
     d.line(ML, this.cy + rh, ML + CW, this.cy + rh);
-
     d.setFont('helvetica', 'normal'); d.setFontSize(7.3); d.setTextColor(...C.grey);
     d.text(label, ML + 3, this.cy + 6);
-
     d.setFont('helvetica', 'normal'); d.setFontSize(7.5); d.setTextColor(...C.black);
     lines.forEach((line, i) => d.text(line, ML + 3, this.cy + 13 + i * 5));
-
     this.cy += rh;
   }
 
@@ -225,15 +176,12 @@ class PDFBuilder {
     const rh = 7;
     this._needSpace(rh);
     if (shade) d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
-
     d.setDrawColor(...C.border); d.setLineWidth(0.2);
     d.line(ML, this.cy + rh, ML + CW, this.cy + rh);
     d.line(ML + half, this.cy, ML + half, this.cy + rh);
-
     d.setFont('helvetica', 'normal'); d.setFontSize(7.2); d.setTextColor(...C.grey);
     d.text(left.label, ML + 3, this.cy + 5);
     d.text(right.label, ML + half + 3, this.cy + 5);
-
     d.setFont('helvetica', 'bold'); d.setFontSize(7.6); d.setTextColor(...C.black);
     d.text(fmt(left.value), ML + lw, this.cy + 5);
     d.text(fmt(right.value), ML + half + lw, this.cy + 5);
@@ -245,10 +193,8 @@ class PDFBuilder {
     const rh = 7;
     this._needSpace(rh);
     if (shade) d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
-
     d.setDrawColor(...C.border); d.setLineWidth(0.2);
     d.line(ML, this.cy + rh, ML + CW, this.cy + rh);
-
     if (checked) {
       d.setFillColor(...C.green); d.roundedRect(ML + 3, this.cy + 1.8, 4, 4, 0.5, 0.5, 'F');
       d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
@@ -256,7 +202,6 @@ class PDFBuilder {
     } else {
       d.setDrawColor(...C.red); d.setLineWidth(0.5); d.rect(ML + 3, this.cy + 1.8, 4, 4);
     }
-
     const col = checked ? C.green : C.red;
     d.setFont('helvetica', 'bold'); d.setFontSize(7.2); d.setTextColor(...col);
     d.text(checked ? 'Acknowledged' : 'Not acknowledged', ML + 10, this.cy + 5);
@@ -265,29 +210,71 @@ class PDFBuilder {
     this.cy += rh;
   }
 
+  // Print a principle with its full text
+  principleRow(number, text, checked, shade) {
+    const d = this.doc;
+    const lines = d.splitTextToSize(`${number}. ${text}`, CW - 20);
+    const rh = Math.max(7, lines.length * 4.5 + 3);
+    this._needSpace(rh);
+    if (shade) d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
+    d.setDrawColor(...C.border); d.setLineWidth(0.2);
+    d.line(ML, this.cy + rh, ML + CW, this.cy + rh);
+    if (checked) {
+      d.setFillColor(...C.green); d.roundedRect(ML + 3, this.cy + 1.8, 4, 4, 0.5, 0.5, 'F');
+      d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
+      d.text('v', ML + 4.3, this.cy + 5.2);
+    } else {
+      d.setDrawColor(...C.red); d.setLineWidth(0.5); d.rect(ML + 3, this.cy + 1.8, 4, 4);
+    }
+    d.setFont('helvetica', 'normal'); d.setFontSize(7.2); d.setTextColor(...C.black);
+    lines.forEach((l, i) => d.text(l, ML + 12, this.cy + 5 + i * 4.5));
+    this.cy += rh;
+  }
+
+  // Print a disclosure block with full text then ack row
+  disclosureBlock(title, bodyLines, ackLabel, checked) {
+    this._needSpace(20);
+    const d = this.doc;
+    // Sub-heading
+    d.setFillColor(...C.lightBg); d.rect(ML, this.cy, CW, 7, 'F');
+    d.setFillColor(...C.orange); d.rect(ML, this.cy, 2.5, 7, 'F');
+    d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
+    d.text(title.toUpperCase(), ML + 6, this.cy + 5);
+    this.cy += 9;
+    // Body text
+    const allLines = d.splitTextToSize(bodyLines, CW - 6);
+    const bodyH = Math.max(10, allLines.length * 4.5 + 4);
+    this._needSpace(bodyH);
+    d.setFont('helvetica', 'normal'); d.setFontSize(7); d.setTextColor(...C.black);
+    allLines.forEach((line, i) => {
+      d.text(line, ML + 3, this.cy + 5 + i * 4.5);
+    });
+    this.cy += bodyH;
+    // Ack row
+    this.ackRow(ackLabel, checked, false);
+    this.gap(2);
+  }
+
   riskRow(name, note, cover, sasria, shade, flagged = false) {
     const d = this.doc;
     const rh = note ? 9.5 : 7;
     this._needSpace(rh);
     if (flagged) {
-      d.setFillColor(255, 251, 235); // amber-50
+      d.setFillColor(255, 251, 235);
       d.rect(ML, this.cy, CW, rh, 'F');
-      d.setFillColor(251, 191, 36); // amber-400
+      d.setFillColor(251, 191, 36);
       d.rect(ML, this.cy, 3, rh, 'F');
     } else if (shade) {
       d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
     }
-
     d.setDrawColor(...C.border); d.setLineWidth(0.2);
     d.line(ML, this.cy + rh, ML + CW, this.cy + rh);
-
     d.setFont('helvetica', 'bold'); d.setFontSize(7.3); d.setTextColor(...C.black);
     d.text(name, ML + 3, this.cy + 5);
     if (note) {
       d.setFont('helvetica', 'italic'); d.setFontSize(5.8); d.setTextColor(...C.grey);
       d.text(note, ML + 3, this.cy + 8.8);
     }
-
     const bx = ML + CW - 55;
     if (cover === 'yes') {
       d.setFillColor(...C.green); d.roundedRect(bx, this.cy + 1.5, 24, 5, 1, 1, 'F');
@@ -302,7 +289,6 @@ class PDFBuilder {
       d.setFont('helvetica', 'normal'); d.setFontSize(6.3); d.setTextColor(...C.grey);
       d.text('Not specified', bx + 2.5, this.cy + 5.2);
     }
-
     if (cover === 'yes') {
       const sx = bx + 27;
       if (sasria) {
@@ -326,16 +312,13 @@ class PDFBuilder {
     const ch = 34;
     const badgeH = 7;
     const topY = this.cy + badgeH;
-
     options.forEach(({ insurer, premium, label, recommended }, idx) => {
       const cx = ML + idx * (cw + gap);
-
       if (recommended) {
         d.setFillColor(...C.gold);
         d.roundedRect(cx + cw / 2 - 17, topY - badgeH, 34, badgeH - 0.5, 2, 2, 'F');
         d.setFont('helvetica', 'bold'); d.setFontSize(6.5); d.setTextColor(...C.goldTxt);
         d.text('RECOMMENDED', cx + cw / 2, topY - 1.5, { align: 'center' });
-
         d.setFillColor(...C.blue);
         d.roundedRect(cx, topY, cw, ch, 2, 2, 'F');
         d.setTextColor(...C.white);
@@ -346,37 +329,22 @@ class PDFBuilder {
         d.roundedRect(cx, topY, cw, ch, 2, 2, 'S');
         d.setTextColor(...C.grey);
       }
-
       d.setFont('helvetica', 'bold'); d.setFontSize(6.5);
       d.text(label, cx + cw / 2, topY + 7, { align: 'center' });
-
       d.setDrawColor(recommended ? 70 : C.border[0], recommended ? 90 : C.border[1], recommended ? 140 : C.border[2]);
       d.setLineWidth(0.2);
       d.line(cx + 4, topY + 9, cx + cw - 4, topY + 9);
-
       d.setFont('helvetica', 'normal'); d.setFontSize(7);
-      d.setTextColor(recommended ? C.white[0] : C.black[0], 
-                     recommended ? C.white[1] : C.black[1], 
-                     recommended ? C.white[2] : C.black[2]);
-
+      d.setTextColor(recommended ? C.white[0] : C.black[0], recommended ? C.white[1] : C.black[1], recommended ? C.white[2] : C.black[2]);
       const inLines = d.splitTextToSize(fmt(insurer), cw - 6);
-      inLines.slice(0, 2).forEach((l, i) => 
-        d.text(l, cx + cw / 2, topY + 14 + i * 4.5, { align: 'center' })
-      );
-
+      inLines.slice(0, 2).forEach((l, i) => d.text(l, cx + cw / 2, topY + 14 + i * 4.5, { align: 'center' }));
       d.setFont('helvetica', 'bold'); d.setFontSize(11.5);
-      d.setTextColor(recommended ? C.orange[0] : C.blue[0],
-                     recommended ? C.orange[1] : C.blue[1],
-                     recommended ? C.orange[2] : C.blue[2]);
+      d.setTextColor(recommended ? C.orange[0] : C.blue[0], recommended ? C.orange[1] : C.blue[1], recommended ? C.orange[2] : C.blue[2]);
       d.text(premium ? `R ${premium}` : '-', cx + cw / 2, topY + 27, { align: 'center' });
-
       d.setFont('helvetica', 'normal'); d.setFontSize(5.8);
-      d.setTextColor(recommended ? 175 : C.grey[0], 
-                     recommended ? 185 : C.grey[1], 
-                     recommended ? 215 : C.grey[2]);
+      d.setTextColor(recommended ? 175 : C.grey[0], recommended ? 185 : C.grey[1], recommended ? 215 : C.grey[2]);
       d.text('per month', cx + cw / 2, topY + 32, { align: 'center' });
     });
-
     this.cy = topY + ch + 5;
   }
 
@@ -384,13 +352,10 @@ class PDFBuilder {
     const d = this.doc;
     d.setFillColor(...C.lightBg); d.roundedRect(x, y, w, h, 1.5, 1.5, 'F');
     d.setDrawColor(...C.border); d.setLineWidth(0.4); d.roundedRect(x, y, w, h, 1.5, 1.5, 'S');
-
     d.setFillColor(...C.blue); d.roundedRect(x, y, w, 6.5, 1.5, 1.5, 'F');
     d.rect(x, y + 3.5, w, 3, 'F');
-
     d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
     d.text(label.toUpperCase(), x + w / 2, y + 5, { align: 'center' });
-
     if (sigDataURL) {
       d.addImage(sigDataURL, 'PNG', x + 5, y + 9, w - 10, h - 18, undefined, 'MEDIUM');
     } else {
@@ -400,7 +365,6 @@ class PDFBuilder {
       d.setFont('helvetica', 'italic'); d.setFontSize(6.5); d.setTextColor(...C.grey);
       d.text('Sign here', x + w / 2, y + h - 5, { align: 'center' });
     }
-
     d.setFont('helvetica', 'normal'); d.setFontSize(6.5); d.setTextColor(...C.grey);
     d.text('Date: ________________________', x + 4, y + h - 1.5);
   }
@@ -409,12 +373,10 @@ class PDFBuilder {
   save(filename) { this.doc.save(filename); }
 }
 
-// ─── Build Functions (unchanged from previous) ───────────────────────────────
 function buildROA(pdf, formData, clientSig, advisorSig) {
   const fullName = [formData.title, formData.firstName, formData.surname].filter(Boolean).join(' ').trim() || 'Client';
   const address = [formData.streetNumber, formData.streetName, formData.complexName, formData.suburb, formData.city, formData.province, formData.postalCode]
     .filter(Boolean).join(', ') || '-';
-
   const netPrem = parseFloat(formData.prem2) || 0;
   const feeVal = parseFloat(formData.brokerFeePercent) || 0;
   const feeAmount = formData.brokerFeeType === 'fixed' ? feeVal : (netPrem * feeVal / 100);
@@ -424,6 +386,7 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
 
   let sh = false;
 
+  // 1. CLIENT DETAILS
   pdf.sectionHeading('1.  CLIENT DETAILS');
   pdf.dataRow('Broker / Advisor', formData.brokerName, sh = !sh);
   pdf.twoColRow({ label: 'Title', value: formData.title }, { label: 'Initial(s)', value: formData.initials }, sh = !sh);
@@ -435,14 +398,16 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   pdf.dataRow('FAIS Disclosure Provided', yn(formData.faisProvided), sh = !sh);
   pdf.gap();
 
+  // 2. INSURANCE HISTORY
   pdf.sectionHeading('2.  INSURANCE HISTORY');
   sh = false;
   pdf.twoColRow({ label: 'Uninterrupted STI', value: yn(formData.uninterruptedInsurance) }, { label: 'Years Insured', value: formData.yearsInsured }, sh = !sh);
   pdf.dataRow('Special Terms / Cover Refused', yn(formData.specialTerms), sh = !sh);
   if (formData.specialTerms === 'yes') pdf.dataRow('Reason', formData.cancelReasonText, sh = !sh);
-  pdf.multiLineDataRow("Client Needs and Objectives", formData.clientNeeds);
+  pdf.multiLineDataRow('Client Needs and Objectives', formData.clientNeeds);
   pdf.gap();
 
+  // 3. PRODUCTS AND ADVICE
   pdf.sectionHeading('3.  PRODUCTS AND ADVICE');
   pdf.gap(8);
   pdf.insurerCards([
@@ -450,20 +415,18 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
     { insurer: formData.ins1, premium: formData.prem1, label: 'OPTION 2', recommended: false },
     { insurer: formData.ins2, premium: formData.prem2, label: 'OPTION 3', recommended: true },
   ]);
-
   sh = false;
   pdf.dataRow('Recommended Insurer', formData.recInsurer, sh = !sh);
   pdf.dataRow('Broker Fee', feeStr, sh = !sh);
   pdf.multiLineDataRow('Reasons for Recommendation', formData.recReasons);
   pdf.gap(2);
-
   pdf.subHeading('Basis of Advice');
   pdf.multiLineDataRow('Information Considered', formData.basisInfo);
   pdf.multiLineDataRow('Recommendations Made', formData.basisRec);
-  pdf.multiLineDataRow("Client Decision", formData.basisDecision);
+  pdf.multiLineDataRow('Client Decision', formData.basisDecision);
   pdf.gap();
 
-  // Risk Categories
+  // 4. RISK CATEGORIES
   pdf.sectionHeading('4.  RISK CATEGORIES');
   pdf._needSpace(8);
   const d = pdf.doc;
@@ -473,36 +436,101 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   d.text('COVER', ML + CW - 42, pdf.cy + 5);
   d.text('SASRIA', ML + CW - 14, pdf.cy + 5);
   pdf.cy += 8;
-
   sh = false;
   RISK_CATEGORIES.forEach((cat, i) => {
     const s = formData.riskState?.[i];
     pdf.riskRow(cat.name, cat.note, s?.cover, s?.cover === 'yes' && s?.sasria, sh = !sh, !!s?.flagged);
   });
-
   if (formData.additionalComments) {
     pdf.gap(2);
     pdf.multiLineDataRow('Additional Comments', formData.additionalComments);
   }
   pdf.gap();
 
-  // Acknowledgements
-  pdf.sectionHeading('5.  COMPLIANCE ACKNOWLEDGEMENTS');
+  // 5. BANKING & DEBIT ORDER
+  pdf.sectionHeading('5.  BANKING & DEBIT ORDER');
   sh = false;
-  [
-    ['Short-Term Insurance Principles', formData.ackPrinciples],
-    ['Advisor Obligations', formData.ackAdvisor],
-    ['Client Obligations', formData.ackClient],
-    ['POPIA / Personal Information Consent', formData.ackPopia],
-    ['Termination of Agreement Terms', formData.ackTermination],
-    ['Broker (Intermediary) Fee Consent', formData.ackBrokerFee],
-    ['Broker Appointment Confirmation', formData.ackBrokerAppointment],
-    ['Broker Authorisation to Act', formData.ackBrokerAuth],
-  ].forEach(([label, val]) => pdf.ackRow(label, val, sh = !sh));
+  pdf.dataRow('Bank Name', formData.bankName, sh = !sh);
+  pdf.twoColRow({ label: 'Account Holder', value: formData.bankHolder }, { label: 'Account Type', value: formData.accountType }, sh = !sh);
+  pdf.twoColRow({ label: 'Branch Name', value: formData.branchName }, { label: 'Branch Code', value: formData.branchCode }, sh = !sh);
+  pdf.dataRow('Account Number', formData.accountNumber, sh = !sh);
+  pdf.twoColRow({ label: 'Deduction Date', value: formData.deductionDate }, { label: 'Deduction Amount', value: formData.deductionAmount ? `R ${formData.deductionAmount}` : '-' }, sh = !sh);
+  pdf.twoColRow({ label: 'Inception Date', value: formData.inceptionDate }, { label: 'Insurer (Debit Order)', value: formData.doInsurer }, sh = !sh);
+  if (formData.apptHolder || formData.apptInsurer || formData.apptPolicyNo) {
+    pdf.gap(2);
+    pdf.subHeading('Broker Appointment');
+    sh = false;
+    pdf.twoColRow({ label: 'Policy Holder', value: formData.apptHolder }, { label: 'Insurance Company', value: formData.apptInsurer }, sh = !sh);
+    pdf.dataRow('Policy Number', formData.apptPolicyNo, sh = !sh);
+  }
   pdf.gap();
 
-  // Signatures
-  pdf.sectionHeading('6.  SIGNATURES');
+  // 6. COMPLIANCE ACKNOWLEDGEMENTS — full text
+  pdf.sectionHeading('6.  COMPLIANCE ACKNOWLEDGEMENTS');
+  pdf._needSpace(8);
+  d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
+  d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
+  d.text('NO', ML + 3, pdf.cy + 5);
+  d.text('SHORT-TERM INSURANCE PRINCIPLES', ML + 12, pdf.cy + 5);
+  pdf.cy += 8;
+  PRINCIPLES.forEach((text, i) => {
+    pdf.principleRow(i + 1, text, formData.ackPrinciples, i % 2 === 1);
+  });
+  pdf.ackRow('I confirm that I understand the above short-term insurance principles.', formData.ackPrinciples, false);
+  pdf.gap(3);
+
+  pdf.disclosureBlock(
+    "Advice & Intermediary Services Agreement – Advisor's Obligations",
+    "Holistic Risk Services (Pty) Ltd & the Adviser undertake to: provide all statutory disclosure information and advice records; determine the Short-term Insurance goals and objectives of the Client; explain product features, restrictions, exclusions, terms and conditions; render ongoing intermediary service, including assistance with claims; renegotiate adequate cover and ensure competitive premiums during renewal; keep accurate records of discussions with the Client; treat the Client's information with the utmost confidentiality; notify the client in writing should they wish to terminate this agreement.",
+    "I acknowledge the advisor's obligations as set out above.",
+    formData.ackAdvisor
+  );
+
+  pdf.disclosureBlock(
+    "Client Obligations",
+    "The Client agrees to: offer full cooperation and acknowledge ultimate responsibility for informed decisions; disclose all information that is factually true, accurate and material; instruct the Intermediary in writing when wishing to effect any changes or additions; study the policy schedule, wording and accompanying documentation upon receipt; notify Holistic Risk Services of any change of contact details or banking details in writing; ensure that premiums and applicable fees are paid timeously; respond timeously to requests for cooperation when the annual review is due.",
+    "I confirm and accept my obligations as the client.",
+    formData.ackClient
+  );
+
+  pdf.disclosureBlock(
+    "POPIA Requirements",
+    "In order to provide you with insurance, we have to process your personal information. We will share your personal information with other insurers, industry bodies, credit agencies and service providers. This includes information about your insurance, claims and premium payments. We do this to provide insurance services, prevent fraud, assess claims and conduct surveys. We will treat your personal information with caution and have put reasonable security measures in place to protect it.",
+    "I consent to the processing and sharing of my personal information as described above.",
+    formData.ackPopia
+  );
+
+  pdf.disclosureBlock(
+    "Termination of Agreement",
+    "Any party may terminate this agreement with 30 days' written notice. Holistic Risk Services (Pty) Ltd and the Adviser are from such date no longer responsible to provide the Client with any services or annual reports/statements.",
+    "I understand the termination terms of this agreement.",
+    formData.ackTermination
+  );
+
+  pdf.disclosureBlock(
+    "Broker (Intermediary) Fee Consent",
+    "IMPORTANT: A broker fee is an amount charged by Holistic Risk Services (Pty) Ltd (FSP 28582) for additional services rendered to you, which include but are not limited to: risk profiling, claims intervention, onsite visits, assistance with rejected claims, car hire management, accident support, and ongoing portfolio management. The broker fee amount is disclosed to you in Step 3 of this advice record. You have the right to withdraw your consent for the payment of the broker fee at any time by notifying Holistic Risk Services (Pty) Ltd in writing. The broker fee will be collected together with your insurance premium via debit order or as otherwise agreed in writing.",
+    "I have read and understood the Broker Fee Consent above, and I consent to the payment of the broker (intermediary) fee.",
+    formData.ackBrokerFee
+  );
+
+  pdf.disclosureBlock(
+    "Broker Appointment Confirmation",
+    "I, the undersigned, hereby confirm that I have appointed Holistic Risk Services (Pty) Ltd – HRS as my short-term insurance broker. You are hereby authorised to provide the bearer of this note with any information that may be requested in connection with any of the policy contracts which constitute my insurance portfolio. This appointment shall remain in force until cancelled in writing by either party with 30 days' notice.",
+    "I confirm my appointment of Holistic Risk Services (Pty) Ltd as my short-term insurance broker.",
+    formData.ackBrokerAppointment
+  );
+
+  pdf.disclosureBlock(
+    "Broker Authorisation to Act",
+    "I/We hereby authorise Holistic Risk Services (Pty) Ltd to act as my/our intermediary and to render financial services on my/our behalf, including but not limited to: obtaining quotations, submitting applications, managing claims, and liaising with insurers on my/our behalf. This authorisation is given freely and voluntarily and shall remain in force until revoked in writing.",
+    "I authorise Holistic Risk Services (Pty) Ltd to act as my intermediary and access my insurance portfolio information.",
+    formData.ackBrokerAuth
+  );
+  pdf.gap();
+
+  // 7. SIGNATURES
+  pdf.sectionHeading('7.  SIGNATURES');
   pdf.gap(3);
   d.setFont('helvetica', 'italic'); d.setFontSize(7); d.setTextColor(...C.grey);
   const legal = 'By signing below, the client confirms that all information provided is true and accurate, and that they have read and accepted all terms and disclosures contained in this Record of Advice. Holistic Risk Services (Pty) Ltd - Authorised FSP No. 28582.';
@@ -511,21 +539,17 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
     d.text(line, ML, pdf.cy);
     pdf.cy += 4.5;
   });
-
   pdf.gap(4);
   pdf.dataRow('Signature Date', formData.sigDate);
   pdf.gap(6);
-
   pdf._needSpace(42);
   const hw = (CW - 8) / 2;
   pdf.sigBox('Client Signature', clientSig, ML, pdf.cy, hw, 38);
   pdf.sigBox('Advisor / Broker Signature', advisorSig, ML + hw + 8, pdf.cy, hw, 38);
   pdf.cy += 42;
-
   d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
   d.text(fullName, ML + hw / 2, pdf.cy, { align: 'center' });
   d.text(formData.brokerName || 'Advisor', ML + hw + 8 + hw / 2, pdf.cy, { align: 'center' });
-
   pdf.cy += 5;
   d.setFont('helvetica', 'normal'); d.setFontSize(6.5); d.setTextColor(...C.grey);
   d.text('Client', ML + hw / 2, pdf.cy, { align: 'center' });
@@ -535,7 +559,7 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
 function buildChecklist(pdf, formData, checklistState) {
   pdf._newPage();
   const d = pdf.doc;
-  const { smartsure, directInsurer, complianceDocs, additionalDocs, comments, trackDates, businessType, acctExec } = checklistState || {};
+  const { smartsure, directInsurer, complianceDocs, additionalDocs, comments, trackDates, businessType, acctExec, commissions } = checklistState || {};
   const fullName = [formData.title, formData.firstName, formData.surname].filter(Boolean).join(' ') || '-';
 
   d.setFillColor(...C.orange); d.rect(ML, pdf.cy, CW, 8.5, 'F');
@@ -555,6 +579,22 @@ function buildChecklist(pdf, formData, checklistState) {
   );
   pdf.gap(3);
 
+  pdf.subHeading('Premium Summary & Commission');
+  sh = false;
+  const netPrem = parseFloat(formData.prem2) || 0;
+  const feeVal = parseFloat(formData.brokerFeePercent) || 0;
+  const feeAmount = formData.brokerFeeType === 'fixed' ? feeVal : (netPrem * feeVal / 100);
+  const totalPrem = netPrem + feeAmount;
+  pdf.dataRow('NET Premium', netPrem ? `R ${netPrem.toFixed(2)}` : '-', sh = !sh);
+  pdf.dataRow('HRS Fee', feeAmount ? `R ${feeAmount.toFixed(2)}` : '-', sh = !sh);
+  pdf.dataRow('Total Premium', totalPrem ? `R ${totalPrem.toFixed(2)}` : '-', sh = !sh);
+  if (commissions) {
+    Object.entries(commissions).forEach(([label, val]) => {
+      if (val) pdf.dataRow(`Commission – ${label}`, `${val}%`, sh = !sh);
+    });
+  }
+  pdf.gap(3);
+
   pdf.subHeading('Compliance Documentation');
   sh = false;
   ['PROPOSAL','BROKER APPOINTMENT','DEBIT ORDER AUTHORITY','ROA | RECORD OF ADVICE',
@@ -565,9 +605,10 @@ function buildChecklist(pdf, formData, checklistState) {
 
   pdf.subHeading('Additional Confirmation');
   sh = false;
-  ["CELLPHONES | MAKE | MODEL | IMEI NO'S","ELECTRONICS | MAKE | MODEL | SERIAL NO'S",'VEHICLE REGISTRATION CERTIFICATES',
-   'VEHICLE REGISTRATION - ENGINE AND VIN NOS','PROOF OF TRACKING DEVICE INSTALLATIONS',
-   'PROOF OF PURCHASES ON HIGH VALUE ITEMS','VALUATION CERTIFICATES ON HIGH VALUE JEWELLERY']
+  ["CELLPHONES | MAKE | MODEL | IMEI NO'S","ELECTRONICS | MAKE | MODEL | SERIAL NO'S",
+   'VEHICLE REGISTRATION CERTIFICATES','VEHICLE REGISTRATION - ENGINE AND VIN NOS',
+   'PROOF OF TRACKING DEVICE INSTALLATIONS','PROOF OF PURCHASES ON HIGH VALUE ITEMS',
+   'VALUATION CERTIFICATES ON HIGH VALUE JEWELLERY']
     .forEach(item => pdf.ackRow(item, !!additionalDocs?.[item], sh = !sh));
   pdf.gap(3);
 
@@ -586,17 +627,14 @@ function buildChecklist(pdf, formData, checklistState) {
   }
 }
 
-// ─── Export ───────────────────────────────────────────────────────────────────
 export async function generatePDF(formData) {
   const [logo, clientSig, advisorSig] = await Promise.all([
     loadImgAsDataURL(logoUrl),
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
-
   const pdf = new PDFBuilder(logo);
   buildROA(pdf, formData, clientSig, advisorSig);
-
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   pdf.save(`HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -607,10 +645,8 @@ export async function generateROABase64(formData) {
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
-
   const pdf = new PDFBuilder(logo);
   buildROA(pdf, formData, clientSig, advisorSig);
-
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   const filename = `HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
   const base64 = pdf.doc.output('datauristring').split(',')[1];
@@ -618,16 +654,14 @@ export async function generateROABase64(formData) {
 }
 
 export async function generateCombinedPDF(formData, checklistState) {
- const [logo, clientSig, advisorSig] = await Promise.all([
+  const [logo, clientSig, advisorSig] = await Promise.all([
     loadImgAsDataURL(logoUrl),
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
-
   const pdf = new PDFBuilder(logo);
   buildROA(pdf, formData, clientSig, advisorSig);
   buildChecklist(pdf, formData, checklistState);
-
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   pdf.save(`HRS_ROA_Checklist_${name}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }

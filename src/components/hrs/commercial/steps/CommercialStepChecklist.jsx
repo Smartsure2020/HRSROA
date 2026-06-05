@@ -1,8 +1,8 @@
 import { useState, useRef } from "react";
-import { CheckCircle, PenLine, Trash2, FileDown, Upload, Send } from "lucide-react";
+import { CheckCircle, PenLine, Trash2, FileDown, FilePlus, Upload, Send } from "lucide-react";
 import FormCard from "../../FormCard";
 import SignatureCanvas from "../../SignatureCanvas";
-import { generateCommercialPDF, generateCommercialROABase64 } from "../../../../lib/hrsCommercialPdfGenerator";
+import { generateCommercialPDF, generateCommercialCombinedPDF, generateCommercialROABase64 } from "../../../../lib/hrsCommercialPdfGenerator";
 import { MANAGER_NAME, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL } from "../../../../lib/hrsConstants";
 
 function InfoRow({ label, value }) {
@@ -165,6 +165,16 @@ export default function CommercialStepChecklist({ data, onRestart }) {
   const handleDownload = async () => {
     setDownloading('roa');
     await generateCommercialPDF(data);
+    setDownloading(null);
+    setDownloaded(true);
+  };
+
+  const handleDownloadCombined = async () => {
+    setDownloading('combined');
+    await generateCommercialCombinedPDF(data, {
+      smartsure, directInsurer, complianceDocs, additionalDocs,
+      comments, trackDates, businessType, acctExec, commissions,
+    });
     setDownloading(null);
     setDownloaded(true);
   };
@@ -375,7 +385,12 @@ export default function CommercialStepChecklist({ data, onRestart }) {
           <button onClick={handleDownload} disabled={!!downloading}
             className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-body font-semibold text-[0.88rem] bg-hrs-orange text-white border-none transition-all hover:bg-hrs-orange-light disabled:opacity-60">
             <FileDown className="w-4 h-4" />
-            {downloading ? 'Generating...' : 'Download Commercial ROA PDF'}
+            {downloading === 'roa' ? 'Generating...' : 'Download Commercial ROA PDF'}
+          </button>
+          <button onClick={handleDownloadCombined} disabled={!!downloading}
+            className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-body font-semibold text-[0.88rem] bg-transparent text-white border-[1.5px] border-white/50 transition-all hover:border-white disabled:opacity-60">
+            <FilePlus className="w-4 h-4" />
+            {downloading === 'combined' ? 'Generating...' : 'Download ROA + Checklist'}
           </button>
         </div>
 
