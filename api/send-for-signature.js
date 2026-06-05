@@ -176,14 +176,6 @@ export default async function handler(req, res) {
             },
           },
         ],
-        carbonCopies: [
-          {
-            name: 'HRS Insurance',
-            email: 'info@hrsinsurance.co.za',
-            recipientId: '3',
-            routingOrder: '3',
-          },
-        ],
       },
       notification: {
         useAccountDefaults: false,
