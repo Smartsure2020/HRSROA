@@ -125,20 +125,23 @@ export default async function handler(req, res) {
               signHereTabs: [
                 {
                   documentId: '1',
-                  pageNumber: '1',
                   anchorString: 'Client Signature',
+                  anchorUnits: 'pixels',
                   anchorXOffset: '0',
-                  anchorYOffset: '20',
+                  // Anchor text sits in the blue box header (~5mm from box top).
+                  // 40px @ 72dpi ≈ 14mm — places the tab in the middle of the blank signature area.
+                  anchorYOffset: '40',
                   anchorIgnoreIfNotPresent: 'true',
                 },
               ],
               dateSignedTabs: [
                 {
                   documentId: '1',
-                  pageNumber: '1',
                   anchorString: 'Client Signature',
+                  anchorUnits: 'pixels',
                   anchorXOffset: '0',
-                  anchorYOffset: '35',
+                  // 90px ≈ 32mm below anchor — aligns with the date line near the bottom of the box.
+                  anchorYOffset: '90',
                   anchorIgnoreIfNotPresent: 'true',
                 },
               ],
@@ -153,10 +156,20 @@ export default async function handler(req, res) {
               signHereTabs: [
                 {
                   documentId: '1',
-                  pageNumber: '1',
                   anchorString: 'Advisor / Broker Signature',
+                  anchorUnits: 'pixels',
                   anchorXOffset: '0',
-                  anchorYOffset: '20',
+                  anchorYOffset: '40',
+                  anchorIgnoreIfNotPresent: 'true',
+                },
+              ],
+              dateSignedTabs: [
+                {
+                  documentId: '1',
+                  anchorString: 'Advisor / Broker Signature',
+                  anchorUnits: 'pixels',
+                  anchorXOffset: '0',
+                  anchorYOffset: '90',
                   anchorIgnoreIfNotPresent: 'true',
                 },
               ],

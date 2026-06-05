@@ -110,8 +110,8 @@ class CommercialPDFBuilder {
     d.text(`Page ${this.pageNum}`, PAGE_W - MR, fy + 7, { align: 'right' });
   }
 
-  sectionHeading(title) {
-    this._needSpace(14);
+  sectionHeading(title, keepWithH = 14) {
+    this._needSpace(11 + keepWithH);
     const d = this.doc;
     d.setFillColor(...C.blue); d.rect(ML, this.cy, CW, 8.5, 'F');
     d.setFillColor(...C.orange); d.rect(ML, this.cy, 3.5, 8.5, 'F');
@@ -120,8 +120,8 @@ class CommercialPDFBuilder {
     this.cy += 11;
   }
 
-  subHeading(title) {
-    this._needSpace(9);
+  subHeading(title, keepWithH = 12) {
+    this._needSpace(9 + keepWithH);
     const d = this.doc;
     d.setFillColor(...C.lightBg); d.rect(ML, this.cy, CW, 7, 'F');
     d.setFillColor(...C.orange); d.rect(ML, this.cy, 2.5, 7, 'F');
@@ -226,16 +226,15 @@ class CommercialPDFBuilder {
   }
 
   disclosureBlock(title, bodyText, ackLabel, checked) {
-    this._needSpace(20);
     const d = this.doc;
+    const allLines = d.splitTextToSize(bodyText, CW - 6);
+    const bodyH = Math.max(10, allLines.length * 4.5 + 4);
+    this._needSpace(Math.min(9 + bodyH + 7 + 2, 90));
     d.setFillColor(...C.lightBg); d.rect(ML, this.cy, CW, 7, 'F');
     d.setFillColor(...C.orange); d.rect(ML, this.cy, 2.5, 7, 'F');
     d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
     d.text(title.toUpperCase(), ML + 6, this.cy + 5);
     this.cy += 9;
-    const allLines = d.splitTextToSize(bodyText, CW - 6);
-    const bodyH = Math.max(10, allLines.length * 4.5 + 4);
-    this._needSpace(bodyH);
     d.setFont('helvetica', 'normal'); d.setFontSize(7); d.setTextColor(...C.black);
     allLines.forEach((line, i) => d.text(line, ML + 3, this.cy + 5 + i * 4.5));
     this.cy += bodyH;
@@ -388,8 +387,8 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   pdf.multiLineDataRow("Summary of Business Owner's Specific Needs and Objectives", formData.clientNeeds);
   pdf.gap();
 
-  // 3. PRODUCTS & ADVICE
-  pdf.sectionHeading('3.  COMPARISON OF PRODUCTS CONSIDERED');
+  // 3. PRODUCTS & ADVICE — heading(11) + gap(8) + cards(50) = 69mm minimum
+  pdf.sectionHeading('3.  COMPARISON OF PRODUCTS CONSIDERED', 65);
   pdf.gap(8);
   pdf.insurerCards([
     { insurer: formData.ins0, premium: formData.prem0, label: 'OPTION 1', recommended: false },
@@ -400,12 +399,12 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   pdf.dataRow('Recommended Insurer', formData.recInsurer, sh = !sh);
   pdf.multiLineDataRow('Reasons Why Suitable', formData.recReasons);
   pdf.gap(2);
-  pdf.subHeading('Basis of Advice');
+  pdf.subHeading('Basis of Advice', 20);
   pdf.multiLineDataRow('Information Considered', formData.basisInfo);
   pdf.multiLineDataRow('Recommendations Made', formData.basisRec);
   pdf.multiLineDataRow('Client Decision', formData.basisDecision);
   pdf.gap(2);
-  pdf.subHeading('Commission & Fees');
+  pdf.subHeading('Commission & Fees', 14);
   sh = false;
   pdf.dataRow('Standard Commission', '12.5% on Motor  |  20% on Non-Motor', sh = !sh);
   pdf.dataRow('Broker Fee', feeStr, sh = !sh);
@@ -414,7 +413,7 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
 
   // 4. REPLACEMENT POLICY
   if (formData.replacingExisting === 'yes') {
-    pdf.sectionHeading('4.  REPLACEMENT OF AN EXISTING POLICY');
+    pdf.sectionHeading('4.  REPLACEMENT OF AN EXISTING POLICY', 22);
     sh = false;
     pdf.dataRow('Replacing Existing Policy', yn(formData.replacingExisting), sh = !sh);
     pdf.dataRow('Like for Like Basis', yn(formData.likeForLike), sh = !sh);
@@ -427,8 +426,8 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
     pdf.gap();
   }
 
-  // 5. PRINCIPLES & DISCLOSURES — full text, all sections
-  pdf.sectionHeading('5.  PRINCIPLES & LEGAL DISCLOSURES');
+  // 5. PRINCIPLES & DISCLOSURES — heading(11) + col-header(8) + first row(~10) = ~29mm
+  pdf.sectionHeading('5.  PRINCIPLES & LEGAL DISCLOSURES', 22);
   pdf._needSpace(8);
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
@@ -498,8 +497,8 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   );
   pdf.gap();
 
-  // 6. SIGNATURES — SINGLE signature block for DocuSign (client + broker)
-  pdf.sectionHeading('6.  SIGNATURES — DECLARATION');
+  // 6. SIGNATURES — heading(11) + declaration text start(~20mm) = 31mm minimum
+  pdf.sectionHeading('6.  SIGNATURES — DECLARATION', 25);
   pdf.gap(3);
   d.setFont('helvetica', 'italic'); d.setFontSize(7); d.setTextColor(...C.grey);
   const decl1 = 'Declaration by the Adviser: I declare that the advice record is an accurate and complete record of the recommendations and advice that I provided the client with, based upon the information provided by the client.';

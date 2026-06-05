@@ -115,8 +115,9 @@ class PDFBuilder {
     d.text(`Page ${this.pageNum}`, PAGE_W - MR, fy + 7, { align: 'right' });
   }
 
-  sectionHeading(title) {
-    this._needSpace(14);
+  // keepWithH: minimum height of first content block that must fit with the heading
+  sectionHeading(title, keepWithH = 14) {
+    this._needSpace(11 + keepWithH);
     const d = this.doc;
     d.setFillColor(...C.blue); d.rect(ML, this.cy, CW, 8.5, 'F');
     d.setFillColor(...C.orange); d.rect(ML, this.cy, 3.5, 8.5, 'F');
@@ -125,8 +126,8 @@ class PDFBuilder {
     this.cy += 11;
   }
 
-  subHeading(title) {
-    this._needSpace(9);
+  subHeading(title, keepWithH = 12) {
+    this._needSpace(9 + keepWithH);
     const d = this.doc;
     d.setFillColor(...C.lightBg); d.rect(ML, this.cy, CW, 7, 'F');
     d.setFillColor(...C.orange); d.rect(ML, this.cy, 2.5, 7, 'F');
@@ -233,8 +234,11 @@ class PDFBuilder {
 
   // Print a disclosure block with full text then ack row
   disclosureBlock(title, bodyLines, ackLabel, checked) {
-    this._needSpace(20);
     const d = this.doc;
+    const allLines = d.splitTextToSize(bodyLines, CW - 6);
+    const bodyH = Math.max(10, allLines.length * 4.5 + 4);
+    // Keep subheading + body + ack together; cap at 90mm to avoid excessive white space
+    this._needSpace(Math.min(9 + bodyH + 7 + 2, 90));
     // Sub-heading
     d.setFillColor(...C.lightBg); d.rect(ML, this.cy, CW, 7, 'F');
     d.setFillColor(...C.orange); d.rect(ML, this.cy, 2.5, 7, 'F');
@@ -242,9 +246,6 @@ class PDFBuilder {
     d.text(title.toUpperCase(), ML + 6, this.cy + 5);
     this.cy += 9;
     // Body text
-    const allLines = d.splitTextToSize(bodyLines, CW - 6);
-    const bodyH = Math.max(10, allLines.length * 4.5 + 4);
-    this._needSpace(bodyH);
     d.setFont('helvetica', 'normal'); d.setFontSize(7); d.setTextColor(...C.black);
     allLines.forEach((line, i) => {
       d.text(line, ML + 3, this.cy + 5 + i * 4.5);
@@ -408,7 +409,8 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   pdf.gap();
 
   // 3. PRODUCTS AND ADVICE
-  pdf.sectionHeading('3.  PRODUCTS AND ADVICE');
+  // heading(11) + gap(8) + cards(50) = 69mm minimum needed together
+  pdf.sectionHeading('3.  PRODUCTS AND ADVICE', 65);
   pdf.gap(8);
   pdf.insurerCards([
     { insurer: formData.ins0, premium: formData.prem0, label: 'OPTION 1', recommended: false },
@@ -420,14 +422,16 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   pdf.dataRow('Broker Fee', feeStr, sh = !sh);
   pdf.multiLineDataRow('Reasons for Recommendation', formData.recReasons);
   pdf.gap(2);
-  pdf.subHeading('Basis of Advice');
+  // keepWithH=20 ensures the subheading stays with the first content block
+  pdf.subHeading('Basis of Advice', 20);
   pdf.multiLineDataRow('Information Considered', formData.basisInfo);
   pdf.multiLineDataRow('Recommendations Made', formData.basisRec);
   pdf.multiLineDataRow('Client Decision', formData.basisDecision);
   pdf.gap();
 
   // 4. RISK CATEGORIES
-  pdf.sectionHeading('4.  RISK CATEGORIES');
+  // heading(11) + column-header row(8) + first risk row(~9) = ~28mm minimum
+  pdf.sectionHeading('4.  RISK CATEGORIES', 22);
   pdf._needSpace(8);
   const d = pdf.doc;
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
@@ -448,7 +452,8 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   pdf.gap();
 
   // 5. BANKING & DEBIT ORDER
-  pdf.sectionHeading('5.  BANKING & DEBIT ORDER');
+  // heading(11) + first dataRow(7) = 18mm; use 22 for comfortable buffer
+  pdf.sectionHeading('5.  BANKING & DEBIT ORDER', 22);
   sh = false;
   pdf.dataRow('Bank Name', formData.bankName, sh = !sh);
   pdf.twoColRow({ label: 'Account Holder', value: formData.bankHolder }, { label: 'Account Type', value: formData.accountType }, sh = !sh);
@@ -465,8 +470,9 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   }
   pdf.gap();
 
-  // 6. COMPLIANCE ACKNOWLEDGEMENTS — full text
-  pdf.sectionHeading('6.  COMPLIANCE ACKNOWLEDGEMENTS');
+  // 6. COMPLIANCE ACKNOWLEDGEMENTS
+  // heading(11) + column-header row(8) + first principle row(~10) = ~29mm minimum
+  pdf.sectionHeading('6.  COMPLIANCE ACKNOWLEDGEMENTS', 22);
   pdf._needSpace(8);
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
@@ -529,8 +535,8 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   );
   pdf.gap();
 
-  // 7. SIGNATURES
-  pdf.sectionHeading('7.  SIGNATURES');
+  // 7. SIGNATURES — heading(11) + legal text start(~20mm) = 31mm minimum
+  pdf.sectionHeading('7.  SIGNATURES', 25);
   pdf.gap(3);
   d.setFont('helvetica', 'italic'); d.setFontSize(7); d.setTextColor(...C.grey);
   const legal = 'By signing below, the client confirms that all information provided is true and accurate, and that they have read and accepted all terms and disclosures contained in this Record of Advice. Holistic Risk Services (Pty) Ltd - Authorised FSP No. 28582.';
