@@ -151,12 +151,8 @@ export function getStepErrors(step, formData) {
     case 5:
       // Banking — optional, no hard required fields
       return [];
-    case 6: {
-      const errors = [];
-      if (!formData.clientSig) errors.push('Client Signature');
-      if (!formData.advisorSig) errors.push('Advisor / Broker Signature');
-      return errors;
-    }
+    case 6:
+      return [];
     default:
       return [];
   }

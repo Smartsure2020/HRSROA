@@ -31,7 +31,7 @@ function SigSection({ label, sigKey, data, onChange }) {
   return (
     <div className="mb-7">
       <label className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2.5 block">
-        {label} <span className="text-hrs-orange">*</span>
+        {label}
       </label>
       <div className="flex gap-2 mb-3">
         <button type="button" onClick={() => setMode("draw")}
@@ -75,7 +75,7 @@ export default function CommercialStepSignatures({ data, onChange, onNext, onPre
       <FormCard>
         <SectionTitle>Signatures</SectionTitle>
         <p className="text-hrs-muted text-[0.82rem] mb-7">
-          Both signatures are required. Client signs by drawing or uploading; broker may draw or upload a saved signature.
+          Signatures are optional. Client may sign by drawing or uploading; broker may draw or upload a saved signature.
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-6">
