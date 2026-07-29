@@ -8,6 +8,12 @@ import AckRow from "../../AckRow";
 import SignatureCanvas from "../../SignatureCanvas";
 import NavBar from "../../NavBar";
 import { Upload, PenLine, Check } from "lucide-react";
+import { HRS_COMPLIANCE_CONTENT } from "../../../../lib/hrsComplianceContent";
+import { HRS_FSP_LINE } from "../../../../lib/hrsOrganisation";
+
+const DECLARATION = HRS_COMPLIANCE_CONTENT.clientDeclaration.commercial;
+const ELECTION_WARNING = HRS_COMPLIANCE_CONTENT.electionWarning.commercial;
+const ADVISOR_DECLARATION = HRS_COMPLIANCE_CONTENT.advisorDeclaration.commercial;
 
 function DeclarationOption({ active, onClick, title, children }) {
   return (
@@ -110,9 +116,7 @@ export default function CommercialStepSignatures({ data, onChange, onNext, onPre
         {electedAlternative && (
           <>
             <LegalBlock className="mt-4">
-              <p>Where an analysis is to be performed in any of the circumstances referred to above, the client has been advised accordingly that:</p>
-              <p className="mt-2">1. There may be limitations on the appropriateness of the advice provided in light of such circumstances.</p>
-              <p className="mt-2">2. The client should take particular care to consider on its own whether the advice is appropriate considering the business's objectives, financial situation and particular needs, particularly any aspects of such objective, situation or needs that were not considered in light of the aforementioned circumstances.</p>
+              {ELECTION_WARNING.map((p, i) => <p key={i} className={i > 0 ? "mt-2" : ""}>{p}</p>)}
             </LegalBlock>
             <div className="mt-4 max-w-xs">
               <FormField label="Client Initials" required>
@@ -127,34 +131,17 @@ export default function CommercialStepSignatures({ data, onChange, onNext, onPre
         <DeclarationOption
           active={data.declarationChoice === "accept"}
           onClick={() => set("declarationChoice")("accept")}
-          title="We hereby accept the advice and recommendations provided as set out above."
+          title={DECLARATION.acceptTitle}
         >
-          We are aware that the advice and recommendations provided are limited to the business's short-term insurance
-          (commercial lines) portfolio only, and that a comprehensive analysis of the business's financial needs was not
-          undertaken. Due to the fact that a comprehensive analysis was not undertaken, there may be limitations concerning
-          the appropriateness of the advice, and we must therefore carefully consider whether the product selected is
-          appropriate considering the business's circumstances and needs. Where any election above was made, we confirm
-          that the advisor has alerted us to the clear existence of any risk as a result of such election. We understand the
-          dangers of being underinsured and that excesses under specific policies may be aggregated in certain
-          circumstances — should our circumstances change in any way that may require a review of our existing cover, we
-          will inform the advisor. We have read the policy documents and the attached policy schedule, and note in
-          particular the special conditions and applicable excesses. The advisor explained the material terms and
-          conditions of the policy, including any excess payment terms, conditions and exclusions, or circumstances where
-          claims will not be paid. We did not sign the application form while any part of it was incomplete, and take full
-          responsibility for all information provided, whether provided by us or on our behalf. The advisor provided quotes
-          from the insurer which were discussed and attached to this document. We understand that for a new placement, the
-          product selected constitutes a new placement of short-term insurance cover; for a renewal, it constitutes a
-          renewal of our existing cover; and for a replacement, it constitutes a replacement of our existing short-term
-          insurance cover.
+          {DECLARATION.accept}
         </DeclarationOption>
 
         <DeclarationOption
           active={data.declarationChoice === "decline"}
           onClick={() => set("declarationChoice")("decline")}
-          title="We elect NOT to follow the advice and recommendations set out above."
+          title={DECLARATION.declineTitle}
         >
-          We confirm that the advisor has alerted us to the risks of proceeding against the advice and recommendations
-          given, and that we have chosen to proceed on this basis of our own accord.
+          {DECLARATION.decline}
         </DeclarationOption>
       </FormCard>
 
@@ -174,16 +161,14 @@ export default function CommercialStepSignatures({ data, onChange, onNext, onPre
         <SigSection label="Advisor / Broker Signature" sigKey="advisorSig" data={data} onChange={onChange} />
 
         <LegalBlock className="mt-6">
-          <p className="text-[0.8rem]">
-            <strong>Declaration by the Adviser:</strong> I declare that the advice record is an accurate and complete record of the recommendations and advice that I provided the client with, based upon the information provided by the client.
-          </p>
+          <p className="text-[0.8rem]">{ADVISOR_DECLARATION.adviser}</p>
           <p className="text-[0.8rem] mt-3">
-            <strong>Declaration by the Client:</strong> I acknowledge that as a client, no product provider or FSP may request or induce me to waive any right or benefit conferred on me in terms of the FAIS Act. I confirm having been duly advised and fully understand the course of action I am about to undertake, including the Client Declaration above.{" "}
-            <em>Holistic Risk Services (Pty) Ltd – An Authorised FSP No. 28582</em>
+            {ADVISOR_DECLARATION.client} This also confirms the Statutory Disclosure acknowledged in the Principles &amp; Disclosures step.{" "}
+            <em>{HRS_FSP_LINE}</em>
           </p>
         </LegalBlock>
       </FormCard>
-      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel || "Submit & Send"} isSubmitting={isSubmitting} />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel} isSubmitting={isSubmitting} />
     </div>
   );
 }

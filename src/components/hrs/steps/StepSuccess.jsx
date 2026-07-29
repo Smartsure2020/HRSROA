@@ -1,4 +1,5 @@
 import FormCard from "../FormCard";
+import { HRS_INFO } from "../../../lib/hrsOrganisation";
 
 export default function StepSuccess({ onRestart }) {
   return (
@@ -14,10 +15,10 @@ export default function StepSuccess({ onRestart }) {
           Holistic Risk Services Contact Details
         </div>
         <div className="text-[0.82rem] text-hrs-blue2 leading-[1.7]">
-          16 Monte Carlo Crescent, Kyalami Business Park, Midrand, 1684<br />
-          P O Box 321 Cramerview 2060 · Tel: 010 447-9800<br />
-          www.hrsinsurance.co.za<br />
-          <strong>Holistic Risk Services (Pty) Ltd · FSP 28582</strong>
+          {HRS_INFO.physicalAddress}<br />
+          {HRS_INFO.postalAddress} · Tel: {HRS_INFO.phone}<br />
+          {HRS_INFO.website}<br />
+          <strong>{HRS_INFO.legalName} · FSP {HRS_INFO.fspNumber}</strong>
         </div>
       </div>
 

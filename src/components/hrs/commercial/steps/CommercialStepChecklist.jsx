@@ -1,9 +1,12 @@
-import { useState, useRef } from "react";
-import { CheckCircle, PenLine, Trash2, FileDown, FilePlus, Upload, Send } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { CheckCircle, PenLine, Trash2, FileDown, FilePlus, Upload, Send, RefreshCw } from "lucide-react";
 import FormCard from "../../FormCard";
 import SignatureCanvas from "../../SignatureCanvas";
+import WorkflowStatusPanel from "../../WorkflowStatusPanel";
 import { generateCommercialPDF, generateCommercialCombinedPDF, generateCommercialROABase64 } from "../../../../lib/hrsCommercialPdfGenerator";
 import { MANAGER_NAME, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL } from "../../../../lib/hrsConstants";
+import { syncCommercialROAToCRM } from "../../../../lib/crmSync";
+import { useCrmSyncStatus } from "../../../../lib/useCrmSyncStatus";
 
 function InfoRow({ label, value }) {
   return (
@@ -153,6 +156,18 @@ export default function CommercialStepChecklist({ data, onRestart }) {
   const [sigSent, setSigSent] = useState(false);
   const [sigError, setSigError] = useState(null);
   const [sigEnvelopeId, setSigEnvelopeId] = useState(null);
+  const [sigSentAt, setSigSentAt] = useState(null);
+
+  // CRM sync status + retry (Phase 3, section 9) — triggered once on mount, same pattern
+  // and shared hook as the Personal flow's checklist screen.
+  const crm = useCrmSyncStatus(syncCommercialROAToCRM);
+  const crmTriggered = useRef(false);
+  useEffect(() => {
+    if (crmTriggered.current) return;
+    crmTriggered.current = true;
+    crm.sync(data);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const netPrem = parseFloat(data.prem2) || 0;
   const feeVal = parseFloat(data.brokerFeePercent) || 0;
@@ -213,6 +228,7 @@ export default function CommercialStepChecklist({ data, onRestart }) {
 
       setSigSent(true);
       setSigEnvelopeId(result.envelopeId);
+      setSigSentAt(new Date().toISOString());
     } catch (err) {
       setSigError(err.message || 'Could not send signature request. Please try again.');
     } finally {
@@ -231,6 +247,40 @@ export default function CommercialStepChecklist({ data, onRestart }) {
           </p>
         </div>
       </div>
+
+      <WorkflowStatusPanel
+        roaPrepared
+        emailStatus="sent"
+        crmStatus={crm.status}
+        crmSyncedAt={crm.status === 'synced' ? crm.result?.lastAttemptAt : null}
+        checklistComplete={downloaded}
+        docusignStatus={sigSent ? 'envelope_created' : 'not_sent'}
+        docusignSentAt={sigSentAt}
+      />
+
+      {crm.status === 'syncing' && (
+        <div className="mt-3 bg-hrs-blue/5 border border-hrs-border rounded-lg px-4 py-2.5 text-[0.8rem] text-hrs-blue2">
+          Syncing client and ROA details to CRM…
+        </div>
+      )}
+      {crm.status === 'synced' && (
+        <div className="mt-3 bg-hrs-green/10 border border-hrs-green/30 rounded-lg px-4 py-2.5 text-[0.8rem] text-hrs-green font-medium">
+          ✓ CRM synced successfully
+        </div>
+      )}
+      {crm.status === 'failed' && (
+        <div className="mt-3 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3">
+          <p className="text-[0.82rem] font-semibold text-amber-800">The ROA was processed, but the CRM record could not be updated.</p>
+          {crm.result?.error && <p className="text-[0.76rem] text-amber-700 mt-0.5">{crm.result.error}</p>}
+          <button
+            type="button"
+            onClick={() => crm.retry(data)}
+            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-400 text-amber-800 text-[0.76rem] font-semibold hover:bg-amber-100 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Retry CRM Sync
+          </button>
+        </div>
+      )}
 
       <FormCard>
         <div className="flex items-center justify-between mb-4 pb-3 border-b-2 border-hrs-orange">

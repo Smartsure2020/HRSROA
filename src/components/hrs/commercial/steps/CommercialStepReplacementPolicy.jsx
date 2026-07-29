@@ -25,7 +25,7 @@ function YesNo({ value, onChange }) {
   );
 }
 
-export default function CommercialStepReplacementPolicy({ data, onChange, onNext, onPrev }) {
+export default function CommercialStepReplacementPolicy({ data, onChange, onNext, onPrev, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
   const setE = (key) => (e) => onChange({ ...data, [key]: e.target.value });
 
@@ -97,7 +97,7 @@ export default function CommercialStepReplacementPolicy({ data, onChange, onNext
           </div>
         )}
       </FormCard>
-      <NavBar onPrev={onPrev} onNext={onNext} />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

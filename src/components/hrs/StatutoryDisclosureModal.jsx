@@ -1,6 +1,10 @@
 import { useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Check, AlertTriangle, ScrollText } from "lucide-react";
+import { Check, AlertTriangle, ScrollText, Download } from "lucide-react";
+import { HRS_INFO } from "../../lib/hrsOrganisation";
+import { HRS_COMPLIANCE_CONTENT } from "../../lib/hrsComplianceContent";
+
+const DISCLOSURE = HRS_COMPLIANCE_CONTENT.statutoryDisclosure;
 
 const PRODUCT_SUPPLIERS = [
   ["ABSA Insurance", "011 846 6523"], ["Alpha", "010 045 3318"],
@@ -59,7 +63,10 @@ export default function StatutoryDisclosureModal({ checked, onAcknowledge }) {
       >
         <span className="flex items-center gap-2.5">
           <ScrollText className="w-4 h-4 text-hrs-blue flex-shrink-0" />
-          <span className="text-[0.85rem] font-medium text-hrs-blue2">Statutory Disclosure (Section 13) — HRS FSP 28582</span>
+          <span className="text-[0.85rem] font-medium text-hrs-blue2">
+            Statutory Disclosure (Section 13) — HRS FSP {HRS_INFO.fspNumber}
+            <span className="block text-[0.68rem] font-normal text-hrs-muted">Version {DISCLOSURE.version}</span>
+          </span>
         </span>
         <span className={`text-[0.78rem] font-semibold flex items-center gap-1 flex-shrink-0 ${checked ? "text-hrs-green" : "text-hrs-red"}`}>
           {checked ? <><Check className="w-3.5 h-3.5" /> Acknowledged</> : <><AlertTriangle className="w-3.5 h-3.5" /> View &amp; sign</>}
@@ -69,8 +76,20 @@ export default function StatutoryDisclosureModal({ checked, onAcknowledge }) {
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="max-w-2xl max-h-[85vh] grid-rows-[auto_1fr_auto] p-0 gap-0 overflow-hidden">
           <DialogHeader className="p-5 pb-3 border-b border-hrs-border">
-            <DialogTitle className="text-hrs-blue font-heading text-[1.15rem]">Statutory Disclosure</DialogTitle>
-            <p className="text-[0.78rem] text-hrs-muted">Holistic Risk Services (Pty) Ltd — Registration No 2004/026273/07. Please scroll through the full disclosure before signing.</p>
+            <DialogTitle className="text-hrs-blue font-heading text-[1.15rem]">
+              {DISCLOSURE.title}
+              <span className="ml-2 align-middle text-[0.68rem] font-normal text-hrs-muted">Version {DISCLOSURE.version}</span>
+            </DialogTitle>
+            <p className="text-[0.78rem] text-hrs-muted">
+              {HRS_INFO.legalName} — Registration No {HRS_INFO.registrationNumber}. Please scroll through the full disclosure before signing.
+            </p>
+            <a
+              href={DISCLOSURE.downloadUrl}
+              download={DISCLOSURE.downloadFilename}
+              className="inline-flex items-center gap-1.5 mt-2 text-[0.76rem] font-semibold text-hrs-blue hover:text-hrs-orange transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" /> Download Statutory Disclosure (PDF)
+            </a>
           </DialogHeader>
 
           <div
@@ -80,10 +99,10 @@ export default function StatutoryDisclosureModal({ checked, onAcknowledge }) {
           >
             <section>
               <h4 className="font-semibold text-hrs-blue mb-1">Business Details</h4>
-              <p>FSP Licence Number: <strong>28582</strong><br />
-              Address (Postal &amp; Physical): 16 Monte Carlo Crescent, Kyalami Business Park, 1684<br />
-              Contact Person: Andrew Penney (Key Individual)<br />
-              Telephone Number: 011 840 6000 · Email: info@hrsinsurance.co.za · Website: www.hrsinsurance.co.za</p>
+              <p>FSP Licence Number: <strong>{HRS_INFO.fspNumber}</strong><br />
+              Address (Postal &amp; Physical): {HRS_INFO.physicalAddress}<br />
+              Contact Person: {HRS_INFO.keyIndividual} (Key Individual)<br />
+              Telephone Number: {HRS_INFO.phone} · Email: {HRS_INFO.email} · Website: {HRS_INFO.website}</p>
             </section>
 
             <section>
@@ -106,7 +125,7 @@ export default function StatutoryDisclosureModal({ checked, onAcknowledge }) {
 
             <section>
               <h4 className="font-semibold text-hrs-blue mb-1">Compliance Department</h4>
-              <p>The provider has appointed Moonstone Compliance (Practice No 188) as its external compliance practice. The Compliance Officer is Mrs. Monique Coetzee, Tel: 071 997 5034, Postal Address: PO Box 12662, Die Boord, Stellenbosch, 7613.</p>
+              <p>The provider has appointed {HRS_INFO.compliancePractice} as its external compliance practice. The Compliance Officer is {HRS_INFO.complianceOfficer}, Tel: {HRS_INFO.compliancePhone}, Postal Address: {HRS_INFO.compliancePostalAddress}.</p>
             </section>
 
             <section>
@@ -157,6 +176,9 @@ export default function StatutoryDisclosureModal({ checked, onAcknowledge }) {
             >
               I have read and understood this Statutory Disclosure
             </button>
+            <p className="text-[0.7rem] text-hrs-muted text-center mt-2 leading-relaxed">
+              {DISCLOSURE.signedUnderGeneralRoaText}
+            </p>
           </div>
         </DialogContent>
       </Dialog>

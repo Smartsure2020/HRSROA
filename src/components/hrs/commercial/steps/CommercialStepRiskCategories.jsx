@@ -60,7 +60,7 @@ function RiskRow({ cat, state, onChange, shade }) {
   );
 }
 
-export default function CommercialStepRiskCategories({ data, onChange, onNext, onPrev }) {
+export default function CommercialStepRiskCategories({ data, onChange, onNext, onPrev, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
 
   const updateRisk = (i, val) => {
@@ -169,7 +169,7 @@ export default function CommercialStepRiskCategories({ data, onChange, onNext, o
           />
         </div>
       </FormCard>
-      <NavBar onPrev={onPrev} onNext={onNext} />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

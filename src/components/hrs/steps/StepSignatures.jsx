@@ -8,6 +8,11 @@ import AckRow from "../AckRow";
 import SignatureCanvas from "../SignatureCanvas";
 import NavBar from "../NavBar";
 import { Upload, PenLine, Check } from "lucide-react";
+import { HRS_COMPLIANCE_CONTENT } from "../../../lib/hrsComplianceContent";
+import { HRS_FSP_LINE } from "../../../lib/hrsOrganisation";
+
+const DECLARATION = HRS_COMPLIANCE_CONTENT.clientDeclaration.personal;
+const ELECTION_WARNING = HRS_COMPLIANCE_CONTENT.electionWarning.personal;
 
 function DeclarationOption({ active, onClick, title, children }) {
   return (
@@ -109,7 +114,7 @@ function SigSection({ label, sigKey, data, onChange }) {
   );
 }
 
-export default function StepSignatures({ data, onChange, onNext, onPrev }) {
+export default function StepSignatures({ data, onChange, onNext, onPrev, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
   const electedAlternative = data.electionDiffers || data.electionNotFollow || data.electionLimitedInfo;
 
@@ -132,9 +137,7 @@ export default function StepSignatures({ data, onChange, onNext, onPrev }) {
         {electedAlternative && (
           <>
             <LegalBlock className="mt-4">
-              <p>Where an analysis is to be performed in any of the circumstances referred to above, the client has been advised accordingly that:</p>
-              <p className="mt-2">1. There may be limitations on the appropriateness of the advice provided in light of such circumstances.</p>
-              <p className="mt-2">2. The client should take particular care to consider on his/her own whether the advice is appropriate considering the client's objectives, financial situation and particular needs, particularly any aspects of such objective, situation or needs that were not considered in light of the aforementioned circumstances.</p>
+              {ELECTION_WARNING.map((p, i) => <p key={i} className={i > 0 ? "mt-2" : ""}>{p}</p>)}
             </LegalBlock>
             <div className="mt-4 max-w-xs">
               <FormField label="Client Initials" required>
@@ -149,35 +152,17 @@ export default function StepSignatures({ data, onChange, onNext, onPrev }) {
         <DeclarationOption
           active={data.declarationChoice === "accept"}
           onClick={() => set("declarationChoice")("accept")}
-          title="I hereby accept the advice and recommendations provided to me as set out above."
+          title={DECLARATION.acceptTitle}
         >
-          I am aware that the advice and recommendations provided in terms of my request and instruction are limited to my
-          short-term insurance (personal lines) portfolio only, and that a comprehensive analysis of all my financial needs
-          was not undertaken. Due to the fact that a comprehensive analysis was not undertaken, there may be limitations
-          concerning the appropriateness of the advice, and I must therefore carefully consider whether the product selected
-          is appropriate considering my circumstances and needs. Where I have made any of the elections above, I confirm
-          that the advisor has alerted me to the clear existence of any risk as a result of such election, and that I have
-          been advised to take particular care to consider whether the products selected (if any) are appropriate to my
-          needs, objectives and circumstances. I understand the dangers of being underinsured and that excesses under
-          specific policies may be aggregated in certain circumstances — should my circumstances change in any way that
-          may require a review of my existing cover, I will inform the advisor. I have read the policy documents and the
-          attached policy schedule, and note in particular the special conditions and applicable excesses. The advisor
-          explained to me the material terms and conditions of the policy, including any excess payment terms, conditions
-          and exclusions, or circumstances where claims will not be paid. I did not sign the application form while any
-          part of it was incomplete, and I take full responsibility for all information provided in the application form,
-          whether provided by myself or on my behalf. The advisor provided quotes from the insurer which were discussed
-          and attached to this document. I understand that for a new placement, the product selected constitutes a new
-          placement of short-term insurance cover; for a renewal, it constitutes a renewal of my existing cover; and for a
-          replacement, it constitutes a replacement of my existing short-term insurance cover.
+          {DECLARATION.accept}
         </DeclarationOption>
 
         <DeclarationOption
           active={data.declarationChoice === "decline"}
           onClick={() => set("declarationChoice")("decline")}
-          title="I elect NOT to follow the advice and recommendations set out above."
+          title={DECLARATION.declineTitle}
         >
-          I confirm that the advisor has alerted me to the risks of proceeding against the advice and recommendations
-          given, and that I have chosen to proceed on this basis of my own accord.
+          {DECLARATION.decline}
         </DeclarationOption>
       </FormCard>
 
@@ -199,13 +184,14 @@ export default function StepSignatures({ data, onChange, onNext, onPrev }) {
         <LegalBlock className="mt-6">
           <p className="text-[0.8rem]">
             By signing, the client confirms all information is true and accurate, and that they have read and accepted all
-            terms and disclosures in this advice record, including the Client Declaration above.{" "}
-            <em>Holistic Risk Services (Pty) Ltd – An Authorised FSP No. 28582</em>
+            terms and disclosures in this advice record, including the Client Declaration above and the Statutory Disclosure
+            acknowledged in Step 5 (Principles &amp; Disclosures).{" "}
+            <em>{HRS_FSP_LINE}</em>
           </p>
         </LegalBlock>
       </FormCard>
 
-      <NavBar onPrev={onPrev} onNext={onNext} nextLabel="Review & Submit" />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

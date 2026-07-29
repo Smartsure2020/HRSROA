@@ -1,8 +1,12 @@
-import { Check, AlertTriangle } from "lucide-react";
+import { Check, AlertTriangle, Minus } from "lucide-react";
 import FormCard from "../FormCard";
 import SectionTitle from "../SectionTitle";
 import NavBar from "../NavBar";
 import { RISK_CATEGORIES } from "../../../lib/hrsConstants";
+import { getBrokerFeeSummary } from "../../../lib/brokerFee";
+import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from "../../../lib/hrsComplianceContent";
+
+const DISCLOSURE = HRS_COMPLIANCE_CONTENT.statutoryDisclosure;
 
 function ReviewSection({ title, children }) {
   return (
@@ -24,7 +28,17 @@ function ReviewRow({ label, value }) {
   );
 }
 
-function AckStatus({ label, checked }) {
+function AckStatus({ label, checked, notRequiredLabel = "" }) {
+  if (notRequiredLabel) {
+    return (
+      <div className="flex py-2 border-b border-muted gap-4">
+        <span className="text-[0.82rem] text-hrs-muted min-w-[190px] flex-shrink-0">{label}</span>
+        <span className="text-[0.82rem] font-medium flex items-center gap-1 text-hrs-muted italic">
+          <Minus className="w-3.5 h-3.5" /> {notRequiredLabel}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="flex py-2 border-b border-muted gap-4">
       <span className="text-[0.82rem] text-hrs-muted min-w-[190px] flex-shrink-0">{label}</span>
@@ -42,6 +56,8 @@ function yn(val) {
 }
 
 export default function StepReview({ data, onPrev, onSubmit, isSubmitting }) {
+  const feeSummary = getBrokerFeeSummary(data);
+  const disclosureEvidence = getStatutoryDisclosureEvidence(data);
   return (
     <div>
       <FormCard>
@@ -81,13 +97,7 @@ export default function StepReview({ data, onPrev, onSubmit, isSubmitting }) {
           <ReviewRow label="Option 1" value={`${data.ins0 || "—"} — R${data.prem0 || "—"}`} />
           <ReviewRow label="Option 2" value={`${data.ins1 || "—"} — R${data.prem1 || "—"}`} />
           <ReviewRow label="Option 3 (Rec)" value={`${data.ins2 || "—"} — R${data.prem2 || "—"}`} />
-          <ReviewRow label="Broker Fee" value={(() => {
-            if (!data.brokerFeePercent) return "—";
-            const net = parseFloat(data.prem2) || 0;
-            const fee = parseFloat(data.brokerFeePercent) || 0;
-            if (data.brokerFeeType === 'fixed') return `R ${fee.toFixed(2)}`;
-            return `${fee}% (R ${(net * fee / 100).toFixed(2)})`;
-          })()} />
+          <ReviewRow label="Broker Fee" value={feeSummary.consentRequired ? feeSummary.displayValue : "No broker fee applicable"} />
         </ReviewSection>
 
         <ReviewSection title="Needs Analysis">
@@ -125,11 +135,24 @@ export default function StepReview({ data, onPrev, onSubmit, isSubmitting }) {
           <AckStatus label="Client Obligations" checked={data.ackClient} />
           <AckStatus label="POPIA Consent" checked={data.ackPopia} />
           <AckStatus label="Termination Terms" checked={data.ackTermination} />
-          <AckStatus label="Broker Fee Consent" checked={data.ackBrokerFee} />
+          <AckStatus
+            label="Broker Fee Consent"
+            checked={data.ackBrokerFee}
+            notRequiredLabel={!feeSummary.consentRequired ? "Not required — no broker fee applicable" : undefined}
+          />
           <AckStatus label="Broker Appointment" checked={data.ackBrokerAppointment} />
           <AckStatus label="Broker Authorisation" checked={data.ackBrokerAuth} />
           <AckStatus label="Statutory Disclosure (Sec 13)" checked={data.ackStatutoryDisclosure} />
           {data.changingBroker === "yes" ? <AckStatus label="Letter of Investigation" checked={data.ackLetterOfInvestigation} /> : null}
+        </ReviewSection>
+
+        <ReviewSection title="Statutory Disclosure Evidence">
+          <ReviewRow label="Disclosure Version" value={disclosureEvidence.version} />
+          <ReviewRow label="Reviewed & Acknowledged" value={disclosureEvidence.acknowledged ? "Yes" : "No"} />
+          <ReviewRow
+            label="Signed Under General ROA Declaration"
+            value={disclosureEvidence.signatureStatus === 'yes' ? "Yes" : disclosureEvidence.signatureStatus === 'pending' ? "Pending signature" : "No"}
+          />
         </ReviewSection>
 
         <ReviewSection title="Client Declaration">

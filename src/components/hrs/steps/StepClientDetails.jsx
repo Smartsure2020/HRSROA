@@ -13,7 +13,7 @@ const PROVINCES = [
   "Limpopo", "Mpumalanga", "North West", "Northern Cape", "Western Cape",
 ];
 
-export default function StepClientDetails({ data, onChange, onNext }) {
+export default function StepClientDetails({ data, onChange, onNext, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
 
   return (
@@ -113,7 +113,7 @@ export default function StepClientDetails({ data, onChange, onNext }) {
         </div>
       </FormCard>
 
-      <NavBar showPrev={false} onNext={onNext} nextLabel="Next: Insurance History" />
+      <NavBar showPrev={false} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

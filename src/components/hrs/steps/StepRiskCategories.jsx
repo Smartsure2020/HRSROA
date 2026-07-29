@@ -81,7 +81,7 @@ function RiskRow({ cat, state, onChange, shade }) {
   );
 }
 
-export default function StepRiskCategories({ data, onChange, onNext, onPrev }) {
+export default function StepRiskCategories({ data, onChange, onNext, onPrev, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
 
   const updateRisk = (i, val) => {
@@ -203,7 +203,7 @@ export default function StepRiskCategories({ data, onChange, onNext, onPrev }) {
         </FormField>
       </FormCard>
 
-      <NavBar onPrev={onPrev} onNext={onNext} nextLabel="Next: Principles & Disclosures" />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

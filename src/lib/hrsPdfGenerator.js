@@ -1,6 +1,15 @@
 import { jsPDF } from 'jspdf';
 import { RISK_CATEGORIES, PRINCIPLES } from './hrsConstants';
 import logoUrl from '../assets/hrs-logo.png';
+import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from './hrsComplianceContent';
+import { getBrokerFeeSummary } from './brokerFee';
+import { HRS_PDF_THEME, drawDocumentHeader, drawPageFooter, drawSectionHeader, drawClientSummary, ensurePageSpace } from './pdf/hrsPdfTheme';
+
+const APPOINTMENT = HRS_COMPLIANCE_CONTENT.brokerAppointment.personal;
+const FEE_CONTENT = HRS_COMPLIANCE_CONTENT.brokerFeeConsent;
+const INVESTIGATION_CONTENT = HRS_COMPLIANCE_CONTENT.letterOfInvestigation.personal;
+const DECLARATION_CONTENT = HRS_COMPLIANCE_CONTENT.clientDeclaration.personal;
+const ELECTION_WARNING_CONTENT = HRS_COMPLIANCE_CONTENT.electionWarning.personal;
 
 function yn(val) {
   return val === 'yes' ? 'Yes' : val === 'no' ? 'No' : 'Not answered';
@@ -28,37 +37,53 @@ async function loadImgAsDataURL(src) {
 }
 
 const C = {
-  blue:    [37, 64, 143],
-  orange:  [220, 75, 30],
-  green:   [30, 140, 80],
-  red:     [190, 40, 40],
-  white:   [255, 255, 255],
-  black:   [20, 20, 30],
-  grey:    [110, 115, 135],
-  lightBg: [246, 248, 252],
-  border:  [210, 215, 230],
-  gold:    [200, 155, 60],
+  blue:    HRS_PDF_THEME.colors.accent,
+  orange:  HRS_PDF_THEME.colors.warmAccent,
+  green:   HRS_PDF_THEME.colors.success,
+  red:     HRS_PDF_THEME.colors.danger,
+  white:   HRS_PDF_THEME.colors.white,
+  black:   HRS_PDF_THEME.colors.text,
+  grey:    HRS_PDF_THEME.colors.muted,
+  lightBg: HRS_PDF_THEME.colors.light,
+  border:  HRS_PDF_THEME.colors.border,
+  gold:    HRS_PDF_THEME.colors.warning,
   goldTxt: [70, 50, 5],
 };
 
-const PAGE_W = 210, PAGE_H = 297;
-const ML = 15, MR = 15;
+const PAGE_W = HRS_PDF_THEME.page.width, PAGE_H = HRS_PDF_THEME.page.height;
+const ML = HRS_PDF_THEME.margin.left, MR = HRS_PDF_THEME.margin.right;
 const CW = PAGE_W - ML - MR;
 const LW = 60;
 
+function getPdfMetadata(formData) {
+  const disclosure = getStatutoryDisclosureEvidence(formData);
+  return {
+    productLine: 'Short-term Insurance: Personal Lines',
+    clientName: [formData.title, formData.firstName, formData.surname].filter(Boolean).join(' ') || 'Client',
+    advisorName: formData.brokerName,
+    policyType: formData.policyType,
+    documentDate: formData.sigDate || formData.inceptionDate,
+    disclosureVersion: disclosure.version,
+    documentType: 'Personal Lines ROA',
+  };
+}
+
 class PDFBuilder {
-  constructor(logoDataURL) {
+  constructor(logoDataURL, metadata = {}) {
     this.doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
     this.logo = logoDataURL;
+    this.metadata = metadata;
+    this.ml = ML;
+    this.cw = CW;
     this.pageNum = 1;
     this.cy = 0;
     this._drawHeader();
     this._drawFooter();
-    this.cy = 44;
+    this.cy = HRS_PDF_THEME.headerHeight + 19;
   }
 
   _needSpace(h) {
-    if (this.cy + h > PAGE_H - 18) this._newPage();
+    ensurePageSpace(this, h);
   }
 
   _newPage() {
@@ -66,35 +91,11 @@ class PDFBuilder {
     this.pageNum++;
     this._drawHeader();
     this._drawFooter();
-    this.cy = 44;
+    this.cy = 18;
   }
 
   _drawHeader() {
-    const d = this.doc;
-    d.setFillColor(...C.blue);
-    d.rect(0, 0, PAGE_W, 34, 'F');
-    d.setFillColor(...C.orange);
-    d.rect(0, 34, PAGE_W, 2.5, 'F');
-    d.setFillColor(...C.white);
-    d.roundedRect(ML, 3, 54, 28, 2, 2, 'F');
-    let logoValid = false;
-    if (this.logo && this.logo.startsWith('data:')) {
-      const parts = this.logo.split(',');
-      if (parts.length > 1 && parts[1].length > 64) logoValid = true;
-    }
-    if (logoValid) {
-      try { d.addImage(this.logo, 'PNG', ML + 2, 4, 50, 22, undefined, 'MEDIUM'); }
-      catch { this._drawTextLogo(d); }
-    } else {
-      this._drawTextLogo(d);
-    }
-    d.setFont('helvetica', 'bold'); d.setFontSize(13.5); d.setTextColor(...C.white);
-    d.text('RECORD OF ADVICE', PAGE_W - MR, 13, { align: 'right' });
-    d.setFont('helvetica', 'normal'); d.setFontSize(7.2); d.setTextColor(200, 205, 230);
-    d.text('New Personal Insurance  |  Holistic Risk Services (Pty) Ltd  |  FSP 28582', PAGE_W - MR, 20, { align: 'right' });
-    d.setFontSize(6.8); d.setTextColor(165, 170, 205);
-    const dt = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'long', year: 'numeric' });
-    d.text(`Generated: ${dt}`, PAGE_W - MR, 27, { align: 'right' });
+    drawDocumentHeader(this.doc, { ...this.metadata, logo: this.logo, firstPage: this.pageNum === 1 });
   }
 
   _drawTextLogo(d) {
@@ -103,28 +104,24 @@ class PDFBuilder {
   }
 
   _drawFooter() {
-    const d = this.doc;
-    const fy = PAGE_H - 13;
-    d.setFillColor(...C.lightBg); d.rect(0, fy, PAGE_W, 13, 'F');
-    d.setDrawColor(...C.border); d.setLineWidth(0.3);
-    d.line(ML, fy + 0.8, PAGE_W - MR, fy + 0.8);
-    d.setFont('helvetica', 'normal'); d.setFontSize(6.3); d.setTextColor(...C.grey);
-    d.text('Holistic Risk Services (Pty) Ltd  |  FSP 28582  |  16 Monte Carlo Crescent, Kyalami Business Park, Midrand 1684', ML, fy + 5);
-    d.text('010 447-9800  |  info@hrsinsurance.co.za  |  www.hrsinsurance.co.za', ML, fy + 9.5);
-    d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
-    d.text(`Page ${this.pageNum}`, PAGE_W - MR, fy + 7, { align: 'right' });
+    drawPageFooter(this.doc, { pageNumber: this.pageNum, documentType: this.metadata.documentType });
+  }
+
+  _finalizeFooters() {
+    const totalPages = this.doc.getNumberOfPages();
+    for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+      this.doc.setPage(pageNumber);
+      drawPageFooter(this.doc, { pageNumber, totalPages, documentType: this.metadata.documentType });
+    }
   }
 
   // keepWithH: minimum height of first content block that must fit with the heading
   sectionHeading(title, keepWithH = 14) {
-    this._needSpace(11 + keepWithH);
-    const d = this.doc;
-    d.setFillColor(...C.blue); d.rect(ML, this.cy, CW, 8.5, 'F');
-    d.setFillColor(...C.orange); d.rect(ML, this.cy, 3.5, 8.5, 'F');
-    d.setFont('helvetica', 'bold'); d.setFontSize(8.5); d.setTextColor(...C.white);
-    d.text(title, ML + 8, this.cy + 6);
-    this.cy += 11;
+    const match = String(title).match(/^\s*(\d+)\.\s*(.*)$/);
+    drawSectionHeader(this, match?.[2] || title, match?.[1] || '', keepWithH);
   }
+
+  clientSummary(items) { drawClientSummary(this, items); }
 
   subHeading(title, keepWithH = 12) {
     this._needSpace(9 + keepWithH);
@@ -358,7 +355,16 @@ class PDFBuilder {
     d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
     d.text(label.toUpperCase(), x + w / 2, y + 5, { align: 'center' });
     if (sigDataURL) {
-      d.addImage(sigDataURL, 'PNG', x + 5, y + 9, w - 10, h - 18, undefined, 'MEDIUM');
+      try {
+        const props = d.getImageProperties(sigDataURL);
+        const scale = Math.min((w - 10) / props.width, (h - 18) / props.height);
+        const imageW = props.width * scale;
+        const imageH = props.height * scale;
+        d.addImage(sigDataURL, 'PNG', x + (w - imageW) / 2, y + 9 + ((h - 18) - imageH) / 2, imageW, imageH, undefined, 'MEDIUM');
+      } catch {
+        d.setFont('helvetica', 'italic'); d.setFontSize(6.5); d.setTextColor(...C.grey);
+        d.text('Signature image unavailable', x + w / 2, y + 20, { align: 'center' });
+      }
     } else {
       d.setDrawColor(...C.border); d.setLineWidth(0.3); d.setLineDash([1.5, 1.5]);
       d.line(x + 8, y + h - 9, x + w - 8, y + h - 9);
@@ -378,14 +384,22 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   const fullName = [formData.title, formData.firstName, formData.surname].filter(Boolean).join(' ').trim() || 'Client';
   const address = [formData.streetNumber, formData.streetName, formData.complexName, formData.suburb, formData.city, formData.province, formData.postalCode]
     .filter(Boolean).join(', ') || '-';
-  const netPrem = parseFloat(formData.prem2) || 0;
-  const feeVal = parseFloat(formData.brokerFeePercent) || 0;
-  const feeAmount = formData.brokerFeeType === 'fixed' ? feeVal : (netPrem * feeVal / 100);
-  const feeStr = formData.brokerFeePercent
-    ? (formData.brokerFeeType === 'fixed' ? `R ${feeVal.toFixed(2)}` : `R ${feeAmount.toFixed(2)} (${feeVal}%)`)
-    : '-';
+  const feeSummary = getBrokerFeeSummary(formData);
+  const feeStr = feeSummary.consentRequired ? feeSummary.displayValue : 'No broker fee applicable';
+  const disclosureEvidence = getStatutoryDisclosureEvidence(formData);
 
   let sh = false;
+
+  pdf.clientSummary([
+    { label: 'Client', value: fullName },
+    { label: 'ID / Passport', value: formData.idNumber },
+    { label: 'Contact', value: formData.cell },
+    { label: 'Email', value: formData.email },
+    { label: 'Risk address', value: address },
+    { label: 'Policy type', value: formData.policyType },
+    { label: 'Existing insurer / policy', value: formData.existingPolicyRef },
+    { label: 'Advisor', value: formData.brokerName },
+  ]);
 
   // 1. CLIENT DETAILS
   pdf.sectionHeading('1.  CLIENT DETAILS');
@@ -525,17 +539,26 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
     formData.ackTermination
   );
 
-  pdf.disclosureBlock(
-    "Broker (Intermediary) Fee Consent",
-    "IMPORTANT: A broker fee is an amount charged by Holistic Risk Services (Pty) Ltd (FSP 28582) for additional services rendered to you, which include: assistance with rejected claims incl. applications for goodwill payments; facilitation of non-insurance value-added products and services; onsite attendance with assessors as required; advice and guidance outside the ambit of regulated financial products; and onsite visits upon client request and at policy renewal. The broker fee amount is disclosed to you in Step 3 of this advice record. You have the right to withdraw your consent for the payment of the broker fee at any time by notifying Holistic Risk Services (Pty) Ltd in writing. The broker fee will be collected together with your insurance premium via debit order or as otherwise agreed in writing.",
-    "I have read and understood the Broker Fee Consent above, and I consent to the payment of the broker (intermediary) fee.",
-    formData.ackBrokerFee
-  );
+  if (feeSummary.consentRequired) {
+    pdf.disclosureBlock(
+      "Broker (Intermediary) Fee Consent",
+      [FEE_CONTENT.important, FEE_CONTENT.general, FEE_CONTENT.feesIntro, ...FEE_CONTENT.additionalServices.map(s => `• ${s}`), FEE_CONTENT.amount, FEE_CONTENT.consentIntro].join('  '),
+      `${FEE_CONTENT.ackLabel} Fee applicable: ${feeSummary.displayValue}.`,
+      formData.ackBrokerFee
+    );
+  } else {
+    pdf.disclosureBlock(
+      "Broker (Intermediary) Fee Consent",
+      `${FEE_CONTENT.important}  No broker fee has been quoted for this placement (recommended premium / broker fee value is zero or blank).`,
+      `${FEE_CONTENT.noFeeApplicableLabel} No consent is required and none is implied by this record.`,
+      true
+    );
+  }
 
   pdf.disclosureBlock(
     "Broker Appointment Confirmation (Client Mandate)",
-    "The client hereby appoints Holistic Risk Services (Pty) Ltd as broker (agent), remaining in force until cancelled by either party in writing. Financial Services: the client confirms HRS is authorised to render financial services on their behalf, including instructions to buy, sell, terminate or replace any financial product, and to submit or process claims. Client Information: HRS shall keep client information confidential and is authorised to obtain information from third parties to determine the client's financial situation, product experience and objectives. Commission: the client agrees to transfer any new commission to HRS, and product suppliers are requested to transfer insurance portfolios to HRS's broker code. This appointment shall remain in force until cancelled in writing by either party with 30 days' notice.",
-    "I confirm my appointment of Holistic Risk Services (Pty) Ltd as my short-term insurance broker.",
+    [APPOINTMENT.intro, ...APPOINTMENT.sections.map(s => `${s.heading}: ${s.text}`), APPOINTMENT.closing].filter(Boolean).join('  '),
+    APPOINTMENT.ackLabel,
     formData.ackBrokerAppointment
   );
 
@@ -546,18 +569,32 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
     formData.ackBrokerAuth
   );
 
-  pdf.disclosureBlock(
-    "Statutory Disclosure (Section 13) — FSP 28582",
-    "Holistic Risk Services (Pty) Ltd (Reg No 2004/026273/07) is a duly authorised FSP (Licence No 28582), authorised to provide financial services (Advice and Intermediary Services) for Short-term Insurance: Personal Lines, Commercial Lines and Personal Lines A1. Compliance Officer: Mrs Monique Coetzee, Moonstone Compliance (Practice No 188). The provider holds professional indemnity insurance and has established a Conflict of Interest Management Policy and a written internal complaint resolution system, both available to the client on request. No person acting for the provider may request a signature on an incomplete document, or induce a client to waive any right under the General Codes of Conduct. The client is responsible for the accuracy and completeness of all information provided. The full Statutory Disclosure, including the complete list of authorised product suppliers, was made available to and reviewed by the client within this advice record.",
-    "I have read and understood the Statutory Disclosure (Section 13) referred to above.",
-    formData.ackStatutoryDisclosure
-  );
+  // Statutory Disclosure — approved Phase 3 evidence model: the complete disclosure is not
+  // repeated in full here (it is shown in-app and available as a separate controlled
+  // download); this concise evidence block records the version and acknowledgement status,
+  // and confirms the acknowledgement is covered by the general signed ROA declaration below.
+  pdf.subHeading(`Statutory Disclosure (Section 13) — Version ${disclosureEvidence.version}`, 20);
+  d.setFont('helvetica', 'normal'); d.setFontSize(7); d.setTextColor(...C.black);
+  [
+    HRS_COMPLIANCE_CONTENT.statutoryDisclosure.pdfEvidenceIntro,
+    `Reviewed and acknowledged by client: ${disclosureEvidence.acknowledged ? 'Yes' : 'No'}.`,
+    `A complete copy of the disclosure (source: ${HRS_COMPLIANCE_CONTENT.statutoryDisclosure.sourceDocumentName}) was made available separately to the client.`,
+  ].forEach((line) => {
+    d.splitTextToSize(line, CW - 6).forEach((wrapped) => {
+      pdf._needSpace(5);
+      d.text(wrapped, ML + 3, pdf.cy + 4);
+      pdf.cy += 4.5;
+    });
+  });
+  pdf.gap(3);
+  pdf.ackRow(disclosureEvidence.evidenceLine, disclosureEvidence.acknowledged, false);
+  pdf.gap(2);
 
   if (formData.changingBroker === 'yes') {
     pdf.disclosureBlock(
       "Letter of Investigation",
-      "I/We hereby grant Holistic Risk Services (Pty) Ltd full authority to obtain and verify any information regarding my/our short-term insurance policies, extending to risk and underwriting information, personal information necessary for administration, and claims history, premium records and other information material to the insurance relationship. I/We acknowledge that any changes in respect of risk, underwriting or personal information must be disclosed to HRS as soon as possible, and that HRS shall not be liable for damage resulting from any misrepresentation by the client. This serves as formal confirmation of the client's consent for HRS to conduct this investigation and obtain information from insurers, underwriters or other parties involved in administering the client's short-term insurance.",
-      "I grant Holistic Risk Services (Pty) Ltd authority to investigate and obtain information from my previous insurer(s)/broker.",
+      INVESTIGATION_CONTENT.paragraphs.join('  '),
+      INVESTIGATION_CONTENT.ackLabel,
       formData.ackLetterOfInvestigation
     );
   }
@@ -571,17 +608,14 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   pdf.dataRow('Elects to receive more limited information/advice', formData.electionLimitedInfo ? 'Yes' : 'No', sh = !sh);
   const electedAlt = formData.electionDiffers || formData.electionNotFollow || formData.electionLimitedInfo;
   if (electedAlt) {
-    pdf.multiLineDataRow(
-      'Risk Warning Acknowledged',
-      '1. There may be limitations on the appropriateness of the advice provided in light of such circumstances. 2. The client should take particular care to consider on his/her own whether the advice is appropriate considering the client’s objectives, financial situation and particular needs.'
-    );
+    pdf.multiLineDataRow('Risk Warning Acknowledged', ELECTION_WARNING_CONTENT.join(' '));
     pdf.dataRow('Client Initials', formData.electionInitials, sh = !sh);
   }
   pdf.gap(2);
   pdf.disclosureBlock(
-    formData.declarationChoice === 'decline' ? 'I elect NOT to follow the advice and recommendations set out above.' : 'I hereby accept the advice and recommendations provided to me as set out above.',
-    "I am aware that the advice and recommendations provided are limited to my short-term insurance (personal lines) portfolio only, and that a comprehensive analysis of all my financial needs was not undertaken; there may accordingly be limitations concerning the appropriateness of the advice. Where any election above was made, I confirm the advisor alerted me to the risks of such election. I understand the dangers of being underinsured and that excesses may be aggregated in certain circumstances. I have read the policy documents and attached policy schedule and note the special conditions and applicable excesses. The advisor explained the material terms, conditions, exclusions and excess payment terms of the policy. I did not sign the application form while incomplete, and take full responsibility for all information provided. The advisor provided quotes from the insurer which were discussed and attached to this document. I understand the meaning of new placement, renewal and replacement as it applies to the product selected.",
-    formData.declarationChoice === 'decline' ? 'Client elects NOT to follow the advice and recommendations set out above.' : 'Client accepts the advice and recommendations set out above.',
+    formData.declarationChoice === 'decline' ? DECLARATION_CONTENT.declineTitle : DECLARATION_CONTENT.acceptTitle,
+    formData.declarationChoice === 'decline' ? DECLARATION_CONTENT.decline : DECLARATION_CONTENT.accept,
+    formData.declarationChoice === 'decline' ? DECLARATION_CONTENT.pdfDeclineEvidence : DECLARATION_CONTENT.pdfAcceptEvidence,
     true
   );
   pdf.gap();
@@ -690,8 +724,9 @@ export async function generatePDF(formData) {
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
-  const pdf = new PDFBuilder(logo);
+  const pdf = new PDFBuilder(logo, getPdfMetadata(formData));
   buildROA(pdf, formData, clientSig, advisorSig);
+  pdf._finalizeFooters();
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   pdf.save(`HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -702,8 +737,9 @@ export async function generateROABase64(formData) {
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
-  const pdf = new PDFBuilder(logo);
+  const pdf = new PDFBuilder(logo, getPdfMetadata(formData));
   buildROA(pdf, formData, clientSig, advisorSig);
+  pdf._finalizeFooters();
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   const filename = `HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
   const base64 = pdf.doc.output('datauristring').split(',')[1];
@@ -716,9 +752,10 @@ export async function generateCombinedPDF(formData, checklistState) {
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
-  const pdf = new PDFBuilder(logo);
+  const pdf = new PDFBuilder(logo, getPdfMetadata(formData));
   buildROA(pdf, formData, clientSig, advisorSig);
   buildChecklist(pdf, formData, checklistState);
+  pdf._finalizeFooters();
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   pdf.save(`HRS_ROA_Checklist_${name}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }

@@ -3,6 +3,7 @@ import SectionTitle from "../SectionTitle";
 import FormField from "../FormField";
 import TextInput from "../TextInput";
 import NavBar from "../NavBar";
+import { getBrokerFeeSummary } from "../../../lib/brokerFee";
 
 function ProductCard({ number, label, insValue, premValue, onInsChange, onPremChange, recommended }) {
   return (
@@ -23,9 +24,17 @@ function ProductCard({ number, label, insValue, premValue, onInsChange, onPremCh
   );
 }
 
-export default function StepProductsAdvice({ data, onChange, onNext, onPrev }) {
+export default function StepProductsAdvice({ data, onChange, onNext, onPrev, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
   const feeType = data.brokerFeeType || 'percent';
+  const feeSummary = getBrokerFeeSummary(data);
+
+  // Switching between % and R clears the entered value rather than silently reinterpreting
+  // an old percentage as a fixed rand amount (or vice versa) — the user must re-confirm.
+  const setFeeType = (type) => {
+    if (type === feeType) return;
+    onChange({ ...data, brokerFeeType: type, brokerFeePercent: '' });
+  };
 
   return (
     <div>
@@ -50,14 +59,14 @@ export default function StepProductsAdvice({ data, onChange, onNext, onPrev }) {
             <div className="flex gap-0">
               <button
                 type="button"
-                onClick={() => onChange({ ...data, brokerFeeType: 'percent' })}
+                onClick={() => setFeeType('percent')}
                 className={`px-3 py-2 text-[0.78rem] font-semibold border-[1.5px] rounded-l-lg transition-all ${
                   feeType === 'percent' ? 'bg-hrs-blue text-white border-hrs-blue' : 'border-hrs-border text-hrs-blue2 hover:border-hrs-orange-light'
                 }`}
               >%</button>
               <button
                 type="button"
-                onClick={() => onChange({ ...data, brokerFeeType: 'fixed' })}
+                onClick={() => setFeeType('fixed')}
                 className={`px-3 py-2 text-[0.78rem] font-semibold border-[1.5px] border-l-0 rounded-r-lg transition-all ${
                   feeType === 'fixed' ? 'bg-hrs-blue text-white border-hrs-blue' : 'border-hrs-border text-hrs-blue2 hover:border-hrs-orange-light'
                 }`}
@@ -71,6 +80,9 @@ export default function StepProductsAdvice({ data, onChange, onNext, onPrev }) {
                 min="0"
               />
             </div>
+            <p className={`text-[0.75rem] mt-1.5 ${feeSummary.consentRequired ? 'text-hrs-blue2' : 'text-hrs-muted italic'}`}>
+              {feeSummary.consentRequired ? feeSummary.displayValue : 'No broker fee applicable — Broker Fee Consent will not be required.'}
+            </p>
           </FormField>
         </div>
         <div className="mt-4">
@@ -95,7 +107,7 @@ export default function StepProductsAdvice({ data, onChange, onNext, onPrev }) {
         </div>
       </FormCard>
 
-      <NavBar onPrev={onPrev} onNext={onNext} nextLabel="Next: Risk Categories" />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

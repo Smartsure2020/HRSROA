@@ -5,6 +5,12 @@ import TextInput from "../../TextInput";
 import YesNoToggle from "../../YesNoToggle";
 import StatutoryDisclosureModal from "../../StatutoryDisclosureModal";
 import { COMMERCIAL_PRINCIPLES } from "../../../../lib/hrsCommercialConstants";
+import { getBrokerFeeSummary } from "../../../../lib/brokerFee";
+import { HRS_COMPLIANCE_CONTENT } from "../../../../lib/hrsComplianceContent";
+
+const APPOINTMENT = HRS_COMPLIANCE_CONTENT.brokerAppointment.commercial;
+const FEE = HRS_COMPLIANCE_CONTENT.brokerFeeConsent;
+const INVESTIGATION = HRS_COMPLIANCE_CONTENT.letterOfInvestigation.commercial;
 
 function PrincipleItem({ number, text }) {
   const parts = text.split(/(\b[A-Z][A-Z ]{3,}\b)/g);
@@ -47,8 +53,9 @@ function LegalBlock({ title, children, className = "" }) {
   );
 }
 
-export default function CommercialStepPrinciples({ data, onChange, onNext, onPrev }) {
+export default function CommercialStepPrinciples({ data, onChange, onNext, onPrev, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
+  const feeSummary = getBrokerFeeSummary(data);
 
   return (
     <div>
@@ -131,26 +138,28 @@ export default function CommercialStepPrinciples({ data, onChange, onNext, onPre
 
         {/* Broker Fee Consent */}
         <LegalBlock title="Broker (Intermediary) Fee Consent" className="mt-4">
-          <p className="text-[0.8rem] font-semibold mb-2">IMPORTANT: This document only sets out your consent for the payment of broker fees for additional services performed by Holistic Risk Services (Pty) Ltd and does not replace any other disclosures you are entitled to receive in terms of applicable legislation.</p>
+          <p className="text-[0.8rem] font-semibold mb-2">{FEE.important}</p>
           <p className="mt-2 font-semibold">1. General</p>
-          <p className="mt-1">Holistic Risk Services (Pty) Ltd, with FSP number 28582, provides various services in relation to your short-term policy for, or on behalf of yourself, or on behalf of an insurer, or for acting as an intermediary. For these services Holistic Risk Services (Pty) Ltd is remunerated by way of commission and fees which are either paid by the insurer or yourself.</p>
+          <p className="mt-1">{FEE.general}</p>
           <p className="mt-2 font-semibold">1.1 Broker fees</p>
-          <p className="mt-1">Broker fees are charged to you for providing additional services for your benefit and will be fully disclosed to you. You may withdraw consent to charge the fee if you do not want to make use of these services. The following are the additional services performed in terms of our value proposition to you:</p>
+          <p className="mt-1">{FEE.feesIntro}</p>
           <ul className="list-disc ml-5 mt-1.5 space-y-1">
-            <li>Assistance with rejected claims, including the preparation and submission of applications for goodwill payments</li>
-            <li>Facilitation of non-insurance value-added products and services</li>
-            <li>Onsite attendance with assessors as required or deemed necessary</li>
-            <li>Advice and guidance outside the ambit of regulated financial products</li>
-            <li>Onsite visits upon client request and at the time of policy renewal</li>
+            {FEE.additionalServices.map((s) => <li key={s}>{s}</li>)}
           </ul>
           <p className="mt-2 font-semibold">1.2 Broker fee amount</p>
-          <p className="mt-1">For the additional services set out above, Holistic Risk Services (Pty) Ltd charges the fee disclosed to you under Products &amp; Advice in this record (as a percentage of gross premium or a flat rand amount, inclusive of VAT). The broker fee will be charged monthly for as long as the policy is active.</p>
+          <p className="mt-1">{FEE.amount}</p>
           <p className="mt-2 font-semibold">2. Consent</p>
-          <p className="mt-1">By ticking the box below, I consent to paying the broker fee for the additional services set out above.</p>
+          <p className="mt-1">{FEE.consentIntro}</p>
         </LegalBlock>
-        <AckRow checked={data.ackBrokerFee} onChange={set("ackBrokerFee")}>
-          I have read and understood the Broker Fee Consent above, and I consent to the payment of the broker (intermediary) fee for the additional services described.
-        </AckRow>
+        {feeSummary.consentRequired ? (
+          <AckRow checked={data.ackBrokerFee} onChange={set("ackBrokerFee")}>
+            {FEE.ackLabel} Fee applicable: <strong>{feeSummary.displayValue}</strong>.
+          </AckRow>
+        ) : (
+          <div className="mt-4 p-3.5 rounded-lg border-[1.5px] border-hrs-border bg-secondary text-[0.82rem] text-hrs-muted italic">
+            {FEE.noFeeApplicableLabel} No consent is required.
+          </div>
+        )}
 
         <div className="mt-4">
           <StatutoryDisclosureModal checked={data.ackStatutoryDisclosure} onAcknowledge={set("ackStatutoryDisclosure")} />
@@ -162,14 +171,14 @@ export default function CommercialStepPrinciples({ data, onChange, onNext, onPre
         <SectionTitle>Broker Appointment</SectionTitle>
         <p className="text-hrs-muted text-[0.82rem] mb-5">Appointment of Holistic Risk Services (Pty) Ltd as your short-term insurance broker</p>
         <LegalBlock>
-          <p>The client hereby appoints <strong>Holistic Risk Services (Pty) Ltd</strong>, represented by the advisor named in this record, as its broker (agent), and confirms that such appointment remains in force until cancelled by the client or the provider in writing.</p>
-          <p className="mt-3 font-semibold">Financial Services</p>
-          <p className="mt-1">The client hereby confirms that Holistic Risk Services (Pty) Ltd is authorised to render financial services on its behalf. Such authorisation includes any instruction to facilitate the buying, selling, termination or replacement of any existing financial product, and the managing, administering, maintaining or servicing of a financial product, and the submittal or processing of any claims associated with a financial product. Product suppliers are requested to kindly give effect to any instructions communicated by Holistic Risk Services (Pty) Ltd.</p>
-          <p className="mt-3 font-semibold">Client Information</p>
-          <p className="mt-1">Holistic Risk Services (Pty) Ltd acknowledges that in the course of rendering financial services, it shall come into possession of information of a confidential nature, and shall not, during or after this appointment, use or disclose any client information except to the extent required by law or permitted by the client in writing. This appointment authorises Holistic Risk Services (Pty) Ltd to obtain any information from a third party in order to determine the client's financial situation, financial product experience and financial objectives, including any information relating to a policy purchased by the client. Product suppliers are requested to kindly furnish Holistic Risk Services (Pty) Ltd with all requested client information.</p>
-          <p className="mt-3 font-semibold">Commission</p>
-          <p className="mt-1">The client agrees to transfer any new commission which may become due during the appointment period to Holistic Risk Services (Pty) Ltd. Product suppliers are requested to kindly transfer any insurance and investment portfolios to Holistic Risk Services (Pty) Ltd's broker code.</p>
-          <p className="mt-3">This appointment shall remain in force until cancelled in writing by either party with 30 days' notice.</p>
+          <p>{APPOINTMENT.intro}</p>
+          {APPOINTMENT.sections.map((s) => (
+            <div key={s.heading}>
+              <p className="mt-3 font-semibold">{s.heading}</p>
+              <p className="mt-1">{s.text}</p>
+            </div>
+          ))}
+          {APPOINTMENT.closing && <p className="mt-3">{APPOINTMENT.closing}</p>}
         </LegalBlock>
         <div className="mt-5">
           <p className="text-[0.8rem] font-semibold text-hrs-blue2 uppercase tracking-[0.06em] mb-3">Policy Portfolio Details</p>
@@ -193,7 +202,7 @@ export default function CommercialStepPrinciples({ data, onChange, onNext, onPre
           </div>
         </div>
         <AckRow checked={data.ackBrokerAppointment} onChange={set("ackBrokerAppointment")} className="mt-4">
-          I confirm my appointment of Holistic Risk Services (Pty) Ltd as my short-term insurance broker as described above.
+          {APPOINTMENT.ackLabel}
         </AckRow>
       </FormCard>
 
@@ -235,22 +244,22 @@ export default function CommercialStepPrinciples({ data, onChange, onNext, onPre
         <SectionTitle>Letter of Investigation</SectionTitle>
         <p className="text-hrs-muted text-[0.82rem] mb-5">Only applicable if HRS is taking over as broker of record from another provider</p>
         <p className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2">
-          Is HRS taking over as the business's broker of record from another provider?
+          {INVESTIGATION.questionLabel}
         </p>
         <YesNoToggle value={data.changingBroker} onChange={set("changingBroker")} />
 
         {data.changingBroker === "yes" && (
           <>
             <LegalBlock className="mt-4">
-              <p>We hereby grant Holistic Risk Services (Pty) Ltd full authority to obtain and verify any information regarding the business's short-term insurance policies.</p>
-              <p className="mt-2">This authority extends to the investigation of: risk details and underwriting information relevant to the insurance; personal information necessary for the proper administration of the insurance; and claims history, premium records, and any other information material to the insurance relationship.</p>
-              <p className="mt-2">We acknowledge and agree that any changes in respect of risk, underwriting or personal information relevant to the insurance must be disclosed to Holistic Risk Services (Pty) Ltd as soon as possible, and that in the event of any misrepresentation regarding claims, insurance history, premium prejudice, or information, Holistic Risk Services (Pty) Ltd shall not be held liable for any damage resulting from such breach of duty.</p>
-              <p className="mt-2">This serves as formal confirmation of the client's consent for Holistic Risk Services (Pty) Ltd to conduct the necessary investigation and obtain all relevant information from insurers, underwriters or any other parties involved in the administration of the business's short-term insurance.</p>
+              {INVESTIGATION.paragraphs.map((p, i) => <p key={i} className={i > 0 ? "mt-2" : ""}>{p}</p>)}
             </LegalBlock>
             <AckRow checked={data.ackLetterOfInvestigation} onChange={set("ackLetterOfInvestigation")} className="mt-4">
-              We grant Holistic Risk Services (Pty) Ltd authority to investigate and obtain the information described above from the previous insurer(s)/broker.
+              {INVESTIGATION.ackLabel}
             </AckRow>
           </>
+        )}
+        {data.changingBroker !== "yes" && (
+          <p className="text-[0.78rem] text-hrs-muted italic mt-2">Not applicable — only required where HRS is taking over as broker of record.</p>
         )}
       </FormCard>
 
@@ -291,7 +300,7 @@ export default function CommercialStepPrinciples({ data, onChange, onNext, onPre
         </AckRow>
       </FormCard>
 
-      <NavBar onPrev={onPrev} onNext={onNext} nextLabel="Next: Signatures" />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

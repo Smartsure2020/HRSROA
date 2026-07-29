@@ -1,17 +1,18 @@
 import { POLICY_TYPES, PERILS, VALUE_TYPES } from './hrsConstants';
+import { getBrokerFeeSummary } from './brokerFee';
+import { applySharedConditionalCleanup, clearStaleReplacementFields } from './conditionalCleanup';
+import { COMMERCIAL_STEPS as AUTHORITATIVE_COMMERCIAL_STEPS } from './flowSteps';
 
 export { POLICY_TYPES, PERILS, VALUE_TYPES };
 
-export const COMMERCIAL_STEPS = [
-  { label: "Client Details" },
-  { label: "Insurance History" },
-  { label: "Products & Advice" },
-  { label: "Replacement Policy" },
-  { label: "Risk Categories" },
-  { label: "Principles & Disclosures" },
-  { label: "Signatures" },
-  { label: "Review" },
-];
+/** Enforces the Phase 3 conditional-cleanup invariants for the Commercial flow. */
+export function applyConditionalCleanup(formData) {
+  return clearStaleReplacementFields(applySharedConditionalCleanup(formData));
+}
+
+// Compatibility export for callers that previously imported this constant.
+// Navigation and labels use the same authoritative configuration.
+export const COMMERCIAL_STEPS = AUTHORITATIVE_COMMERCIAL_STEPS;
 
 export const COMMERCIAL_RISK_CATEGORIES = [
   { name: "Fire", note: "", sasria: true },
@@ -110,12 +111,13 @@ export function getCommercialStepErrors(step, formData) {
         ['ackClient', 'Client Obligations'],
         ['ackPopia', 'POPIA Consent'],
         ['ackTermination', 'Termination Terms'],
-        ['ackBrokerFee', 'Broker Fee Consent'],
         ['ackBrokerAppointment', 'Broker Appointment'],
         ['ackBrokerAuth', 'Broker Authorisation'],
         ['ackIntermediaryAgreement', 'Advice & Intermediary Services Agreement'],
         ['ackStatutoryDisclosure', 'Statutory Disclosure (Section 13)'],
       ];
+      // Broker Fee Consent is only required where a broker fee actually applies.
+      if (getBrokerFeeSummary(formData).consentRequired) acks.push(['ackBrokerFee', 'Broker Fee Consent']);
       if (formData.changingBroker === 'yes') acks.push(['ackLetterOfInvestigation', 'Letter of Investigation']);
       return acks.filter(([k]) => !formData[k]).map(([, label]) => label);
     }

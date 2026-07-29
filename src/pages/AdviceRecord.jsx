@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import AppHeader from "../components/hrs/AppHeader";
@@ -12,27 +12,17 @@ import StepBanking from "../components/hrs/steps/StepBanking";
 import StepSignatures from "../components/hrs/steps/StepSignatures";
 import StepChecklist from "../components/hrs/steps/StepChecklist";
 import StepReview from "../components/hrs/steps/StepReview";
-import { getInitialFormData, getStepErrors, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER } from "../lib/hrsConstants";
+import { getInitialFormData, getStepErrors, applyConditionalCleanup, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER } from "../lib/hrsConstants";
 import { useAuth } from '@/lib/AuthContext';
 import { generateROABase64 } from "../lib/hrsPdfGenerator";
 import { toast } from "@/components/ui/use-toast";
-import { syncPersonalROAToCRM } from '@/lib/crmSync';
-import { supabase } from '@/lib/supabaseClient';
+import { getDraftStatus, saveRoaDraft, clearRoaDraft, hasMeaningfulDraftData } from '@/lib/roaDraftStorage';
+import { getBrokerFeeSummary } from '@/lib/brokerFee';
+import { PERSONAL_STEPS, getActiveSteps, getNextButtonText, getStepIndex, getStepId } from '@/lib/flowSteps';
+import SignatureIncompleteDialog from '../components/hrs/SignatureIncompleteDialog';
 
-const TOTAL_STEPS = 8;
-const SESSION_KEY = 'hrs_roa_draft';
-
-function readSession() {
-  try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch { return null; }
-}
-function writeSession(data) {
-  // Exclude base64 signatures — they can be 100–200KB each and risk hitting the ~5MB sessionStorage quota
-  const { clientSig: _c, advisorSig: _a, ...rest } = data;
-  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(rest)); } catch { /* private browsing */ }
-}
-function clearSession() {
-  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
-}
+const TOTAL_STEPS = PERSONAL_STEPS.length;
+const FLOW_TYPE = 'personal';
 
 export default function AdviceRecord() {
   const navigate = useNavigate();
@@ -42,9 +32,20 @@ export default function AdviceRecord() {
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
+  const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
+  const pendingDraftRef = useRef(null);
 
   useEffect(() => {
-    if (readSession()) setShowRestoreBanner(true);
+    const { status, draft } = getDraftStatus(FLOW_TYPE);
+    if (status === 'expired') {
+      toast({
+        title: "Draft expired",
+        description: "Your previous draft expired for privacy and security. Please start again.",
+      });
+    } else if (status === 'valid') {
+      pendingDraftRef.current = draft;
+      setShowRestoreBanner(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -55,27 +56,44 @@ export default function AdviceRecord() {
 
   useEffect(() => {
     if (submitted) return;
+    if (!hasMeaningfulDraftData(FLOW_TYPE, formData)) return;
     const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [submitted]);
+  }, [submitted, formData]);
 
   const updateFormData = useCallback((updater) => {
     setFormData((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      writeSession(next);
+      const raw = typeof updater === 'function' ? updater(prev) : updater;
+      const next = applyConditionalCleanup(raw);
+      // Never autosave over a draft the user hasn't yet chosen to restore or discard.
+      if (!pendingDraftRef.current) saveRoaDraft(FLOW_TYPE, { currentStep, formData: next });
       return next;
     });
-  }, []);
+  }, [currentStep]);
+
+  // Persist the current step alongside the latest formData whenever the step changes
+  // (formData itself is only re-saved when it actually changes, via updateFormData above).
+  useEffect(() => {
+    if (submitted) return;
+    if (pendingDraftRef.current) return;
+    saveRoaDraft(FLOW_TYPE, { currentStep, formData });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep, submitted]);
 
   const handleRestore = () => {
-    const saved = readSession();
-    if (saved) setFormData(saved);
+    const draft = pendingDraftRef.current;
+    if (draft) {
+      setFormData(draft.formData);
+      setCurrentStep(draft.currentStep || 0);
+    }
+    pendingDraftRef.current = null;
     setShowRestoreBanner(false);
   };
 
   const handleDismissRestore = () => {
-    clearSession();
+    clearRoaDraft(FLOW_TYPE);
+    pendingDraftRef.current = null;
     setShowRestoreBanner(false);
   };
 
@@ -89,6 +107,10 @@ export default function AdviceRecord() {
   const handleNext = useCallback(() => {
     const errors = getStepErrors(currentStep, formData);
     if (errors.length > 0) {
+      if (currentStep === getStepIndex(PERSONAL_STEPS, 'signatures', formData)) {
+        setSignatureDialogOpen(true);
+        return;
+      }
       toast({
         variant: "destructive",
         title: "Please complete required fields",
@@ -101,6 +123,12 @@ export default function AdviceRecord() {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }, [currentStep, formData]);
+
+  const goToSignatures = useCallback(() => {
+    setSignatureDialogOpen(false);
+    setCurrentStep(getStepIndex(PERSONAL_STEPS, 'signatures', formData));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [formData]);
 
   const prevStep = useCallback(() => {
     if (currentStep > 0) {
@@ -140,7 +168,7 @@ Occupation: ${formData.occupation}
 Marital Status: ${formData.maritalStatus}
 
 Recommended Insurer: ${formData.recInsurer}
-Broker Fee: ${formData.brokerFeePercent ? formData.brokerFeePercent + '%' : '-'}
+Broker Fee: ${getBrokerFeeSummary(formData).consentRequired ? getBrokerFeeSummary(formData).displayValue : 'No broker fee applicable'}
 Option 1: ${formData.ins0 || '-'} — R${formData.prem0 || '-'}
 Option 2: ${formData.ins1 || '-'} — R${formData.prem1 || '-'}
 Option 3 (Recommended): ${formData.ins2 || '-'} — R${formData.prem2 || '-'}
@@ -173,17 +201,9 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         throw new Error(data.error || 'Failed to send email');
       }
 
-      clearSession();
-
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session) {
-          syncPersonalROAToCRM(formData, session)
-            .then(r => r.success
-              ? console.log('CRM sync OK — client:', r.clientId, 'deal:', r.dealId)
-              : console.warn('CRM sync failed:', r.error)
-            );
-        }
-      });
+      clearRoaDraft(FLOW_TYPE);
+      // CRM sync now runs (with visible status + retry) on the Checklist screen itself —
+      // see StepChecklist.jsx — rather than fire-and-forget here.
 
       setSubmitted(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -199,7 +219,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
   };
 
   const handleRestart = () => {
-    clearSession();
+    clearRoaDraft(FLOW_TYPE);
     setFormData(getInitialFormData());
     setCurrentStep(0);
     setSubmitted(false);
@@ -220,7 +240,15 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
       return <StepChecklist data={formData} onRestart={handleRestart} />;
     }
 
-    const common = { data: formData, onChange: updateFormData, onNext: handleNext, onPrev: prevStep };
+    const activeSteps = getActiveSteps(PERSONAL_STEPS, formData);
+    const currentStepId = getStepId(activeSteps, currentStep, formData);
+    const common = {
+      data: formData,
+      onChange: updateFormData,
+      onNext: handleNext,
+      onPrev: prevStep,
+      nextLabel: getNextButtonText(activeSteps, currentStepId, formData),
+    };
 
     switch (currentStep) {
       case 0: return <StepClientDetails {...common} />;
@@ -255,7 +283,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
 
       {showRestoreBanner && (
         <div className="bg-hrs-blue text-white text-[0.82rem] px-4 py-2.5 flex items-center justify-between gap-4">
-          <span>You have an unsaved ROA in progress — continue?</span>
+          <span>You have an unsaved ROA in progress — continue? (Signatures will need to be recaptured.)</span>
           <div className="flex gap-3 flex-shrink-0">
             <button onClick={handleRestore} className="underline font-semibold">Continue</button>
             <button onClick={handleDismissRestore} className="opacity-70 hover:opacity-100">Discard</button>
@@ -263,10 +291,16 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         </div>
       )}
 
-      {!submitted && <StepProgress currentStep={currentStep} onGoTo={goTo} />}
+      {!submitted && <StepProgress currentStep={currentStep} onGoTo={goTo} steps={getActiveSteps(PERSONAL_STEPS, formData)} />}
       <main className="max-w-[860px] mx-auto px-3 sm:px-5 py-9 pb-20">
         {renderStep()}
       </main>
+      <SignatureIncompleteDialog
+        open={signatureDialogOpen}
+        onOpenChange={setSignatureDialogOpen}
+        onGoToSignatures={goToSignatures}
+        signingRoute="docusign"
+      />
     </div>
   );
 }

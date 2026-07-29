@@ -6,7 +6,7 @@ import SelectInput from "../SelectInput";
 import NavBar from "../NavBar";
 import { BANKS, DEDUCTION_DATES, INSURERS } from "../../../lib/hrsConstants";
 
-export default function StepBanking({ data, onChange, onNext, onPrev }) {
+export default function StepBanking({ data, onChange, onNext, onPrev, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
 
   return (
@@ -79,7 +79,7 @@ export default function StepBanking({ data, onChange, onNext, onPrev }) {
         </div>
       </FormCard>
 
-      <NavBar onPrev={onPrev} onNext={onNext} nextLabel="Next: Signatures" />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

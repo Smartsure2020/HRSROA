@@ -1,14 +1,3 @@
-export const STEPS = [
-  { label: "Client Details" },
-  { label: "Insurance History" },
-  { label: "Products & Advice" },
-  { label: "Risk Categories" },
-  { label: "Principles & Disclosures" },
-  { label: "Banking & Debit Order" },
-  { label: "Signatures" },
-  { label: "Review" },
-];
-
 export const RISK_CATEGORIES = [
   { name: "Buildings / Houses", note: "Solar systems to be listed", sasria: true },
   { name: "Contents – Fire & Perils", note: "", sasria: true },
@@ -84,7 +73,15 @@ export const INSURERS = [
   "Other",
 ];
 
+import { getBrokerFeeSummary } from './brokerFee';
+import { applySharedConditionalCleanup } from './conditionalCleanup';
+import { PERSONAL_STEPS } from './flowSteps';
+
 export const POLICY_TYPES = ["New placement", "Renewal", "Replacement"];
+
+// Kept as a compatibility export for existing progress components. The
+// authoritative definition lives in flowSteps.js.
+export const STEPS = PERSONAL_STEPS;
 
 export const PERILS = ["Theft", "Fire", "Destruction", "Consequential Loss", "3rd Party Liability", "SASRIA", "Other"];
 
@@ -154,11 +151,12 @@ export function getStepErrors(step, formData) {
         ['ackClient', 'Client Obligations'],
         ['ackPopia', 'POPIA Consent'],
         ['ackTermination', 'Termination Terms'],
-        ['ackBrokerFee', 'Broker Fee Consent'],
         ['ackBrokerAppointment', 'Broker Appointment'],
         ['ackBrokerAuth', 'Broker Authorisation'],
         ['ackStatutoryDisclosure', 'Statutory Disclosure (Section 13)'],
       ];
+      // Broker Fee Consent is only required where a broker fee actually applies.
+      if (getBrokerFeeSummary(formData).consentRequired) acks.push(['ackBrokerFee', 'Broker Fee Consent']);
       if (formData.changingBroker === 'yes') acks.push(['ackLetterOfInvestigation', 'Letter of Investigation']);
       return acks.filter(([k]) => !formData[k]).map(([, label]) => label);
     }
@@ -175,6 +173,11 @@ export function getStepErrors(step, formData) {
     default:
       return [];
   }
+}
+
+/** Enforces the Phase 3 conditional-cleanup invariants for the Personal flow. */
+export function applyConditionalCleanup(formData) {
+  return applySharedConditionalCleanup(formData);
 }
 
 export function getInitialFormData() {

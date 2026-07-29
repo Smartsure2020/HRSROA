@@ -14,7 +14,7 @@ const PROVINCES = [
   "Limpopo", "Mpumalanga", "North West", "Northern Cape", "Western Cape",
 ];
 
-export default function CommercialStepClientDetails({ data, onChange, onNext }) {
+export default function CommercialStepClientDetails({ data, onChange, onNext, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
 
   useEffect(() => {
@@ -156,7 +156,7 @@ export default function CommercialStepClientDetails({ data, onChange, onNext }) 
         </div>
       </FormCard>
 
-      <NavBar showPrev={false} onNext={onNext} nextLabel="Next: Insurance History" />
+      <NavBar showPrev={false} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

@@ -5,7 +5,7 @@ import TextInput from "../../TextInput";
 import YesNoToggle from "../../YesNoToggle";
 import NavBar from "../../NavBar";
 
-export default function CommercialStepInsuranceHistory({ data, onChange, onNext, onPrev }) {
+export default function CommercialStepInsuranceHistory({ data, onChange, onNext, onPrev, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
 
   return (
@@ -58,7 +58,7 @@ export default function CommercialStepInsuranceHistory({ data, onChange, onNext,
         </div>
       </FormCard>
 
-      <NavBar onPrev={onPrev} onNext={onNext} nextLabel="Next: Products & Advice" />
+      <NavBar onPrev={onPrev} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }

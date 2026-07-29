@@ -2,18 +2,18 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER } from '../lib/hrsConstants';
-import { syncCommercialROAToCRM } from '@/lib/crmSync';
-import { supabase } from '@/lib/supabaseClient';
 import { Check } from 'lucide-react';
 import { Building2 } from 'lucide-react';
 import AppHeader from '../components/hrs/AppHeader';
 import { toast } from "@/components/ui/use-toast";
 import {
-  COMMERCIAL_STEPS,
   getCommercialStepErrors,
   getCommercialInitialFormData,
+  applyConditionalCleanup,
 } from '../lib/hrsCommercialConstants';
 import { generateCommercialROABase64 } from '../lib/hrsCommercialPdfGenerator';
+import { getDraftStatus, saveRoaDraft, clearRoaDraft, hasMeaningfulDraftData } from '@/lib/roaDraftStorage';
+import { getBrokerFeeSummary } from '@/lib/brokerFee';
 import CommercialStepClientDetails from '../components/hrs/commercial/steps/CommercialStepClientDetails';
 import CommercialStepInsuranceHistory from '../components/hrs/commercial/steps/CommercialStepInsuranceHistory';
 import CommercialStepProductsAdvice from '../components/hrs/commercial/steps/CommercialStepProductsAdvice';
@@ -23,22 +23,11 @@ import CommercialStepRiskCategories from '../components/hrs/commercial/steps/Com
 import CommercialStepSignatures from '../components/hrs/commercial/steps/CommercialStepSignatures';
 import CommercialStepReview from '../components/hrs/commercial/steps/CommercialStepReview';
 import CommercialStepChecklist from '../components/hrs/commercial/steps/CommercialStepChecklist';
-
-// Updated COMMERCIAL_STEPS with Review before Checklist
-const STEPS_WITH_REVIEW = [
-  { label: "Client Details" },
-  { label: "Insurance History" },
-  { label: "Products & Advice" },
-  { label: "Replacement Policy" },
-  { label: "Principles & Disclosures" },
-  { label: "Risk Categories" },
-  { label: "Signatures" },
-  { label: "Review" },
-  { label: "Checklist" },
-];
+import { COMMERCIAL_STEPS, getActiveSteps, getNextButtonText, getStepIndex, getStepId } from '../lib/flowSteps';
+import SignatureIncompleteDialog from '../components/hrs/SignatureIncompleteDialog';
 
 function CommercialStepProgress({ currentStep, onGoTo }) {
-  const visibleSteps = STEPS_WITH_REVIEW.slice(0, -1); // hide Checklist from progress bar
+  const visibleSteps = COMMERCIAL_STEPS;
   return (
     <div className="bg-card border-b border-hrs-border overflow-x-auto">
       <div className="flex min-w-[700px] px-4 sm:px-8">
@@ -75,8 +64,9 @@ function CommercialStepProgress({ currentStep, onGoTo }) {
   );
 }
 
-const TOTAL_STEPS = STEPS_WITH_REVIEW.length; // 9
+const TOTAL_STEPS = COMMERCIAL_STEPS.length + 1; // review steps + checklist
 const CHECKLIST_STEP = TOTAL_STEPS - 1; // 8
+const FLOW_TYPE = 'commercial';
 
 export default function CommercialAdviceRecord() {
   const navigate = useNavigate();
@@ -85,8 +75,22 @@ export default function CommercialAdviceRecord() {
   const [formData, setFormData] = useState(getCommercialInitialFormData());
   const [stepErrors, setStepErrors] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showRestoreBanner, setShowRestoreBanner] = useState(false);
+  const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
+  const pendingDraftRef = useRef(null);
 
-  const crmSynced = useRef(false);
+  useEffect(() => {
+    const { status, draft } = getDraftStatus(FLOW_TYPE);
+    if (status === 'expired') {
+      toast({
+        title: "Draft expired",
+        description: "Your previous draft expired for privacy and security. Please start again.",
+      });
+    } else if (status === 'valid') {
+      pendingDraftRef.current = draft;
+      setShowRestoreBanner(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (user?.email && EMAIL_TO_BROKER?.[user.email] && !formData.brokerName) {
@@ -95,19 +99,42 @@ export default function CommercialAdviceRecord() {
   }, [user?.email]);
 
   useEffect(() => {
-    if (step === CHECKLIST_STEP && !crmSynced.current) {
-      crmSynced.current = true;
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session) {
-          syncCommercialROAToCRM(formData, session)
-            .then(r => r.success
-              ? console.log('CRM sync OK — client:', r.clientId, 'deal:', r.dealId)
-              : console.warn('CRM sync failed:', r.error)
-            );
-        }
-      });
-    }
+    const isChecklistStep = step === CHECKLIST_STEP;
+    if (isChecklistStep) return;
+    if (pendingDraftRef.current) return;
+    saveRoaDraft(FLOW_TYPE, { currentStep: step, formData });
   }, [step, formData]);
+
+  useEffect(() => {
+    if (step === CHECKLIST_STEP) return; // submitted — nothing left to lose
+    if (!hasMeaningfulDraftData(FLOW_TYPE, formData)) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [step, formData]);
+
+  const updateFormData = (updater) => {
+    setFormData((prev) => {
+      const raw = typeof updater === 'function' ? updater(prev) : updater;
+      return applyConditionalCleanup(raw);
+    });
+  };
+
+  const handleRestoreDraft = () => {
+    const draft = pendingDraftRef.current;
+    if (draft) {
+      setFormData(draft.formData);
+      setStep(draft.currentStep || 0);
+    }
+    pendingDraftRef.current = null;
+    setShowRestoreBanner(false);
+  };
+
+  const handleDismissDraft = () => {
+    clearRoaDraft(FLOW_TYPE);
+    pendingDraftRef.current = null;
+    setShowRestoreBanner(false);
+  };
 
   const isChecklist = step === CHECKLIST_STEP;
 
@@ -120,15 +147,18 @@ export default function CommercialAdviceRecord() {
       return;
     }
     // For signatures step, warn but allow proceeding
-    if (step === 6 && errors.length) {
-      toast({
-        title: "Signatures not completed",
-        description: "You can still submit and send via DocuSign for remote signing.",
-        duration: 4000,
-      });
+    if (step === getStepIndex(COMMERCIAL_STEPS, 'signatures', formData) && errors.length) {
+      setSignatureDialogOpen(true);
+      return;
     }
     setStepErrors([]);
-    setStep(s => Math.min(s + 1, TOTAL_STEPS - 1));
+    setStep(s => Math.min(s + 1, COMMERCIAL_STEPS.length - 1));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const goToSignatures = () => {
+    setSignatureDialogOpen(false);
+    setStep(getStepIndex(COMMERCIAL_STEPS, 'signatures', formData));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -179,7 +209,7 @@ Contact No.: ${formData.contactNo}
 Inception Date: ${formData.inceptionDate}
 
 Recommended Insurer: ${formData.recInsurer}
-Broker Fee: ${formData.brokerFeePercent ? formData.brokerFeePercent + (formData.brokerFeeType === 'percent' ? '%' : ' (fixed)') : '-'}
+Broker Fee: ${getBrokerFeeSummary(formData).consentRequired ? getBrokerFeeSummary(formData).displayValue : 'No broker fee applicable'}
 Option 1: ${formData.ins0 || '-'} — R${formData.prem0 || '-'}
 Option 2: ${formData.ins1 || '-'} — R${formData.prem1 || '-'}
 Option 3 (Recommended): ${formData.ins2 || '-'} — R${formData.prem2 || '-'}
@@ -201,6 +231,10 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         throw new Error(data.error || 'Failed to send email');
       }
 
+      clearRoaDraft(FLOW_TYPE);
+      // CRM sync now runs (with visible status + retry) on the Checklist screen itself —
+      // see CommercialStepChecklist.jsx — rather than fire-and-forget here.
+
       setStep(CHECKLIST_STEP);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
@@ -215,14 +249,22 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
   };
 
   const restart = () => {
+    clearRoaDraft(FLOW_TYPE);
     setFormData(getCommercialInitialFormData());
     setStep(0);
     setStepErrors([]);
-    crmSynced.current = false;
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const stepProps = { data: formData, onChange: setFormData, onNext: tryNext, onPrev: goPrev };
+  const activeSteps = getActiveSteps(COMMERCIAL_STEPS, formData);
+  const currentStepId = getStepId(activeSteps, step, formData);
+  const stepProps = {
+    data: formData,
+    onChange: updateFormData,
+    onNext: tryNext,
+    onPrev: goPrev,
+    nextLabel: getNextButtonText(activeSteps, currentStepId, formData),
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -236,6 +278,16 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
           </button>
           <span className="text-white/20 text-[0.75rem]">|</span>
           <span className="text-white/50 text-[0.75rem]">Commercial Lines ROA</span>
+        </div>
+      )}
+
+      {showRestoreBanner && (
+        <div className="bg-hrs-blue text-white text-[0.82rem] px-4 py-2.5 flex items-center justify-between gap-4">
+          <span>You have an unsaved Commercial ROA in progress — continue? (Signatures will need to be recaptured.)</span>
+          <div className="flex gap-3 flex-shrink-0">
+            <button onClick={handleRestoreDraft} className="underline font-semibold">Continue</button>
+            <button onClick={handleDismissDraft} className="opacity-70 hover:opacity-100">Discard</button>
+          </div>
         </div>
       )}
 
@@ -281,7 +333,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
             {...stepProps}
             onNext={tryNext}
             isSubmitting={false}
-            nextLabel="Next: Review"
+            nextLabel={getNextButtonText(activeSteps, currentStepId, formData)}
           />
         )}
         {step === 7 && (
@@ -294,6 +346,12 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         )}
         {step === 8 && <CommercialStepChecklist data={formData} onRestart={restart} />}
       </main>
+      <SignatureIncompleteDialog
+        open={signatureDialogOpen}
+        onOpenChange={setSignatureDialogOpen}
+        onGoToSignatures={goToSignatures}
+        signingRoute="docusign"
+      />
     </div>
   );
 }
