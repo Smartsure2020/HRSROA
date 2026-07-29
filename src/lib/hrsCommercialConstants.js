@@ -1,3 +1,7 @@
+import { POLICY_TYPES, PERILS, VALUE_TYPES } from './hrsConstants';
+
+export { POLICY_TYPES, PERILS, VALUE_TYPES };
+
 export const COMMERCIAL_STEPS = [
   { label: "Client Details" },
   { label: "Insurance History" },
@@ -73,6 +77,7 @@ export function getCommercialStepErrors(step, formData) {
         ['email', 'Email'],
         ['contactNo', 'Contact Number'],
         ['brokerName', 'Advisor Name'],
+        ['policyType', 'Policy Type'],
       ];
       return fields.filter(([k]) => !String(formData[k] ?? '').trim()).map(([, label]) => label);
     }
@@ -80,6 +85,8 @@ export function getCommercialStepErrors(step, formData) {
       const errors = [];
       if (formData.uninterruptedInsurance === null || formData.uninterruptedInsurance === undefined)
         errors.push('Uninterrupted Insurance (Yes / No)');
+      if (formData.clientDeclinedInfo === null || formData.clientDeclinedInfo === undefined)
+        errors.push('Client Declined to Provide Information (Yes / No)');
       if (!String(formData.clientNeeds ?? '').trim())
         errors.push('Business Needs and Objectives');
       return errors;
@@ -96,10 +103,7 @@ export function getCommercialStepErrors(step, formData) {
     case 3:
       return [];
     case 4: {
-      const assessed = formData.riskState?.some(r => r.cover === 'yes' || r.cover === 'no');
-      return assessed ? [] : ['At least one risk category must be assessed (Yes or No)'];
-    }
-    case 5: {
+      // Principles & Disclosures (runtime step 4)
       const acks = [
         ['ackPrinciples', 'Short-Term Insurance Principles'],
         ['ackAdvisor', "Advisor's Obligations"],
@@ -110,11 +114,26 @@ export function getCommercialStepErrors(step, formData) {
         ['ackBrokerAppointment', 'Broker Appointment'],
         ['ackBrokerAuth', 'Broker Authorisation'],
         ['ackIntermediaryAgreement', 'Advice & Intermediary Services Agreement'],
+        ['ackStatutoryDisclosure', 'Statutory Disclosure (Section 13)'],
       ];
+      if (formData.changingBroker === 'yes') acks.push(['ackLetterOfInvestigation', 'Letter of Investigation']);
       return acks.filter(([k]) => !formData[k]).map(([, label]) => label);
     }
-    case 6:
-      return [];
+    case 5: {
+      // Risk Categories (runtime step 5)
+      const errors = [];
+      const assessed = formData.riskState?.some(r => r.cover === 'yes' || r.cover === 'no');
+      if (!assessed) errors.push('At least one risk category must be assessed (Yes or No)');
+      if (!formData.valueToBeInsured) errors.push('Value to be Insured');
+      return errors;
+    }
+    case 6: {
+      const errors = [];
+      const electedAlternative = formData.electionDiffers || formData.electionNotFollow || formData.electionLimitedInfo;
+      if (electedAlternative && !String(formData.electionInitials ?? '').trim())
+        errors.push('Client Initials (required for the election made above)');
+      return errors;
+    }
     default:
       return [];
   }
@@ -151,12 +170,15 @@ export function getCommercialInitialFormData() {
     workNumber: '',
     brokerName: '',
     faisProvided: null,
+    policyType: '',
+    existingPolicyRef: '',
 
     // Insurance history
     uninterruptedInsurance: null,
     yearsInsured: '',
     specialTerms: null,
     cancelReasonText: '',
+    clientDeclinedInfo: null,
     clientNeeds: 'To obtain adequate commercial short-term insurance cover meeting all the business requirements, protecting assets and managing risk exposure.',
 
     // Products
@@ -186,6 +208,15 @@ export function getCommercialInitialFormData() {
     riskState: COMMERCIAL_RISK_CATEGORIES.map(() => ({ cover: null, sasria: false })),
     additionalComments: '',
 
+    // Needs analysis
+    perilsSelected: [],
+    perilsOther: '',
+    valueToBeInsured: '',
+    compulsoryExcess: null,
+    voluntaryExcess: '',
+    noClaimsBonus: null,
+    riskProfileNotes: '',
+
     // Acknowledgements
     ackPrinciples: false,
     ackAdvisor: false,
@@ -196,6 +227,16 @@ export function getCommercialInitialFormData() {
     ackBrokerAppointment: false,
     ackBrokerAuth: false,
     ackIntermediaryAgreement: false,
+    changingBroker: null,
+    ackLetterOfInvestigation: false,
+    ackStatutoryDisclosure: false,
+
+    // Election / declaration
+    electionDiffers: false,
+    electionNotFollow: false,
+    electionLimitedInfo: false,
+    electionInitials: '',
+    declarationChoice: 'accept',
 
     // Broker appointment table
     apptHolder: '',

@@ -43,6 +43,13 @@ export default function StepInsuranceHistory({ data, onChange, onNext, onPrev })
 
         <div className="h-px bg-hrs-border my-6" />
 
+        <p className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2">
+          Client declined to provide any requested information
+        </p>
+        <YesNoToggle value={data.clientDeclinedInfo} onChange={set("clientDeclinedInfo")} />
+
+        <div className="h-px bg-hrs-border my-6" />
+
         <SectionTitle size="sm">Client Needs & Objectives</SectionTitle>
         <div className="mt-3">
           <FormField label="Summary of Client's Specific Needs">

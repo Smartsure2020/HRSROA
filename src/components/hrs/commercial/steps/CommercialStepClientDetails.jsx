@@ -7,6 +7,7 @@ import SelectInput from "../../SelectInput";
 import YesNoToggle from "../../YesNoToggle";
 import NavBar from "../../NavBar";
 import { ADVISORS } from "../../../../lib/hrsConstants";
+import { POLICY_TYPES } from "../../../../lib/hrsCommercialConstants";
 
 const PROVINCES = [
   "Eastern Cape", "Free State", "Gauteng", "KwaZulu-Natal",
@@ -56,6 +57,21 @@ export default function CommercialStepClientDetails({ data, onChange, onNext }) 
           <FormField label="Nature of Business" required>
             <TextInput value={data.natureOfBusiness} onChange={set('natureOfBusiness')} placeholder="e.g. Retail, Construction, IT Services" />
           </FormField>
+        </div>
+
+        {/* Policy Type */}
+        <div className="h-px bg-hrs-border my-6" />
+        <SectionTitle size="sm">Policy Type</SectionTitle>
+        <p className="text-hrs-muted text-[0.78rem] mb-4 mt-1">Nature of this Record of Advice</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <FormField label="Policy Type" required>
+            <SelectInput value={data.policyType} onChange={set('policyType')} options={POLICY_TYPES} placeholder="-- Select Policy Type --" />
+          </FormField>
+          {(data.policyType === "Renewal" || data.policyType === "Replacement") && (
+            <FormField label="Existing Insurer / Product / Policy Number">
+              <TextInput value={data.existingPolicyRef} onChange={set('existingPolicyRef')} placeholder="e.g. Santam / Business All Risk / P123456" />
+            </FormField>
+          )}
         </div>
 
         {/* Risk Address */}

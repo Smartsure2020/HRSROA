@@ -376,6 +376,7 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   pdf.twoColRow({ label: 'Contact Person', value: formData.contactPerson }, { label: 'ID Number', value: formData.idNo }, sh = !sh);
   pdf.twoColRow({ label: 'Email', value: formData.email }, { label: 'Contact No.', value: formData.contactNo }, sh = !sh);
   pdf.twoColRow({ label: 'Inception Date', value: formData.inceptionDate }, { label: 'FAIS Disclosure Provided', value: yn(formData.faisProvided) }, sh = !sh);
+  pdf.twoColRow({ label: 'Policy Type', value: formData.policyType }, { label: 'Existing Insurer / Policy No.', value: formData.existingPolicyRef }, sh = !sh);
   pdf.gap();
 
   // 2. INSURANCE HISTORY
@@ -384,6 +385,7 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   pdf.twoColRow({ label: 'Uninterrupted STI', value: yn(formData.uninterruptedInsurance) }, { label: 'Years Insured', value: formData.yearsInsured }, sh = !sh);
   pdf.dataRow('Special Terms / Cover Refused', yn(formData.specialTerms), sh = !sh);
   if (formData.specialTerms === 'yes') pdf.dataRow('Reason', formData.cancelReasonText, sh = !sh);
+  pdf.dataRow('Client Declined to Provide Information', yn(formData.clientDeclinedInfo), sh = !sh);
   pdf.multiLineDataRow("Summary of Business Owner's Specific Needs and Objectives", formData.clientNeeds);
   pdf.gap();
 
@@ -470,14 +472,14 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
 
   pdf.disclosureBlock(
     "Broker (Intermediary) Fee Consent",
-    "A broker fee is an amount charged by Holistic Risk Services (Pty) Ltd (FSP 28582) for additional services rendered to you, which include but are not limited to: risk profiling, claims intervention, onsite visits, assistance with rejected claims, car hire management, accident support, and ongoing portfolio management. The broker fee amount is disclosed in Step 3 of this advice record. You have the right to withdraw your consent at any time by notifying Holistic Risk Services (Pty) Ltd in writing.",
+    "A broker fee is an amount charged by Holistic Risk Services (Pty) Ltd (FSP 28582) for additional services rendered to you, which include: assistance with rejected claims incl. applications for goodwill payments; facilitation of non-insurance value-added products and services; onsite attendance with assessors as required; advice and guidance outside the ambit of regulated financial products; and onsite visits upon client request and at policy renewal. The broker fee amount is disclosed in Step 3 of this advice record. You have the right to withdraw your consent at any time by notifying Holistic Risk Services (Pty) Ltd in writing.",
     "I have read and understood the Broker Fee Consent above, and I consent to the payment of the broker (intermediary) fee.",
     formData.ackBrokerFee
   );
 
   pdf.disclosureBlock(
-    "Broker Appointment Confirmation",
-    "I, the undersigned, hereby confirm that I have appointed Holistic Risk Services (Pty) Ltd – HRS as my short-term insurance broker. You are hereby authorised to provide the bearer of this note with any information requested in connection with any of the policy contracts which constitute my insurance portfolio. This appointment shall remain in force until cancelled in writing by either party with 30 days' notice.",
+    "Broker Appointment Confirmation (Client Mandate)",
+    "The client hereby appoints Holistic Risk Services (Pty) Ltd as broker (agent), remaining in force until cancelled by either party in writing. Financial Services: the client confirms HRS is authorised to render financial services on its behalf, including instructions to buy, sell, terminate or replace any financial product, and to submit or process claims. Client Information: HRS shall keep client information confidential and is authorised to obtain information from third parties to determine the client's financial situation, product experience and objectives. Commission: the client agrees to transfer any new commission to HRS, and product suppliers are requested to transfer insurance portfolios to HRS's broker code. This appointment shall remain in force until cancelled in writing by either party with 30 days' notice.",
     "I confirm my appointment of Holistic Risk Services (Pty) Ltd as my short-term insurance broker.",
     formData.ackBrokerAppointment
   );
@@ -495,10 +497,59 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
     "I have read and agree to the Advice & Intermediary Services Agreement.",
     formData.ackIntermediaryAgreement
   );
+
+  pdf.disclosureBlock(
+    "Statutory Disclosure (Section 13) — FSP 28582",
+    "Holistic Risk Services (Pty) Ltd (Reg No 2004/026273/07) is a duly authorised FSP (Licence No 28582), authorised to provide financial services (Advice and Intermediary Services) for Short-term Insurance: Personal Lines, Commercial Lines and Personal Lines A1. Compliance Officer: Mrs Monique Coetzee, Moonstone Compliance (Practice No 188). The provider holds professional indemnity insurance and has established a Conflict of Interest Management Policy and a written internal complaint resolution system, both available to the client on request. No person acting for the provider may request a signature on an incomplete document, or induce a client to waive any right under the General Codes of Conduct. The client is responsible for the accuracy and completeness of all information provided. The full Statutory Disclosure, including the complete list of authorised product suppliers, was made available to and reviewed by the client within this advice record.",
+    "I have read and understood the Statutory Disclosure (Section 13) referred to above.",
+    formData.ackStatutoryDisclosure
+  );
+
+  if (formData.changingBroker === 'yes') {
+    pdf.disclosureBlock(
+      "Letter of Investigation",
+      "We hereby grant Holistic Risk Services (Pty) Ltd full authority to obtain and verify any information regarding the business's short-term insurance policies, extending to risk and underwriting information, personal information necessary for administration, and claims history, premium records and other information material to the insurance relationship. We acknowledge that any changes in respect of risk, underwriting or personal information must be disclosed to HRS as soon as possible, and that HRS shall not be liable for damage resulting from any misrepresentation by the client. This serves as formal confirmation of the client's consent for HRS to conduct this investigation and obtain information from insurers, underwriters or other parties involved in administering the business's short-term insurance.",
+      "We grant Holistic Risk Services (Pty) Ltd authority to investigate and obtain information from the previous insurer(s)/broker.",
+      formData.ackLetterOfInvestigation
+    );
+  }
   pdf.gap();
 
-  // 6. SIGNATURES — heading(11) + declaration text start(~20mm) = 31mm minimum
-  pdf.sectionHeading('6.  SIGNATURES — DECLARATION', 25);
+  // 6. NEEDS ANALYSIS
+  pdf.sectionHeading('6.  NEEDS ANALYSIS', 22);
+  sh = false;
+  pdf.dataRow('Perils to be Insured', (formData.perilsSelected || []).join(', ') || (formData.perilsSelected?.includes('Other') ? formData.perilsOther : ''), sh = !sh);
+  pdf.dataRow('Value to be Insured', formData.valueToBeInsured, sh = !sh);
+  pdf.twoColRow({ label: 'Compulsory Excess', value: yn(formData.compulsoryExcess) }, { label: 'Voluntary Excess', value: formData.voluntaryExcess }, sh = !sh);
+  pdf.dataRow('No Claims Bonus', yn(formData.noClaimsBonus), sh = !sh);
+  if (formData.riskProfileNotes) pdf.multiLineDataRow('Risks / Items to be Included or Excluded', formData.riskProfileNotes);
+  pdf.gap();
+
+  // 7. CLIENT DECLARATION
+  pdf.sectionHeading('7.  CLIENT DECLARATION', 25);
+  sh = false;
+  pdf.dataRow('Elects to conclude transaction differing from recommendation', formData.electionDiffers ? 'Yes' : 'No', sh = !sh);
+  pdf.dataRow('Elects not to follow the advice furnished', formData.electionNotFollow ? 'Yes' : 'No', sh = !sh);
+  pdf.dataRow('Elects to receive more limited information/advice', formData.electionLimitedInfo ? 'Yes' : 'No', sh = !sh);
+  const electedAlt = formData.electionDiffers || formData.electionNotFollow || formData.electionLimitedInfo;
+  if (electedAlt) {
+    pdf.multiLineDataRow(
+      'Risk Warning Acknowledged',
+      '1. There may be limitations on the appropriateness of the advice provided in light of such circumstances. 2. The client should take particular care to consider on its own whether the advice is appropriate considering the business’s objectives, financial situation and particular needs.'
+    );
+    pdf.dataRow('Client Initials', formData.electionInitials, sh = !sh);
+  }
+  pdf.gap(2);
+  pdf.disclosureBlock(
+    formData.declarationChoice === 'decline' ? 'We elect NOT to follow the advice and recommendations set out above.' : 'We hereby accept the advice and recommendations provided as set out above.',
+    "We are aware that the advice and recommendations provided are limited to the business's short-term insurance (commercial lines) portfolio only, and that a comprehensive analysis of the business's financial needs was not undertaken; there may accordingly be limitations concerning the appropriateness of the advice. Where any election above was made, we confirm the advisor alerted us to the risks of such election. We understand the dangers of being underinsured and that excesses may be aggregated in certain circumstances. We have read the policy documents and attached policy schedule and note the special conditions and applicable excesses. The advisor explained the material terms, conditions, exclusions and excess payment terms of the policy. We did not sign the application form while incomplete, and take full responsibility for all information provided. The advisor provided quotes from the insurer which were discussed and attached to this document. We understand the meaning of new placement, renewal and replacement as it applies to the product selected.",
+    formData.declarationChoice === 'decline' ? 'Client elects NOT to follow the advice and recommendations set out above.' : 'Client accepts the advice and recommendations set out above.',
+    true
+  );
+  pdf.gap();
+
+  // 8. SIGNATURES — heading(11) + declaration text start(~20mm) = 31mm minimum
+  pdf.sectionHeading('8.  SIGNATURES — DECLARATION', 25);
   pdf.gap(3);
   d.setFont('helvetica', 'italic'); d.setFontSize(7); d.setTextColor(...C.grey);
   const decl1 = 'Declaration by the Adviser: I declare that the advice record is an accurate and complete record of the recommendations and advice that I provided the client with, based upon the information provided by the client.';
@@ -530,9 +581,9 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   d.setFont('helvetica', 'normal'); d.setFontSize(6.5); d.setTextColor(...C.grey);
   d.text('An authorised FSP No 28582', ML + CW / 2, pdf.cy, { align: 'center' });
 
-  // 7. RISK CATEGORIES — force new page to avoid orphaned header
+  // 9. RISK CATEGORIES — force new page to avoid orphaned header
   pdf._newPage();
-  pdf.sectionHeading('7.  INSURED RISKS AND / OR RISKS EXCLUDED FROM INSURANCE POLICY');
+  pdf.sectionHeading('9.  INSURED RISKS AND / OR RISKS EXCLUDED FROM INSURANCE POLICY');
   pdf._needSpace(8);
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);

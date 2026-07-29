@@ -84,6 +84,12 @@ export const INSURERS = [
   "Other",
 ];
 
+export const POLICY_TYPES = ["New placement", "Renewal", "Replacement"];
+
+export const PERILS = ["Theft", "Fire", "Destruction", "Consequential Loss", "3rd Party Liability", "SASRIA", "Other"];
+
+export const VALUE_TYPES = ["Market Value", "Replacement Value", "Other"];
+
 export const PRINCIPLES = [
   'A short-term insurance policy is based on GOOD FAITH between all parties involved.',
   'A short-term insurance policy is issued as a POLICY OF INDEMNITY.',
@@ -111,6 +117,7 @@ export function getStepErrors(step, formData) {
         ['province', 'Province'],
         ['postalCode', 'Postal Code'],
         ['brokerName', 'Advisor Name'],
+        ['policyType', 'Policy Type'],
       ];
       return fields.filter(([k]) => !String(formData[k] ?? '').trim()).map(([, label]) => label);
     }
@@ -118,6 +125,8 @@ export function getStepErrors(step, formData) {
       const errors = [];
       if (formData.uninterruptedInsurance === null || formData.uninterruptedInsurance === undefined)
         errors.push('Uninterrupted Insurance (Yes / No)');
+      if (formData.clientDeclinedInfo === null || formData.clientDeclinedInfo === undefined)
+        errors.push('Client Declined to Provide Information (Yes / No)');
       if (!String(formData.clientNeeds ?? '').trim())
         errors.push('Client Needs');
       return errors;
@@ -132,8 +141,11 @@ export function getStepErrors(step, formData) {
       return fields.filter(([k]) => !String(formData[k] ?? '').trim()).map(([, label]) => label);
     }
     case 3: {
+      const errors = [];
       const assessed = formData.riskState?.some(r => r.cover === 'yes' || r.cover === 'no');
-      return assessed ? [] : ['At least one risk category must be assessed (Yes or No)'];
+      if (!assessed) errors.push('At least one risk category must be assessed (Yes or No)');
+      if (!formData.valueToBeInsured) errors.push('Value to be Insured');
+      return errors;
     }
     case 4: {
       const acks = [
@@ -145,14 +157,21 @@ export function getStepErrors(step, formData) {
         ['ackBrokerFee', 'Broker Fee Consent'],
         ['ackBrokerAppointment', 'Broker Appointment'],
         ['ackBrokerAuth', 'Broker Authorisation'],
+        ['ackStatutoryDisclosure', 'Statutory Disclosure (Section 13)'],
       ];
+      if (formData.changingBroker === 'yes') acks.push(['ackLetterOfInvestigation', 'Letter of Investigation']);
       return acks.filter(([k]) => !formData[k]).map(([, label]) => label);
     }
     case 5:
       // Banking — optional, no hard required fields
       return [];
-    case 6:
-      return [];
+    case 6: {
+      const errors = [];
+      const electedAlternative = formData.electionDiffers || formData.electionNotFollow || formData.electionLimitedInfo;
+      if (electedAlternative && !String(formData.electionInitials ?? '').trim())
+        errors.push('Client Initials (required for the election made above)');
+      return errors;
+    }
     default:
       return [];
   }
@@ -184,12 +203,15 @@ export function getInitialFormData() {
     postalCode: "",
     brokerName: "",
     faisProvided: null,
+    policyType: "",
+    existingPolicyRef: "",
 
     // Insurance history
     uninterruptedInsurance: null,
     yearsInsured: "",
     specialTerms: null,
     cancelReasonText: "",
+    clientDeclinedInfo: null,
     clientNeeds: "To obtain affordable short-term insurance meeting all the client's requirements and needs.",
 
     // Products
@@ -207,6 +229,15 @@ export function getInitialFormData() {
     riskState: RISK_CATEGORIES.map(() => ({ cover: null, sasria: false, flagged: false })),
     additionalComments: "",
 
+    // Needs analysis
+    perilsSelected: [],
+    perilsOther: "",
+    valueToBeInsured: "",
+    compulsoryExcess: null,
+    voluntaryExcess: "",
+    noClaimsBonus: null,
+    riskProfileNotes: "",
+
     // Acknowledgements
     ackPrinciples: false,
     ackAdvisor: false,
@@ -216,6 +247,16 @@ export function getInitialFormData() {
     ackBrokerFee: false,
     ackBrokerAppointment: false,
     ackBrokerAuth: false,
+    changingBroker: null,
+    ackLetterOfInvestigation: false,
+    ackStatutoryDisclosure: false,
+
+    // Election / declaration
+    electionDiffers: false,
+    electionNotFollow: false,
+    electionLimitedInfo: false,
+    electionInitials: "",
+    declarationChoice: "accept",
 
     // Banking
     bankHolder: "",

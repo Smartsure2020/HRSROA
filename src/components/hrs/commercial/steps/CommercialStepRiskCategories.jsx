@@ -1,7 +1,25 @@
 import FormCard from "../../FormCard";
 import SectionTitle from "../../SectionTitle";
+import FormField from "../../FormField";
+import TextInput from "../../TextInput";
+import SelectInput from "../../SelectInput";
+import YesNoToggle from "../../YesNoToggle";
 import NavBar from "../../NavBar";
-import { COMMERCIAL_RISK_CATEGORIES } from "../../../../lib/hrsCommercialConstants";
+import { COMMERCIAL_RISK_CATEGORIES, PERILS, VALUE_TYPES } from "../../../../lib/hrsCommercialConstants";
+
+function TogglePill({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1.5 rounded-full text-[0.75rem] font-semibold border-[1.5px] transition-all ${
+        active ? "bg-hrs-blue text-white border-hrs-blue" : "border-hrs-border text-hrs-muted hover:border-hrs-orange-light"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 function RiskRow({ cat, state, onChange, shade }) {
   const setCover = (val) => onChange({ ...state, cover: state.cover === val ? null : val });
@@ -43,10 +61,18 @@ function RiskRow({ cat, state, onChange, shade }) {
 }
 
 export default function CommercialStepRiskCategories({ data, onChange, onNext, onPrev }) {
+  const set = (key) => (val) => onChange({ ...data, [key]: val });
+
   const updateRisk = (i, val) => {
     const updated = [...data.riskState];
     updated[i] = val;
     onChange({ ...data, riskState: updated });
+  };
+
+  const togglePeril = (peril) => {
+    const current = data.perilsSelected || [];
+    const next = current.includes(peril) ? current.filter((p) => p !== peril) : [...current, peril];
+    set('perilsSelected')(next);
   };
 
   const coveredCount = data.riskState?.filter(r => r.cover === 'yes').length || 0;
@@ -54,6 +80,54 @@ export default function CommercialStepRiskCategories({ data, onChange, onNext, o
 
   return (
     <div>
+      <FormCard>
+        <SectionTitle>Needs Analysis</SectionTitle>
+        <p className="text-hrs-muted text-[0.82rem] mb-5">Cover, perils and value basis on which this advice is based</p>
+
+        <FormField label="Perils to be Insured">
+          <div className="flex flex-wrap gap-2 mt-1">
+            {PERILS.map((peril) => (
+              <TogglePill key={peril} active={data.perilsSelected?.includes(peril)} onClick={() => togglePeril(peril)}>
+                {peril}
+              </TogglePill>
+            ))}
+          </div>
+          {data.perilsSelected?.includes('Other') && (
+            <div className="mt-3">
+              <TextInput value={data.perilsOther} onChange={set('perilsOther')} placeholder="Specify other peril(s)" />
+            </div>
+          )}
+        </FormField>
+
+        <div className="h-px bg-hrs-border my-5" />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <FormField label="Value to be Insured" required>
+            <SelectInput value={data.valueToBeInsured} onChange={set('valueToBeInsured')} options={VALUE_TYPES} placeholder="-- Select --" />
+          </FormField>
+          <FormField label="Voluntary Excess">
+            <SelectInput value={data.voluntaryExcess} onChange={set('voluntaryExcess')} options={["High", "Low", "n/a"]} placeholder="-- Select --" />
+          </FormField>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mt-5">
+          <div>
+            <p className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2">Compulsory Excess</p>
+            <YesNoToggle value={data.compulsoryExcess} onChange={set('compulsoryExcess')} />
+          </div>
+          <div>
+            <p className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2">No Claims Bonus</p>
+            <YesNoToggle value={data.noClaimsBonus} onChange={set('noClaimsBonus')} />
+          </div>
+        </div>
+
+        <div className="h-px bg-hrs-border my-5" />
+
+        <FormField label="Risks / Items to be Included or Excluded (Risk Profile)">
+          <TextInput type="textarea" value={data.riskProfileNotes} onChange={set('riskProfileNotes')} placeholder="Any specific risks or items to include or exclude..." rows={3} />
+        </FormField>
+      </FormCard>
+
       <FormCard>
         <div className="flex items-center justify-between mb-4">
           <SectionTitle>Insured Risks & Risks Excluded</SectionTitle>

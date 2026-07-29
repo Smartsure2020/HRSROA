@@ -69,12 +69,24 @@ export default function CommercialStepReview({ data, onPrev, onSubmit, isSubmitt
           <ReviewRow label="Contact No." value={data.contactNo} />
           <ReviewRow label="Inception Date" value={data.inceptionDate} />
           <ReviewRow label="FAIS Disclosure Provided" value={yn(data.faisProvided)} />
+          <ReviewRow label="Policy Type" value={data.policyType} />
+          {data.existingPolicyRef ? <ReviewRow label="Existing Insurer / Policy No." value={data.existingPolicyRef} /> : null}
         </ReviewSection>
 
         <ReviewSection title="Insurance History">
           <ReviewRow label="Uninterrupted STI" value={yn(data.uninterruptedInsurance)} />
           <ReviewRow label="Years Insured" value={data.yearsInsured} />
           <ReviewRow label="Special Terms / Refused" value={yn(data.specialTerms)} />
+          <ReviewRow label="Client Declined to Provide Info" value={yn(data.clientDeclinedInfo)} />
+        </ReviewSection>
+
+        <ReviewSection title="Needs Analysis">
+          <ReviewRow label="Perils to be Insured" value={(data.perilsSelected || []).join(', ')} />
+          <ReviewRow label="Value to be Insured" value={data.valueToBeInsured} />
+          <ReviewRow label="Compulsory Excess" value={yn(data.compulsoryExcess)} />
+          <ReviewRow label="Voluntary Excess" value={data.voluntaryExcess} />
+          <ReviewRow label="No Claims Bonus" value={yn(data.noClaimsBonus)} />
+          {data.riskProfileNotes ? <ReviewRow label="Risk Profile Notes" value={data.riskProfileNotes} /> : null}
         </ReviewSection>
 
         <ReviewSection title="Recommended Product">
@@ -122,6 +134,18 @@ export default function CommercialStepReview({ data, onPrev, onSubmit, isSubmitt
           <AckStatus label="Broker Appointment" checked={data.ackBrokerAppointment} />
           <AckStatus label="Broker Authorisation" checked={data.ackBrokerAuth} />
           <AckStatus label="Intermediary Agreement" checked={data.ackIntermediaryAgreement} />
+          <AckStatus label="Statutory Disclosure (Sec 13)" checked={data.ackStatutoryDisclosure} />
+          {data.changingBroker === "yes" ? <AckStatus label="Letter of Investigation" checked={data.ackLetterOfInvestigation} /> : null}
+        </ReviewSection>
+
+        <ReviewSection title="Client Declaration">
+          <ReviewRow label="Election – Differs from Recommendation" value={data.electionDiffers ? "Yes" : "No"} />
+          <ReviewRow label="Election – Not Follow Advice" value={data.electionNotFollow ? "Yes" : "No"} />
+          <ReviewRow label="Election – More Limited Information" value={data.electionLimitedInfo ? "Yes" : "No"} />
+          {(data.electionDiffers || data.electionNotFollow || data.electionLimitedInfo) && (
+            <ReviewRow label="Client Initials" value={data.electionInitials} />
+          )}
+          <ReviewRow label="Final Declaration" value={data.declarationChoice === "decline" ? "Elects NOT to follow advice" : "Accepts advice & recommendations"} />
         </ReviewSection>
 
         <ReviewSection title="Signatures">
