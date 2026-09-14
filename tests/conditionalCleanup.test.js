@@ -58,6 +58,46 @@ describe('applySharedConditionalCleanup — Policy Type', () => {
   });
 });
 
+describe('applySharedConditionalCleanup — cancelReasonText (Phase ROA-0)', () => {
+  it('clears cancelReasonText once specialTerms is no longer "yes"', () => {
+    const data = { specialTerms: 'no', cancelReasonText: 'Previously cancelled by Old Mutual for late payment' };
+    const next = applySharedConditionalCleanup(data);
+    expect(next.cancelReasonText).toBe('');
+  });
+
+  it('clears cancelReasonText when specialTerms is null / undefined', () => {
+    const data = { specialTerms: null, cancelReasonText: 'stale text' };
+    const next = applySharedConditionalCleanup(data);
+    expect(next.cancelReasonText).toBe('');
+  });
+
+  it('preserves cancelReasonText while specialTerms is "yes"', () => {
+    const data = { specialTerms: 'yes', cancelReasonText: 'Cancelled due to policy claims' };
+    const next = applySharedConditionalCleanup(data);
+    expect(next.cancelReasonText).toBe('Cancelled due to policy claims');
+  });
+});
+
+describe('applySharedConditionalCleanup — perilsOther (Phase ROA-0)', () => {
+  it('clears perilsOther when "Other" is not selected', () => {
+    const data = { perilsSelected: ['Theft', 'Fire'], perilsOther: 'previous stale text' };
+    const next = applySharedConditionalCleanup(data);
+    expect(next.perilsOther).toBe('');
+  });
+
+  it('clears perilsOther when perilsSelected is empty', () => {
+    const data = { perilsSelected: [], perilsOther: 'stale' };
+    const next = applySharedConditionalCleanup(data);
+    expect(next.perilsOther).toBe('');
+  });
+
+  it('preserves perilsOther while "Other" remains selected', () => {
+    const data = { perilsSelected: ['Fire', 'Other'], perilsOther: 'Cyber incident' };
+    const next = applySharedConditionalCleanup(data);
+    expect(next.perilsOther).toBe('Cyber incident');
+  });
+});
+
 describe('applySharedConditionalCleanup — client election limitations', () => {
   it('clears electionInitials once every election flag is false', () => {
     const data = { electionDiffers: false, electionNotFollow: false, electionLimitedInfo: false, electionInitials: 'J.S.' };

@@ -53,6 +53,21 @@ function clearStaleElectionInitials(formData) {
   return formData;
 }
 
+function clearStaleCancelReasonText(formData) {
+  if (formData.specialTerms !== 'yes' && formData.cancelReasonText) {
+    return { ...formData, cancelReasonText: '' };
+  }
+  return formData;
+}
+
+function clearStalePerilsOther(formData) {
+  const selectsOther = Array.isArray(formData.perilsSelected) && formData.perilsSelected.includes('Other');
+  if (!selectsOther && formData.perilsOther) {
+    return { ...formData, perilsOther: '' };
+  }
+  return formData;
+}
+
 /** Invariants shared by both the Personal and Commercial flows. */
 export function applySharedConditionalCleanup(formData) {
   if (!formData) return formData;
@@ -61,6 +76,8 @@ export function applySharedConditionalCleanup(formData) {
   next = clearStaleBrokerFeeConsent(next);
   next = clearStalePolicyTypeFields(next);
   next = clearStaleElectionInitials(next);
+  next = clearStaleCancelReasonText(next);
+  next = clearStalePerilsOther(next);
   return next;
 }
 

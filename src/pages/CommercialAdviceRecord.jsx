@@ -14,6 +14,7 @@ import {
 import { generateCommercialROABase64 } from '../lib/hrsCommercialPdfGenerator';
 import { getDraftStatus, saveRoaDraft, clearRoaDraft, hasMeaningfulDraftData } from '@/lib/roaDraftStorage';
 import { getBrokerFeeSummary } from '@/lib/brokerFee';
+import { authHeader } from '@/lib/apiAuth';
 import CommercialStepClientDetails from '../components/hrs/commercial/steps/CommercialStepClientDetails';
 import CommercialStepInsuranceHistory from '../components/hrs/commercial/steps/CommercialStepInsuranceHistory';
 import CommercialStepProductsAdvice from '../components/hrs/commercial/steps/CommercialStepProductsAdvice';
@@ -222,7 +223,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
 
       const res = await fetch('/api/send-email', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({ to: brokerEmail, subject, body, pdfBase64: base64, pdfFilename: filename }),
       });
 

@@ -4,6 +4,7 @@ import logoUrl from '../assets/hrs-logo.png';
 import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from './hrsComplianceContent';
 import { getBrokerFeeSummary } from './brokerFee';
 import { HRS_PDF_THEME, drawDocumentHeader, drawPageFooter, drawSectionHeader, drawClientSummary, ensurePageSpace } from './pdf/hrsPdfTheme';
+import { SIGNATURE_LABELS } from './pdf/signatureLabels';
 
 const APPOINTMENT = HRS_COMPLIANCE_CONTENT.brokerAppointment.commercial;
 const FEE_CONTENT = HRS_COMPLIANCE_CONTENT.brokerFeeConsent;
@@ -607,8 +608,8 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   pdf.gap(6);
   pdf._needSpace(42);
   const hw = (CW - 8) / 2;
-  pdf.sigBox('Client / Authorised Rep.', clientSig, ML, pdf.cy, hw, 38);
-  pdf.sigBox('Advisor / Broker Signature', advisorSig, ML + hw + 8, pdf.cy, hw, 38);
+  pdf.sigBox(SIGNATURE_LABELS.commercialClient, clientSig, ML, pdf.cy, hw, 38);
+  pdf.sigBox(SIGNATURE_LABELS.advisor, advisorSig, ML + hw + 8, pdf.cy, hw, 38);
   pdf.cy += 42;
   d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
   d.text(formData.companyName || 'Client', ML + hw / 2, pdf.cy, { align: 'center' });
