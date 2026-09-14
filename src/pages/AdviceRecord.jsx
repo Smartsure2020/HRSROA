@@ -17,9 +17,10 @@ import { useAuth } from '@/lib/AuthContext';
 import { generateROABase64 } from "../lib/hrsPdfGenerator";
 import { toast } from "@/components/ui/use-toast";
 import { getDraftStatus, saveRoaDraft, clearRoaDraft, hasMeaningfulDraftData } from '@/lib/roaDraftStorage';
-import { getBrokerFeeSummary } from '@/lib/brokerFee';
 import { PERSONAL_STEPS, getActiveSteps, getNextButtonText, getStepIndex, getStepId } from '@/lib/flowSteps';
 import SignatureIncompleteDialog from '../components/hrs/SignatureIncompleteDialog';
+import { buildPersonalNotificationEmail } from '@/lib/personalEmail';
+import { authHeader } from '@/lib/apiAuth';
 
 const TOTAL_STEPS = PERSONAL_STEPS.length;
 const FLOW_TYPE = 'personal';
@@ -155,44 +156,14 @@ export default function AdviceRecord() {
       const { base64, filename } = await generateROABase64(formData);
 
       const brokerEmail = BROKER_EMAIL_MAP[formData.brokerName] || DEFAULT_BROKER_EMAIL;
-      const subject = `New Advice Record – ${formData.firstName} ${formData.surname} (${formData.brokerName})`;
-      const body = `New Advice Record Submitted
-============================
-Broker / Advisor: ${formData.brokerName}
-Client: ${formData.firstName} ${formData.surname}
-ID/Passport: ${formData.idNumber}
-Email: ${formData.email}
-Cell: ${formData.cell}
-Address: ${[formData.streetNumber, formData.streetName, formData.complexName, formData.suburb, formData.city, formData.province, formData.postalCode].filter(Boolean).join(', ')}
-Occupation: ${formData.occupation}
-Marital Status: ${formData.maritalStatus}
-
-Recommended Insurer: ${formData.recInsurer}
-Broker Fee: ${getBrokerFeeSummary(formData).consentRequired ? getBrokerFeeSummary(formData).displayValue : 'No broker fee applicable'}
-Option 1: ${formData.ins0 || '-'} — R${formData.prem0 || '-'}
-Option 2: ${formData.ins1 || '-'} — R${formData.prem1 || '-'}
-Option 3 (Recommended): ${formData.ins2 || '-'} — R${formData.prem2 || '-'}
-
-Banking:
-Bank: ${formData.bankName} | Account: ${formData.accountNumber} | Type: ${formData.accountType}
-Deduction: R${formData.deductionAmount || '-'} on the ${formData.deductionDate || '-'}
-Inception Date: ${formData.inceptionDate}
-Insurer (Debit Order): ${formData.doInsurer}
-
-Signature Date: ${formData.sigDate}
-
-All acknowledgements completed: ${
-  [formData.ackPrinciples, formData.ackAdvisor, formData.ackClient, formData.ackPopia, formData.ackTermination, formData.ackBrokerFee, formData.ackBrokerAppointment, formData.ackBrokerAuth].every(Boolean)
-    ? 'Yes' : 'No – some acknowledgements outstanding'
-}
-
----
-Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
+      // Body deliberately excludes banking, ID and full address (Phase ROA-0
+      // data-minimisation) — the attached PDF remains the authoritative record.
+      const { subject, body } = buildPersonalNotificationEmail(formData);
 
       // No CC — send only to broker
       const res = await fetch('/api/send-email', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({ to: brokerEmail, subject, body, pdfBase64: base64, pdfFilename: filename }),
       });
 

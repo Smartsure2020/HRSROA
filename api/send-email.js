@@ -1,7 +1,16 @@
+import { requireAuthenticatedBroker } from './_lib/auth.js';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  // Server-side authentication (Phase ROA-0). The endpoint previously accepted
+  // unauthenticated POSTs and would send email through the HRS Resend account
+  // for any caller. It now requires a valid Supabase access token from a known
+  // HRS broker.
+  const user = await requireAuthenticatedBroker(req, res);
+  if (!user) return;
 
   const { to, subject, body, pdfBase64, pdfFilename } = req.body ?? {};
 

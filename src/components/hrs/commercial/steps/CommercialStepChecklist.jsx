@@ -7,6 +7,7 @@ import { generateCommercialPDF, generateCommercialCombinedPDF, generateCommercia
 import { MANAGER_NAME, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL } from "../../../../lib/hrsConstants";
 import { syncCommercialROAToCRM } from "../../../../lib/crmSync";
 import { useCrmSyncStatus } from "../../../../lib/useCrmSyncStatus";
+import { authHeader } from "../../../../lib/apiAuth";
 
 function InfoRow({ label, value }) {
   return (
@@ -209,7 +210,7 @@ export default function CommercialStepChecklist({ data, onRestart }) {
 
       const res = await fetch('/api/send-for-signature', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({
           signerName,
           signerEmail,

@@ -1,19 +1,26 @@
 // api/send-for-signature.js
-// DocuSign eSignature integration using JWT authentication
-// Uses 'jose' library for ESM-compatible JWT signing
-// Run: npm install jose
+// DocuSign eSignature integration using JWT authentication.
+//
+// Phase ROA-0 hardening:
+//   • Server-side HRS authentication (Supabase JWT) is required before any
+//     envelope call — see api/_lib/auth.js.
+//   • The DocuSign environment (sandbox / production) is now resolved explicitly
+//     from DOCUSIGN_ENVIRONMENT — see api/_lib/docusignConfig.js.
+//   • The envelope definition (anchors, fail-closed signHereTabs, routing) is
+//     built by the shared api/_lib/buildEnvelope.js so both ROA types share one
+//     tested contract and the Personal / Commercial signature-label mismatch
+//     cannot recur.
+//   • The caller's authenticated identity must match the requested broker.
 
 import { SignJWT, importPKCS8 } from 'jose';
 import { createPrivateKey } from 'crypto';
+import { requireAuthenticatedBroker } from './_lib/auth.js';
+import { getDocusignConfig } from './_lib/docusignConfig.js';
+import { buildEnvelope } from './_lib/buildEnvelope.js';
+import { ROA_TYPES } from '../src/lib/pdf/signatureLabels.js';
+import { BROKER_EMAIL_MAP } from '../src/lib/brokerDirectory.js';
 
-const DOCUSIGN_AUTH_SERVER = 'account-d.docusign.com'; // sandbox
-const DOCUSIGN_BASE_URL = 'https://demo.docusign.net/restapi'; // sandbox
-
-// For production, swap both to:
-// const DOCUSIGN_AUTH_SERVER = 'account.docusign.com';
-// const DOCUSIGN_BASE_URL = 'https://na4.docusign.net/restapi';
-
-async function getJWTAccessToken() {
+async function getJWTAccessToken(authServer) {
   const integrationKey = process.env.DOCUSIGN_INTEGRATION_KEY;
   const userId = process.env.DOCUSIGN_USER_ID;
   const privateKeyRaw = process.env.DOCUSIGN_PRIVATE_KEY;
@@ -38,7 +45,7 @@ async function getJWTAccessToken() {
   const assertion = await new SignJWT({
     iss: integrationKey,
     sub: userId,
-    aud: DOCUSIGN_AUTH_SERVER,
+    aud: authServer,
     iat: now,
     exp: now + 3600,
     scope: 'signature impersonation',
@@ -46,7 +53,7 @@ async function getJWTAccessToken() {
     .setProtectedHeader({ alg: 'RS256' })
     .sign(privateKey);
 
-  const response = await fetch(`https://${DOCUSIGN_AUTH_SERVER}/oauth/token`, {
+  const response = await fetch(`https://${authServer}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -69,6 +76,11 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Server-side authentication (Phase ROA-0). Only a signed-in HRS broker may
+  // create envelopes — the endpoint was previously open.
+  const user = await requireAuthenticatedBroker(req, res);
+  if (!user) return;
+
   const {
     signerName,
     signerEmail,
@@ -85,115 +97,72 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  // Dev mock if no credentials
+  // ROA type must be one the anchor contract knows about — buildEnvelope also
+  // enforces this, but rejecting early gives a clearer 400 than a 500.
+  if (!ROA_TYPES.includes(roaType)) {
+    return res.status(400).json({ error: `Invalid roaType: expected one of ${ROA_TYPES.join(', ')}` });
+  }
+
+  // The broker being asked to sign must match the caller's authenticated HRS
+  // identity. The BROKER_EMAIL_MAP is the authoritative source used elsewhere
+  // in the app; we compare case-insensitively.
+  const canonicalBrokerEmail = BROKER_EMAIL_MAP[brokerName];
+  if (!canonicalBrokerEmail) {
+    return res.status(400).json({ error: 'Unknown broker' });
+  }
+  if (canonicalBrokerEmail.toLowerCase() !== String(brokerEmail).toLowerCase()) {
+    return res.status(400).json({ error: 'Broker email does not match broker directory' });
+  }
+  if (user.email && user.email.toLowerCase() !== canonicalBrokerEmail.toLowerCase()) {
+    return res.status(403).json({ error: 'Authenticated user does not match requested broker' });
+  }
+
+  // Explicit environment selection — fail loudly if DOCUSIGN_ENVIRONMENT is set
+  // to something unexpected rather than silently falling back to sandbox.
+  let docusignConfig;
+  try {
+    docusignConfig = getDocusignConfig();
+  } catch (err) {
+    console.error('DocuSign config error:', err);
+    return res.status(500).json({ error: 'DocuSign environment misconfigured' });
+  }
+
+  // Dev mock if no DocuSign credentials — after auth so unauthenticated callers
+  // still cannot probe the endpoint.
   if (!process.env.DOCUSIGN_INTEGRATION_KEY) {
     console.log('\n✍️  [DEV] DocuSign mocked — no credentials configured');
+    console.log('  Environment:', docusignConfig.environment);
     console.log('  Signer:', signerName, signerEmail);
     console.log('  Broker:', brokerName, brokerEmail);
     console.log('  Document:', pdfFilename);
     return res.status(200).json({
       ok: true,
       envelopeId: 'dev-mock-envelope-id',
+      environment: docusignConfig.environment,
       message: 'Dev mock — no actual request sent',
     });
   }
 
   try {
-    const accessToken = await getJWTAccessToken();
+    const accessToken = await getJWTAccessToken(docusignConfig.authServer);
     const accountId = process.env.DOCUSIGN_ACCOUNT_ID;
 
-    const envelope = {
-      emailSubject: subject || `Please sign your Record of Advice – ${signerName} | HRS Insurance`,
-      emailBlurb: message || `Dear ${signerName},\n\nPlease review and sign your ${roaType} Lines Record of Advice from Holistic Risk Services (Pty) Ltd. This document is required under the Financial Advisory and Intermediary Services (FAIS) Act.\n\nKind regards,\nHolistic Risk Services (Pty) Ltd\nFSP No. 28582`,
-      status: 'sent',
-      documents: [
-        {
-          documentBase64: pdfBase64,
-          name: pdfFilename.replace('.pdf', ''),
-          fileExtension: 'pdf',
-          documentId: '1',
-        },
-      ],
-      recipients: {
-        signers: [
-          {
-            name: signerName,
-            email: signerEmail,
-            recipientId: '1',
-            routingOrder: '1',
-            tabs: {
-              signHereTabs: [
-                {
-                  documentId: '1',
-                  anchorString: 'Client Signature',
-                  anchorUnits: 'pixels',
-                  anchorXOffset: '0',
-                  // Anchor text sits in the blue box header (~5mm from box top).
-                  // 40px @ 72dpi ≈ 14mm — places the tab in the middle of the blank signature area.
-                  anchorYOffset: '40',
-                  anchorIgnoreIfNotPresent: 'true',
-                },
-              ],
-              dateSignedTabs: [
-                {
-                  documentId: '1',
-                  anchorString: 'Client Signature',
-                  anchorUnits: 'pixels',
-                  anchorXOffset: '0',
-                  // 90px ≈ 32mm below anchor — aligns with the date line near the bottom of the box.
-                  anchorYOffset: '90',
-                  anchorIgnoreIfNotPresent: 'true',
-                },
-              ],
-            },
-          },
-          {
-            name: brokerName,
-            email: brokerEmail,
-            recipientId: '2',
-            routingOrder: '2',
-            tabs: {
-              signHereTabs: [
-                {
-                  documentId: '1',
-                  anchorString: 'Advisor / Broker Signature',
-                  anchorUnits: 'pixels',
-                  anchorXOffset: '0',
-                  anchorYOffset: '40',
-                  anchorIgnoreIfNotPresent: 'true',
-                },
-              ],
-              dateSignedTabs: [
-                {
-                  documentId: '1',
-                  anchorString: 'Advisor / Broker Signature',
-                  anchorUnits: 'pixels',
-                  anchorXOffset: '0',
-                  anchorYOffset: '90',
-                  anchorIgnoreIfNotPresent: 'true',
-                },
-              ],
-            },
-          },
-        ],
-      },
-      notification: {
-        useAccountDefaults: false,
-        reminders: {
-          reminderEnabled: 'true',
-          reminderDelay: '1',
-          reminderFrequency: '2',
-        },
-        expirations: {
-          expireEnabled: 'true',
-          expireAfter: '14',
-          expireWarn: '2',
-        },
-      },
-    };
+    // Shared, tested envelope shape — anchors and fail-closed signHereTabs live
+    // in api/_lib/buildEnvelope.js and are locked to src/lib/pdf/signatureLabels.js.
+    const envelope = buildEnvelope({
+      roaType,
+      signerName,
+      signerEmail,
+      brokerName,
+      brokerEmail,
+      pdfBase64,
+      pdfFilename,
+      subject,
+      message,
+    });
 
     const response = await fetch(
-      `${DOCUSIGN_BASE_URL}/v2.1/accounts/${accountId}/envelopes`,
+      `${docusignConfig.baseUrl}/v2.1/accounts/${accountId}/envelopes`,
       {
         method: 'POST',
         headers: {
@@ -217,6 +186,7 @@ export default async function handler(req, res) {
       ok: true,
       envelopeId: data.envelopeId,
       status: data.status,
+      environment: docusignConfig.environment,
       message: `Signature request sent to ${signerEmail}. ${brokerName} will countersign after client.`,
     });
 

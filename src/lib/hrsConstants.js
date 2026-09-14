@@ -17,37 +17,11 @@ export const RISK_CATEGORIES = [
   { name: "Value Added Products (VAPs)", note: "Roadside Assistance", sasria: false },
 ];
 
-export const BROKER_EMAIL_MAP = {
-  'Aedan Doubell':        'aedan@hrsinsurance.co.za',
-  'Andrew Penney':        'andrew@hrsinsurance.co.za',
-  'Charmaine Brogden':    'charmaine@hrsinsurance.co.za',
-  'Daniel Pottier':       'daniel@hrsinsurance.co.za',
-  'Jaryd Browne':         'jaryd@hrsinsurance.co.za',
-  'Juan-Paul vd Merwe':   'juan-paul@hrsinsurance.co.za',
-  'Werner Joubert':       'werner@hrsinsurance.co.za',
-  'Brian Hodges' :        'brian@hrsinsurance.co.za',
-  'Faizel Patel' :        'faizel@hrsinsurance.co.za',
-
-};
-
-export const EMAIL_TO_BROKER = Object.fromEntries(
-  Object.entries(BROKER_EMAIL_MAP).map(([name, email]) => [email, name])
-);
-
-export const DEFAULT_BROKER_EMAIL = 'info@hrsinsurance.co.za';
-export const MANAGER_NAME = 'Andrew Penney';
-
-export const ADVISORS = [
-  "Aedan Doubell",
-  "Andrew Penney",
-  "Charmaine Brogden",
-  "Daniel Pottier",
-  "Jaryd Browne",
-  "Juan-Paul vd Merwe",
-  "Werner Joubert",
-  'Brian Hodges',
-  'Faizel Patel'
-];
+// The broker → email directory lives in a dedicated pure-data module so the
+// serverless endpoints (which authenticate against it) and the client wizard
+// stay locked to a single table. hrsConstants keeps re-exports for backward
+// compatibility with existing imports across the app.
+export { BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER, MANAGER_NAME, ADVISORS, isHrsBrokerEmail } from './brokerDirectory';
 
 export const BANKS = [
   "ABSA Bank",
