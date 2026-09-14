@@ -1,41 +1,46 @@
-// DocuSign environment selection (Phase ROA-0).
+// DocuSign auth-environment selection (Phase ROA-0.1).
 //
-// Verifies the explicit-config replacement for the old comment/uncomment
-// switch: sandbox is the safe default when the env var is missing, an
-// explicit "production" resolves to production endpoints, and anything else
-// throws so a deploy fails loudly rather than silently defaulting.
+// The base URI is no longer returned here — it now comes from DocuSign's
+// UserInfo response, keyed by DOCUSIGN_ACCOUNT_ID. This module owns the
+// OAuth / auth server choice only.
+//
+// A DOCUSIGN_BASE_URL escape hatch remains available for internal test
+// harnesses; unset by default.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { DOCUSIGN_ENVIRONMENTS, getDocusignConfig } from '../api/_lib/docusignConfig.js';
+import {
+  DOCUSIGN_ENVIRONMENTS,
+  getConfiguredBaseUrlOverride,
+  getDocusignConfig,
+} from '../api/_lib/docusignConfig.js';
 
 const originalEnv = process.env.DOCUSIGN_ENVIRONMENT;
+const originalBaseUrl = process.env.DOCUSIGN_BASE_URL;
 
 afterEach(() => {
   if (originalEnv === undefined) delete process.env.DOCUSIGN_ENVIRONMENT;
   else process.env.DOCUSIGN_ENVIRONMENT = originalEnv;
+  if (originalBaseUrl === undefined) delete process.env.DOCUSIGN_BASE_URL;
+  else process.env.DOCUSIGN_BASE_URL = originalBaseUrl;
 });
 
-describe('getDocusignConfig', () => {
+describe('getDocusignConfig — auth-server selection only', () => {
   it('advertises exactly two supported environments', () => {
     expect(DOCUSIGN_ENVIRONMENTS).toEqual(['sandbox', 'production']);
   });
 
-  it('defaults to sandbox when DOCUSIGN_ENVIRONMENT is unset', () => {
+  it('defaults to the sandbox auth server when DOCUSIGN_ENVIRONMENT is unset', () => {
     delete process.env.DOCUSIGN_ENVIRONMENT;
-    const config = getDocusignConfig();
-    expect(config).toEqual({
+    expect(getDocusignConfig()).toEqual({
       environment: 'sandbox',
       authServer: 'account-d.docusign.com',
-      baseUrl: 'https://demo.docusign.net/restapi',
     });
   });
 
-  it('resolves production endpoints when explicitly requested', () => {
-    const config = getDocusignConfig('production');
-    expect(config).toEqual({
+  it('resolves the production auth server when explicitly requested', () => {
+    expect(getDocusignConfig('production')).toEqual({
       environment: 'production',
       authServer: 'account.docusign.com',
-      baseUrl: 'https://na4.docusign.net/restapi',
     });
   });
 
@@ -55,5 +60,29 @@ describe('getDocusignConfig', () => {
     expect(getDocusignConfig().environment).toBe('production');
     process.env.DOCUSIGN_ENVIRONMENT = 'sandbox';
     expect(getDocusignConfig().environment).toBe('sandbox');
+  });
+
+  it('does not return a hard-coded baseUrl any more', () => {
+    // baseUrl comes from account UserInfo now; the config object must not
+    // silently re-introduce a shard-hardcoded field.
+    const config = getDocusignConfig('production');
+    expect(config).not.toHaveProperty('baseUrl');
+  });
+});
+
+describe('getConfiguredBaseUrlOverride — DOCUSIGN_BASE_URL escape hatch', () => {
+  it('returns null when the env var is unset', () => {
+    delete process.env.DOCUSIGN_BASE_URL;
+    expect(getConfiguredBaseUrlOverride()).toBeNull();
+  });
+
+  it('returns null when the env var is blank', () => {
+    process.env.DOCUSIGN_BASE_URL = '   ';
+    expect(getConfiguredBaseUrlOverride()).toBeNull();
+  });
+
+  it('returns the trimmed value when set', () => {
+    process.env.DOCUSIGN_BASE_URL = '  https://internal-docusign-proxy.example/restapi  ';
+    expect(getConfiguredBaseUrlOverride()).toBe('https://internal-docusign-proxy.example/restapi');
   });
 });

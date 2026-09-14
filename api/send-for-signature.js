@@ -15,7 +15,8 @@
 import { SignJWT, importPKCS8 } from 'jose';
 import { createPrivateKey } from 'crypto';
 import { requireAuthenticatedBroker } from './_lib/auth.js';
-import { getDocusignConfig } from './_lib/docusignConfig.js';
+import { getConfiguredBaseUrlOverride, getDocusignConfig } from './_lib/docusignConfig.js';
+import { resolveDocusignAccountBaseUrl } from './_lib/docusignAccount.js';
 import { buildEnvelope } from './_lib/buildEnvelope.js';
 import { ROA_TYPES } from '../src/lib/pdf/signatureLabels.js';
 import { BROKER_EMAIL_MAP } from '../src/lib/brokerDirectory.js';
@@ -146,6 +147,22 @@ export default async function handler(req, res) {
   try {
     const accessToken = await getJWTAccessToken(docusignConfig.authServer);
     const accountId = process.env.DOCUSIGN_ACCOUNT_ID;
+    if (!accountId) {
+      throw new Error('DOCUSIGN_ACCOUNT_ID is not configured');
+    }
+
+    // The eSignature REST base URI depends on the account's shard (na1..na4,
+    // eu1, etc.) — resolve it from DocuSign's UserInfo response rather than
+    // hard-coding a shard. DOCUSIGN_BASE_URL is a rare escape hatch for test
+    // harnesses; when set it bypasses UserInfo.
+    const override = getConfiguredBaseUrlOverride();
+    const accountBaseUrl = override
+      ? override.replace(/\/+$/, '')
+      : (await resolveDocusignAccountBaseUrl({
+          authServer: docusignConfig.authServer,
+          accessToken,
+          accountId,
+        })).baseUrl;
 
     // Shared, tested envelope shape — anchors and fail-closed signHereTabs live
     // in api/_lib/buildEnvelope.js and are locked to src/lib/pdf/signatureLabels.js.
@@ -162,7 +179,7 @@ export default async function handler(req, res) {
     });
 
     const response = await fetch(
-      `${docusignConfig.baseUrl}/v2.1/accounts/${accountId}/envelopes`,
+      `${accountBaseUrl}/v2.1/accounts/${accountId}/envelopes`,
       {
         method: 'POST',
         headers: {

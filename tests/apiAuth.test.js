@@ -1,20 +1,55 @@
 // Server-side authentication on /api/send-email and /api/send-for-signature
-// (Phase ROA-0). Proves:
-//   • Missing Authorization header → 401.
-//   • Invalid / malformed / expired tokens → 401.
-//   • Non-broker authenticated user → 403.
-//   • Missing SUPABASE_JWT_SECRET → 500 (never a soft bypass).
-//   • The external services (Resend and DocuSign) are NEVER contacted when
-//     authentication fails — verified by asserting global.fetch was not called.
+// (Phase ROA-0.1).
+//
+// The endpoints now delegate token validation to the project's Supabase Auth
+// service via `supabase.auth.getUser(token)`. This test file mocks
+// `@supabase/supabase-js` so the entire suite runs offline: no HS256 secret,
+// no real Supabase call, no DocuSign call, no Resend call.
+//
+// Coverage:
+//   • Missing bearer → 401
+//   • Malformed bearer → 401
+//   • Supabase Auth says "invalid" → 401
+//   • Supabase Auth infra failure (getUser throws) → 500 (fail-closed)
+//   • SUPABASE_URL / SUPABASE_ANON_KEY missing → 500 server_misconfigured
+//   • Valid Supabase user but not in HRS broker directory → 403
+//   • Authenticated broker whose email ≠ requested broker → 403
+//   • Unknown roaType → 400
+//   • Valid broker + no external creds → dev-mock 200
+//   • external Resend / DocuSign fetch never called on any auth failure
 
-import { SignJWT } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTH_ERROR, authenticate, requireAuthenticatedBroker } from '../api/_lib/auth.js';
-import sendEmail from '../api/send-email.js';
-import sendForSignature from '../api/send-for-signature.js';
 
-const TEST_JWT_SECRET = 'test-jwt-secret-shhh';
-const originalSecret = process.env.SUPABASE_JWT_SECRET;
+// The mock queue lets each test push the next `getUser` response before it
+// calls the handler. This keeps the mock deterministic across handler calls.
+const getUserResponses = [];
+function pushGetUserResponse(response) {
+  getUserResponses.push(response);
+}
+
+vi.mock('@supabase/supabase-js', () => ({
+  createClient: vi.fn(() => ({
+    auth: {
+      getUser: vi.fn(async () => {
+        if (!getUserResponses.length) {
+          return { data: { user: null }, error: { message: 'no mock response queued' } };
+        }
+        const next = getUserResponses.shift();
+        if (typeof next === 'function') return next();
+        if (next && typeof next.throw === 'string') throw new Error(next.throw);
+        return next;
+      }),
+    },
+  })),
+}));
+
+// Loaded AFTER vi.mock so the handlers pick up the mocked module.
+const { AUTH_ERROR, authenticate, requireAuthenticatedBroker } = await import('../api/_lib/auth.js');
+const sendEmail = (await import('../api/send-email.js')).default;
+const sendForSignature = (await import('../api/send-for-signature.js')).default;
+
+const originalSupabaseUrl = process.env.SUPABASE_URL;
+const originalSupabaseAnon = process.env.SUPABASE_ANON_KEY;
 const originalResend = process.env.RESEND_API_KEY;
 const originalDocusignKey = process.env.DOCUSIGN_INTEGRATION_KEY;
 const originalDocusignEnv = process.env.DOCUSIGN_ENVIRONMENT;
@@ -24,35 +59,33 @@ function restoreEnv(key, value) {
   else process.env[key] = value;
 }
 
-async function signValidToken({ email = 'andrew@hrsinsurance.co.za', sub = 'user-1', audience = 'authenticated', ttlSeconds = 60, secret = TEST_JWT_SECRET } = {}) {
-  const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({ email, aud: audience })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setSubject(sub)
-    .setAudience(audience)
-    .setIssuedAt(now)
-    .setExpirationTime(now + ttlSeconds)
-    .sign(new TextEncoder().encode(secret));
-}
-
 function mockRes() {
-  const res = {
+  return {
     statusCode: null,
     body: null,
     status(code) { this.statusCode = code; return this; },
     json(payload) { this.body = payload; return this; },
   };
-  return res;
 }
 
+function validSupabaseUser(email) {
+  return {
+    data: { user: { id: `user-${email}`, email } },
+    error: null,
+  };
+}
+
+const invalidTokenResponse = { data: { user: null }, error: { message: 'invalid JWT' } };
+
 beforeEach(() => {
-  process.env.SUPABASE_JWT_SECRET = TEST_JWT_SECRET;
-  // Never let the endpoints actually contact Resend or DocuSign during tests.
+  getUserResponses.length = 0;
+  process.env.SUPABASE_URL = 'https://project.supabase.co';
+  process.env.SUPABASE_ANON_KEY = 'anon-key-for-tests';
   delete process.env.RESEND_API_KEY;
   delete process.env.DOCUSIGN_INTEGRATION_KEY;
   process.env.DOCUSIGN_ENVIRONMENT = 'sandbox';
   vi.spyOn(global, 'fetch').mockImplementation(() => {
-    throw new Error('fetch must not be called during auth tests');
+    throw new Error('fetch must not be called during auth-failure tests');
   });
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -60,71 +93,73 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  restoreEnv('SUPABASE_JWT_SECRET', originalSecret);
+  restoreEnv('SUPABASE_URL', originalSupabaseUrl);
+  restoreEnv('SUPABASE_ANON_KEY', originalSupabaseAnon);
   restoreEnv('RESEND_API_KEY', originalResend);
   restoreEnv('DOCUSIGN_INTEGRATION_KEY', originalDocusignKey);
   restoreEnv('DOCUSIGN_ENVIRONMENT', originalDocusignEnv);
 });
 
-describe('authenticate() — Supabase JWT verification', () => {
-  it('rejects a missing Authorization header (401)', async () => {
+describe('authenticate() — Supabase Auth token verification', () => {
+  it('rejects a missing Authorization header (401 missing_token)', async () => {
     const result = await authenticate({ headers: {} });
     expect(result).toEqual({ ok: false, error: AUTH_ERROR.MISSING_TOKEN, status: 401 });
   });
 
   it('rejects a malformed Authorization header (401)', async () => {
     const result = await authenticate({ headers: { authorization: 'not-a-bearer' } });
-    expect(result.ok).toBe(false);
-    expect(result.status).toBe(401);
+    expect(result).toEqual({ ok: false, error: AUTH_ERROR.MISSING_TOKEN, status: 401 });
   });
 
-  it('rejects a signature-mismatched token (401)', async () => {
-    const badToken = await signValidToken({ secret: 'wrong-secret' });
-    const result = await authenticate({ headers: { authorization: `Bearer ${badToken}` } });
-    expect(result).toMatchObject({ ok: false, error: AUTH_ERROR.INVALID_TOKEN, status: 401 });
-  });
-
-  it('rejects an expired token (401)', async () => {
-    const expired = await signValidToken({ ttlSeconds: -60 });
-    const result = await authenticate({ headers: { authorization: `Bearer ${expired}` } });
-    expect(result).toMatchObject({ ok: false, status: 401 });
-  });
-
-  it('rejects a token issued for a different audience (401)', async () => {
-    const wrongAud = await signValidToken({ audience: 'someone-else' });
-    const result = await authenticate({ headers: { authorization: `Bearer ${wrongAud}` } });
-    expect(result).toMatchObject({ ok: false, status: 401 });
-  });
-
-  it('accepts a valid audience="authenticated" token', async () => {
-    const token = await signValidToken({ email: 'andrew@hrsinsurance.co.za' });
-    const result = await authenticate({ headers: { authorization: `Bearer ${token}` } });
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.user.email).toBe('andrew@hrsinsurance.co.za');
-  });
-
-  it('returns server_misconfigured (500) if SUPABASE_JWT_SECRET is missing', async () => {
-    delete process.env.SUPABASE_JWT_SECRET;
-    const token = await signValidToken();
-    const result = await authenticate({ headers: { authorization: `Bearer ${token}` } });
+  it('returns server_misconfigured (500) when SUPABASE_URL is missing', async () => {
+    delete process.env.SUPABASE_URL;
+    const result = await authenticate({ headers: { authorization: 'Bearer whatever' } });
     expect(result).toEqual({ ok: false, error: AUTH_ERROR.SERVER_MISCONFIGURED, status: 500 });
+  });
+
+  it('returns server_misconfigured (500) when SUPABASE_ANON_KEY is missing', async () => {
+    delete process.env.SUPABASE_ANON_KEY;
+    const result = await authenticate({ headers: { authorization: 'Bearer whatever' } });
+    expect(result).toEqual({ ok: false, error: AUTH_ERROR.SERVER_MISCONFIGURED, status: 500 });
+  });
+
+  it('rejects a token Supabase Auth says is invalid (401)', async () => {
+    pushGetUserResponse(invalidTokenResponse);
+    const result = await authenticate({ headers: { authorization: 'Bearer garbage' } });
+    expect(result).toEqual({ ok: false, error: AUTH_ERROR.INVALID_TOKEN, status: 401 });
+  });
+
+  it('fails closed (500 auth_service_error) when Supabase Auth throws', async () => {
+    pushGetUserResponse({ throw: 'ECONNRESET' });
+    const result = await authenticate({ headers: { authorization: 'Bearer good-shape' } });
+    expect(result).toEqual({ ok: false, error: AUTH_ERROR.AUTH_SERVICE_ERROR, status: 500 });
+  });
+
+  it('accepts a valid Supabase user (returns id + email)', async () => {
+    pushGetUserResponse(validSupabaseUser('andrew@hrsinsurance.co.za'));
+    const result = await authenticate({ headers: { authorization: 'Bearer good' } });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.user.email).toBe('andrew@hrsinsurance.co.za');
+      expect(result.user.id).toBe('user-andrew@hrsinsurance.co.za');
+    }
   });
 });
 
 describe('requireAuthenticatedBroker() — HRS-broker membership', () => {
   it('rejects an authenticated but non-broker email (403)', async () => {
-    const token = await signValidToken({ email: 'stranger@example.com' });
+    pushGetUserResponse(validSupabaseUser('stranger@example.com'));
     const res = mockRes();
-    const user = await requireAuthenticatedBroker({ headers: { authorization: `Bearer ${token}` } }, res);
+    const user = await requireAuthenticatedBroker({ headers: { authorization: 'Bearer good' } }, res);
     expect(user).toBeNull();
     expect(res.statusCode).toBe(403);
     expect(res.body).toEqual({ error: 'not_an_hrs_broker' });
   });
 
-  it('accepts a known HRS broker (returns user)', async () => {
-    const token = await signValidToken({ email: 'ANDREW@hrsinsurance.co.za' });
+  it('accepts a known HRS broker (case-insensitive)', async () => {
+    pushGetUserResponse(validSupabaseUser('ANDREW@hrsinsurance.co.za'));
     const res = mockRes();
-    const user = await requireAuthenticatedBroker({ headers: { authorization: `Bearer ${token}` } }, res);
+    const user = await requireAuthenticatedBroker({ headers: { authorization: 'Bearer good' } }, res);
     expect(user).not.toBeNull();
     expect(user.email).toBe('ANDREW@hrsinsurance.co.za');
     expect(res.statusCode).toBeNull();
@@ -143,6 +178,7 @@ describe('/api/send-email — rejects unauthenticated callers before touching Re
   });
 
   it('invalid token → 401 and never fetches Resend', async () => {
+    pushGetUserResponse(invalidTokenResponse);
     const res = mockRes();
     await sendEmail(
       { method: 'POST', headers: { authorization: 'Bearer garbage' }, body: { to: 'x@y', subject: 's', body: 'b' } },
@@ -152,13 +188,25 @@ describe('/api/send-email — rejects unauthenticated callers before touching Re
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('valid broker token + no RESEND_API_KEY → dev-mock 200 and never fetches Resend', async () => {
-    const token = await signValidToken({ email: 'andrew@hrsinsurance.co.za' });
+  it('Supabase Auth infra failure → 500 and never fetches Resend', async () => {
+    pushGetUserResponse({ throw: 'ENETUNREACH' });
+    const res = mockRes();
+    await sendEmail(
+      { method: 'POST', headers: { authorization: 'Bearer good-shape' }, body: { to: 'x@y', subject: 's', body: 'b' } },
+      res,
+    );
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toEqual({ error: 'auth_service_error' });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('valid broker + no RESEND_API_KEY → dev-mock 200 and never fetches Resend', async () => {
+    pushGetUserResponse(validSupabaseUser('andrew@hrsinsurance.co.za'));
     const res = mockRes();
     await sendEmail(
       {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}` },
+        headers: { authorization: 'Bearer good' },
         body: { to: 'andrew@hrsinsurance.co.za', subject: 's', body: 'b' },
       },
       res,
@@ -187,11 +235,22 @@ describe('/api/send-for-signature — rejects unauthenticated callers before tou
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('non-broker authenticated user → 403 and never fetches DocuSign', async () => {
-    const token = await signValidToken({ email: 'stranger@example.com' });
+  it('invalid Supabase token → 401 and never fetches DocuSign', async () => {
+    pushGetUserResponse(invalidTokenResponse);
     const res = mockRes();
     await sendForSignature(
-      { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: validPayload },
+      { method: 'POST', headers: { authorization: 'Bearer bad' }, body: validPayload },
+      res,
+    );
+    expect(res.statusCode).toBe(401);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('non-broker authenticated user → 403 and never fetches DocuSign', async () => {
+    pushGetUserResponse(validSupabaseUser('stranger@example.com'));
+    const res = mockRes();
+    await sendForSignature(
+      { method: 'POST', headers: { authorization: 'Bearer good' }, body: validPayload },
       res,
     );
     expect(res.statusCode).toBe(403);
@@ -199,23 +258,23 @@ describe('/api/send-for-signature — rejects unauthenticated callers before tou
   });
 
   it('authenticated broker whose email differs from requested broker → 403', async () => {
-    const token = await signValidToken({ email: 'werner@hrsinsurance.co.za' });
+    pushGetUserResponse(validSupabaseUser('werner@hrsinsurance.co.za'));
     const res = mockRes();
     await sendForSignature(
-      { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: validPayload },
+      { method: 'POST', headers: { authorization: 'Bearer good' }, body: validPayload },
       res,
     );
     expect(res.statusCode).toBe(403);
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('unknown roaType → 400', async () => {
-    const token = await signValidToken({ email: 'andrew@hrsinsurance.co.za' });
+  it('unknown roaType → 400 and never fetches DocuSign', async () => {
+    pushGetUserResponse(validSupabaseUser('andrew@hrsinsurance.co.za'));
     const res = mockRes();
     await sendForSignature(
       {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}` },
+        headers: { authorization: 'Bearer good' },
         body: { ...validPayload, roaType: 'Motor' },
       },
       res,
@@ -225,11 +284,11 @@ describe('/api/send-for-signature — rejects unauthenticated callers before tou
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('valid broker token + no DocuSign credentials → dev mock 200 and never fetches DocuSign', async () => {
-    const token = await signValidToken({ email: 'andrew@hrsinsurance.co.za' });
+  it('valid broker + no DocuSign credentials → dev mock 200 and never fetches DocuSign', async () => {
+    pushGetUserResponse(validSupabaseUser('andrew@hrsinsurance.co.za'));
     const res = mockRes();
     await sendForSignature(
-      { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: validPayload },
+      { method: 'POST', headers: { authorization: 'Bearer good' }, body: validPayload },
       res,
     );
     expect(res.statusCode).toBe(200);

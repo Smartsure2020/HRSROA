@@ -1,30 +1,36 @@
-// Server-side Supabase JWT verification (Phase ROA-0).
+// Server-side Supabase Auth token verification (Phase ROA-0.1).
 //
-// The two action endpoints — /api/send-email and /api/send-for-signature — were
-// previously open POSTs. This helper verifies the caller's Supabase access token
-// (issued by the existing frontend auth flow, see src/lib/supabaseClient.js and
-// AuthContext.jsx) using the project's HS256 JWT secret. There is only one
-// authentication system — this file is the server-side half of it.
+// ROA-0 verified access tokens locally with HS256 + SUPABASE_JWT_SECRET. That
+// works for legacy Supabase projects but couples the endpoints to a specific
+// signing model — it will not survive Supabase's future migration to
+// asymmetric signing keys, and it duplicates key material into every
+// serverless region.
 //
-// The frontend passes the token as `Authorization: Bearer <access_token>`. It is
-// the same JWT that already fronts crm.hrsinsurance.co.za calls (see
-// src/lib/useCrmSyncStatus.js). No new credential is introduced here.
+// This module instead delegates token validation to the project's Supabase
+// Auth service via `supabase.auth.getUser(token)`. Whatever signing model the
+// project runs (legacy HS256 or future asymmetric keys), Supabase Auth is the
+// authoritative validator. No decoded JWT claim is trusted before the service
+// responds.
 //
-// Environment:
-//   SUPABASE_JWT_SECRET — required. The HS256 signing secret from the Supabase
-//                         project's API settings. Never exposed to the browser.
+// Environment (server-side only, never exposed to the browser bundle):
+//   SUPABASE_URL       — the project's Supabase URL (also visible on the
+//                        client as VITE_SUPABASE_URL; identical value).
+//   SUPABASE_ANON_KEY  — the anon (publishable) key used to make the
+//                        auth.getUser call. Safe to run server-side. Never a
+//                        service-role key.
 //
-// A missing secret is treated as a server misconfiguration (500), not a soft
-// bypass, so an unauthenticated fallback path cannot exist by accident.
+// A missing env var returns 500 `server_misconfigured` — never a soft bypass.
+// An auth-service error (network / 5xx) also returns 500 so the endpoints
+// fail closed rather than allow-listing on infrastructure failure.
 
-import { jwtVerify } from 'jose';
+import { createClient } from '@supabase/supabase-js';
 import { isHrsBrokerEmail } from '../../src/lib/brokerDirectory.js';
 
-/** Result codes returned by `authenticate` so callers can shape the HTTP response. */
 export const AUTH_ERROR = Object.freeze({
   MISSING_TOKEN: 'missing_token',
   INVALID_TOKEN: 'invalid_token',
   SERVER_MISCONFIGURED: 'server_misconfigured',
+  AUTH_SERVICE_ERROR: 'auth_service_error',
 });
 
 function extractBearerToken(req) {
@@ -33,39 +39,58 @@ function extractBearerToken(req) {
   return match ? match[1] : null;
 }
 
+function getServerSupabaseClient() {
+  const url = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  if (!url || !anonKey) return null;
+  return createClient(url, anonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
 /**
- * Verifies the caller's Supabase access token and returns the resolved user, or
- * an error code the endpoint can turn into an HTTP status.
+ * Verifies the caller's Supabase access token against the project's Auth
+ * service and returns the resolved user, or an error code the endpoint can
+ * turn into an HTTP status.
  *
  * @param {import('http').IncomingMessage & { headers: Record<string, string> }} req
  * @returns {Promise<{ ok: true, user: { id: string, email: string|null } } | { ok: false, error: string, status: number }>}
  */
 export async function authenticate(req) {
-  const secret = process.env.SUPABASE_JWT_SECRET;
-  if (!secret) {
-    return { ok: false, error: AUTH_ERROR.SERVER_MISCONFIGURED, status: 500 };
-  }
-
   const token = extractBearerToken(req);
   if (!token) {
     return { ok: false, error: AUTH_ERROR.MISSING_TOKEN, status: 401 };
   }
 
+  const supabase = getServerSupabaseClient();
+  if (!supabase) {
+    return { ok: false, error: AUTH_ERROR.SERVER_MISCONFIGURED, status: 500 };
+  }
+
+  let response;
   try {
-    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
-      algorithms: ['HS256'],
-      audience: 'authenticated',
-    });
-    return {
-      ok: true,
-      user: {
-        id: typeof payload.sub === 'string' ? payload.sub : '',
-        email: typeof payload.email === 'string' ? payload.email : null,
-      },
-    };
+    response = await supabase.auth.getUser(token);
   } catch {
+    // Networking / infrastructure error contacting Supabase Auth. Fail closed.
+    return { ok: false, error: AUTH_ERROR.AUTH_SERVICE_ERROR, status: 500 };
+  }
+
+  const { data, error } = response || {};
+  if (error || !data?.user) {
     return { ok: false, error: AUTH_ERROR.INVALID_TOKEN, status: 401 };
   }
+
+  return {
+    ok: true,
+    user: {
+      id: typeof data.user.id === 'string' ? data.user.id : '',
+      email: typeof data.user.email === 'string' ? data.user.email : null,
+    },
+  };
 }
 
 /**
