@@ -14,13 +14,15 @@ import StepChecklist from "../components/hrs/steps/StepChecklist";
 import StepReview from "../components/hrs/steps/StepReview";
 import { getInitialFormData, getStepErrors, applyConditionalCleanup, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER } from "../lib/hrsConstants";
 import { useAuth } from '@/lib/AuthContext';
-import { generateROABase64 } from "../lib/hrsPdfGenerator";
+import { generateCanonicalPersonalROA } from "../lib/hrsPdfGenerator";
 import { toast } from "@/components/ui/use-toast";
 import { getDraftStatus, saveRoaDraft, clearRoaDraft, hasMeaningfulDraftData } from '@/lib/roaDraftStorage';
 import { PERSONAL_STEPS, getActiveSteps, getNextButtonText, getStepIndex, getStepId } from '@/lib/flowSteps';
 import SignatureIncompleteDialog from '../components/hrs/SignatureIncompleteDialog';
 import { buildPersonalNotificationEmail } from '@/lib/personalEmail';
-import { authHeader } from '@/lib/apiAuth';
+import { createSubmissionSnapshot } from '@/lib/roaSubmissionSnapshot';
+import { createSubmission, sendNotificationEmail, getSubmission } from '@/lib/roaSubmissionClient';
+import { rememberLastSubmission, forgetLastSubmission, readLastSubmission } from '@/lib/roaSubmissionRecovery';
 
 const TOTAL_STEPS = PERSONAL_STEPS.length;
 const FLOW_TYPE = 'personal';
@@ -34,7 +36,29 @@ export default function AdviceRecord() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
   const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
+  const [submission, setSubmission] = useState(null);
   const pendingDraftRef = useRef(null);
+
+  // Recover the post-submit view after a browser refresh — the durable
+  // roa_submissions row is the source of truth; the id in sessionStorage is
+  // only the pointer to it.
+  useEffect(() => {
+    const last = readLastSubmission(FLOW_TYPE);
+    if (!last) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const record = await getSubmission(last.submissionId);
+        if (!cancelled && record) {
+          setSubmission(record);
+          setSubmitted(true);
+        }
+      } catch {
+        forgetLastSubmission(FLOW_TYPE);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const { status, draft } = getDraftStatus(FLOW_TYPE);
@@ -153,36 +177,59 @@ export default function AdviceRecord() {
 
     setIsSubmitting(true);
     try {
-      const { base64, filename } = await generateROABase64(formData);
-
-      const brokerEmail = BROKER_EMAIL_MAP[formData.brokerName] || DEFAULT_BROKER_EMAIL;
-      // Body deliberately excludes banking, ID and full address (Phase ROA-0
-      // data-minimisation) — the attached PDF remains the authoritative record.
-      const { subject, body } = buildPersonalNotificationEmail(formData);
-
-      // No CC — send only to broker
-      const res = await fetch('/api/send-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-        body: JSON.stringify({ to: brokerEmail, subject, body, pdfBase64: base64, pdfFilename: filename }),
+      // ROA-1: canonical submission flow.
+      // 1. Freeze snapshot (deep-clone + apply cleanup once more).
+      const frozen = createSubmissionSnapshot('Personal', formData, {
+        applyCleanup: applyConditionalCleanup,
+      });
+      // 2. Generate the canonical PDF ONCE from the frozen snapshot. The
+      //    footer will carry the submissionId + template version.
+      const { bytes } = await generateCanonicalPersonalROA(frozen.snapshot, {
+        submissionId: frozen.submissionId,
+        templateVersion: frozen.versions.templateVersion,
+      });
+      // 3. Persist the row + canonical bytes server-side. If this fails, we
+      //    do NOT clear the draft or claim success.
+      const created = await createSubmission({
+        submissionId: frozen.submissionId,
+        roaType: 'Personal',
+        snapshot: frozen.snapshotForDb,
+        versions: frozen.versions,
+        pdfBytes: bytes,
       });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to send email');
+      // 4. Notify the broker — email attaches the SERVER'S copy of the
+      //    canonical bytes (privacy-hardened body from ROA-0).
+      const brokerEmail = BROKER_EMAIL_MAP[formData.brokerName] || DEFAULT_BROKER_EMAIL;
+      const { subject, body } = buildPersonalNotificationEmail(formData);
+      try {
+        await sendNotificationEmail({
+          submissionId: created.submissionId,
+          to: brokerEmail,
+          subject,
+          body,
+        });
+      } catch (emailErr) {
+        // The submission is durably stored; email is a soft-failure — surface
+        // it, but do not lose the submission itself.
+        toast({
+          variant: "destructive",
+          title: "Submission saved, but notification email failed",
+          description: emailErr.message || 'The broker notification email could not be sent — please retry from the checklist screen.',
+        });
       }
 
+      rememberLastSubmission(FLOW_TYPE, { submissionId: created.submissionId });
       clearRoaDraft(FLOW_TYPE);
-      // CRM sync now runs (with visible status + retry) on the Checklist screen itself —
-      // see StepChecklist.jsx — rather than fire-and-forget here.
-
+      const record = await getSubmission(created.submissionId).catch(() => null);
+      setSubmission(record);
       setSubmitted(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
       toast({
         variant: "destructive",
         title: "Submission failed",
-        description: err.message || "Could not send the email. Please try again.",
+        description: err.message || "Could not save the submission. Please try again — no evidence was lost.",
       });
     } finally {
       setIsSubmitting(false);
@@ -191,6 +238,8 @@ export default function AdviceRecord() {
 
   const handleRestart = () => {
     clearRoaDraft(FLOW_TYPE);
+    forgetLastSubmission(FLOW_TYPE);
+    setSubmission(null);
     setFormData(getInitialFormData());
     setCurrentStep(0);
     setSubmitted(false);
@@ -208,7 +257,7 @@ export default function AdviceRecord() {
 
   const renderStep = () => {
     if (submitted) {
-      return <StepChecklist data={formData} onRestart={handleRestart} />;
+      return <StepChecklist data={formData} submission={submission} onSubmissionUpdate={setSubmission} onRestart={handleRestart} />;
     }
 
     const activeSteps = getActiveSteps(PERSONAL_STEPS, formData);
