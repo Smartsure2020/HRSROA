@@ -150,6 +150,44 @@ describe('/api/roa-submissions/create', () => {
     expect(res.body.error).toMatch(/impossibly small/);
   });
 
+  it('resumes when canonical Storage already contains identical bytes', async () => {
+    const submissionId = generateSubmissionId();
+    const bytes = fakePdfBytes(submissionId);
+    mock.fixtures.putStorage(`${submissionId}/canonical.pdf`, bytes);
+
+    const { res } = await createFor('token-andrew', { submissionId, bytes });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.submissionId).toBe(submissionId);
+    expect(mock.fixtures.getRow(submissionId).pdf_sha256).toBe(sha256HexOfBytes(bytes));
+  });
+
+  it('fails closed when canonical Storage contains different bytes', async () => {
+    const submissionId = generateSubmissionId();
+    const bytes = fakePdfBytes(submissionId);
+    mock.fixtures.putStorage(
+      `${submissionId}/canonical.pdf`,
+      fakePdfBytes('DIFFERENT-EVIDENCE'),
+    );
+
+    const { res } = await createFor('token-andrew', { submissionId, bytes });
+    expect(res.statusCode).toBe(409);
+    expect(res.body.error).toBe('canonical_storage_conflict');
+    expect(mock.fixtures.getRow(submissionId)).toBeNull();
+  });
+
+  it('reconciles a duplicate create retry when the DB row already matches', async () => {
+    const first = await createFor('token-andrew');
+    expect(first.res.statusCode).toBe(200);
+
+    const second = await createFor('token-andrew', {
+      submissionId: first.submissionId,
+      bytes: first.bytes,
+    });
+    expect(second.res.statusCode).toBe(200);
+    expect(second.res.body.reconciled).toBe(true);
+    expect(second.res.body.submissionId).toBe(first.submissionId);
+  });
+
   it('persists a row, uploads canonical bytes, and returns SHA-256', async () => {
     const { res, submissionId, bytes } = await createFor('token-andrew');
     expect(res.statusCode).toBe(200);
