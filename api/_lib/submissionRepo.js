@@ -7,6 +7,7 @@
 // Never log snapshot_json or banking fields.
 
 import { StoragePaths, ROA_STORAGE_BUCKET, getServerSupabase } from './supabaseServer.js';
+import { sha256HexOfBytes } from './sha256.js';
 
 /**
  * Loads a submission row (any advisor).
@@ -118,6 +119,42 @@ export async function downloadPdf(path) {
   if (!data) throw new Error(`Storage download ${path} returned no data`);
   const arrayBuffer = await data.arrayBuffer();
   return Buffer.from(arrayBuffer);
+}
+
+/**
+ * Stores deterministic evidence without overwriting. If Storage already
+ * contains the expected bytes (for example after a DB metadata failure),
+ * treat that object as already successful. Conflicting bytes fail closed.
+ */
+export async function ensurePdfStored(
+  path,
+  bytes,
+  { contentType = 'application/pdf', expectedSha256 } = {},
+) {
+  const expectedHash = expectedSha256 || sha256HexOfBytes(bytes);
+
+  try {
+    await uploadPdf(path, bytes, { contentType });
+    return { alreadyPresent: false, sha256: expectedHash };
+  } catch (uploadError) {
+    let existingBytes;
+    try {
+      existingBytes = await downloadPdf(path);
+    } catch {
+      throw uploadError;
+    }
+
+    const existingHash = sha256HexOfBytes(existingBytes);
+    if (existingHash !== expectedHash) {
+      const conflict = new Error(`Storage object conflict at ${path}`);
+      conflict.code = 'storage_object_conflict';
+      conflict.expectedSha256 = expectedHash;
+      conflict.actualSha256 = existingHash;
+      throw conflict;
+    }
+
+    return { alreadyPresent: true, sha256: expectedHash };
+  }
 }
 
 export { StoragePaths };
