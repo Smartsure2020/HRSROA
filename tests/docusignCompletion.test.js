@@ -266,7 +266,7 @@ describe('refresh — polling DocuSign', () => {
     expect(r.body.observedStatus).toBe('declined');
     const row = mock.fixtures.getRow(id);
     expect(row.status).toBe('declined');
-    expect(row.completed_at).toBeDefined();
+    expect(row.completed_at ?? null).toBeNull();
     expect(row.signed_pdf_storage_path).toBeUndefined();
   });
 
@@ -278,6 +278,19 @@ describe('refresh — polling DocuSign', () => {
     expect(r.body.observedStatus).toBe('voided');
     const row = mock.fixtures.getRow(id);
     expect(row.status).toBe('voided');
+    expect(row.completed_at ?? null).toBeNull();
+    expect(row.signed_pdf_storage_path).toBeUndefined();
+  });
+
+  it('expired → persisted but completed_at remains null', async () => {
+    const id = await seedSubmission();
+    await sendReal('token-andrew', id, { envelopeId: 'env-e', envelopeStatus: 'sent' });
+    pushFetchResponse(jsonResponse({ status: 'expired' }));
+    const r = await refreshCall('token-andrew', id);
+    expect(r.body.observedStatus).toBe('expired');
+    const row = mock.fixtures.getRow(id);
+    expect(row.status).toBe('expired');
+    expect(row.completed_at ?? null).toBeNull();
     expect(row.signed_pdf_storage_path).toBeUndefined();
   });
 
