@@ -18,9 +18,15 @@
 //   • The endpoint does NOT accept an existing submissionId (call is
 //     insert-only; the id is authoritative per submission).
 
+import { isDeepStrictEqual } from 'node:util';
 import { requireAuthenticatedBroker } from '../_lib/auth.js';
 import { base64ToBytes, sha256HexOfBytes } from '../_lib/sha256.js';
-import { insertSubmission, uploadPdf, StoragePaths } from '../_lib/submissionRepo.js';
+import {
+  ensurePdfStored,
+  insertSubmission,
+  loadSubmissionForBroker,
+  StoragePaths,
+} from '../_lib/submissionRepo.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
 
 const ROA_TYPES = ['Personal', 'Commercial'];
@@ -84,11 +90,15 @@ export default async function handler(req, res) {
   const pdfSha256 = sha256HexOfBytes(bytes);
   const canonicalPath = StoragePaths.canonical(submissionId);
 
-  // Upload FIRST — if this fails, we do not want a row without evidence.
+  // Upload FIRST, but reconcile a deterministic object from a prior partial
+  // failure. Identical bytes are safe; conflicting bytes fail closed.
   try {
-    await uploadPdf(canonicalPath, bytes);
+    await ensurePdfStored(canonicalPath, bytes, { expectedSha256: pdfSha256 });
   } catch (err) {
-    console.error('roa-submissions/create: storage upload failed', err?.message);
+    console.error('roa-submissions/create: storage reconciliation failed', err?.message);
+    if (err?.code === 'storage_object_conflict') {
+      return res.status(409).json({ error: 'canonical_storage_conflict' });
+    }
     return res.status(500).json({ error: 'storage_upload_failed' });
   }
 
@@ -124,6 +134,46 @@ export default async function handler(req, res) {
       pdfByteLength: persisted.pdf_byte_length,
     });
   } catch (err) {
+    // A retry can arrive after the DB write actually committed but its response
+    // was lost. Only reconcile when every canonical identity field still
+    // matches; otherwise the reused submission id fails closed.
+    let existing = null;
+    try {
+      existing = await loadSubmissionForBroker(submissionId, user.id);
+    } catch (reconcileErr) {
+      console.error('roa-submissions/create: DB reconciliation failed', reconcileErr?.message);
+    }
+
+    if (existing) {
+      const sameSubmission =
+        existing.roa_type === roaType
+        && existing.advisor_email === user.email
+        && existing.pdf_sha256 === pdfSha256
+        && existing.pdf_storage_path === canonicalPath
+        && existing.pdf_byte_length === bytes.length
+        && existing.template_version === versions.templateVersion
+        && existing.statutory_disclosure_version === versions.statutoryDisclosureVersion
+        && existing.broker_appointment_version === versions.brokerAppointmentVersion
+        && existing.broker_fee_version === versions.brokerFeeVersion
+        && (existing.letter_investigation_version || null) === (versions.letterInvestigationVersion || null)
+        && isDeepStrictEqual(existing.snapshot_json, snapshot);
+
+      if (sameSubmission) {
+        return res.status(200).json({
+          ok: true,
+          reconciled: true,
+          submissionId: existing.id,
+          pdfSha256: existing.pdf_sha256,
+          status: existing.status,
+          roaType: existing.roa_type,
+          submittedAt: existing.submitted_at,
+          pdfByteLength: existing.pdf_byte_length,
+        });
+      }
+
+      return res.status(409).json({ error: 'submission_conflict' });
+    }
+
     console.error('roa-submissions/create: insert failed', err?.message);
     return res.status(500).json({ error: 'persist_failed' });
   }
