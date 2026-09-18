@@ -37,7 +37,7 @@ create table if not exists public.roa_submissions (
   )),
   advisor_user_id uuid not null,                   -- auth.users.id at submit
   advisor_email text not null,                     -- captured for audit
-  client_reference text,                           -- non-PII display key ("Personal – J. Doe" / "Commercial – ACME Ltd")
+  client_reference text,                           -- display reference; may contain personal or company identity
 
   -- Frozen snapshot excluding signature dataURLs (those live in canonical.pdf).
   snapshot_json jsonb not null,
@@ -102,35 +102,22 @@ create trigger roa_submissions_touch_updated_at
   for each row execute procedure public.roa_submissions_touch_updated_at();
 
 -- ============================================================================
--- 3. Row-level security
+-- 3. Server-only evidence-table boundary
 --
--- Endpoints run with the service role and enforce ownership themselves; RLS
--- here is defence-in-depth so that a compromised anon key still cannot see
--- another broker's ROA rows.
+-- Browser clients do not read or mutate compliance evidence directly. All
+-- access is: authenticated API -> service-role client -> table/storage.
 -- ============================================================================
 
 alter table public.roa_submissions enable row level security;
 
 drop policy if exists roa_submissions_owner_select on public.roa_submissions;
-create policy roa_submissions_owner_select
-  on public.roa_submissions
-  for select
-  using (advisor_user_id = auth.uid());
-
 drop policy if exists roa_submissions_owner_insert on public.roa_submissions;
-create policy roa_submissions_owner_insert
-  on public.roa_submissions
-  for insert
-  with check (advisor_user_id = auth.uid());
-
 drop policy if exists roa_submissions_owner_update on public.roa_submissions;
-create policy roa_submissions_owner_update
-  on public.roa_submissions
-  for update
-  using (advisor_user_id = auth.uid())
-  with check (advisor_user_id = auth.uid());
 
--- No DELETE policy on purpose — ROA evidence is durable.
+revoke all privileges on table public.roa_submissions from anon, authenticated;
+grant select, insert, update on table public.roa_submissions to service_role;
+
+-- No DELETE grant/policy on purpose — ROA evidence is durable.
 
 -- ============================================================================
 -- 4. Storage bucket
