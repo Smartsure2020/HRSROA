@@ -25,14 +25,12 @@ import { getDocusignAccessToken } from '../_lib/docusignJwt.js';
 import {
   loadSubmissionForBroker,
   StoragePaths,
+  ensurePdfStored,
   updateSubmission,
-  uploadPdf,
 } from '../_lib/submissionRepo.js';
 import { sha256HexOfBytes } from '../_lib/sha256.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
 import { toClientView } from './get.js';
-
-const TERMINAL_STATUSES = new Set(['completed', 'declined', 'voided', 'expired']);
 
 const LIFECYCLE_STATUS_FROM_DOCUSIGN = {
   sent: 'awaiting_signature',
@@ -147,7 +145,8 @@ export default async function handler(req, res) {
   const lifecycleStatus = LIFECYCLE_STATUS_FROM_DOCUSIGN[observedStatus];
   if (lifecycleStatus && lifecycleStatus !== row.status) patch.status = lifecycleStatus;
 
-  if (TERMINAL_STATUSES.has(observedStatus) && !row.completed_at) {
+  // completed_at has one meaning only: DocuSign actually reached completed.
+  if (observedStatus === 'completed' && !row.completed_at) {
     patch.completed_at = new Date().toISOString();
   }
 
@@ -160,9 +159,10 @@ export default async function handler(req, res) {
       try {
         const signedBytes = await docusignGetPdf(`${envelopeUrl}/documents/combined`, accessToken);
         const signedPath = StoragePaths.signed(submissionId);
-        await uploadPdf(signedPath, signedBytes);
+        const signedHash = sha256HexOfBytes(signedBytes);
+        await ensurePdfStored(signedPath, signedBytes, { expectedSha256: signedHash });
         patch.signed_pdf_storage_path = signedPath;
-        patch.signed_pdf_sha256 = sha256HexOfBytes(signedBytes);
+        patch.signed_pdf_sha256 = signedHash;
         signedRetrieved = true;
       } catch (err) {
         console.error('refresh: signed doc retrieval failed', err?.message);
@@ -173,9 +173,10 @@ export default async function handler(req, res) {
       try {
         const certBytes = await docusignGetPdf(`${envelopeUrl}/documents/certificate`, accessToken);
         const certPath = StoragePaths.certificate(submissionId);
-        await uploadPdf(certPath, certBytes);
+        const certificateHash = sha256HexOfBytes(certBytes);
+        await ensurePdfStored(certPath, certBytes, { expectedSha256: certificateHash });
         patch.certificate_storage_path = certPath;
-        patch.certificate_sha256 = sha256HexOfBytes(certBytes);
+        patch.certificate_sha256 = certificateHash;
         certificateRetrieved = true;
       } catch (err) {
         console.error('refresh: certificate retrieval failed', err?.message);
