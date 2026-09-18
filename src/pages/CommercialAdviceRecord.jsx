@@ -11,10 +11,12 @@ import {
   getCommercialInitialFormData,
   applyConditionalCleanup,
 } from '../lib/hrsCommercialConstants';
-import { generateCommercialROABase64 } from '../lib/hrsCommercialPdfGenerator';
+import { generateCanonicalCommercialROA } from '../lib/hrsCommercialPdfGenerator';
 import { getDraftStatus, saveRoaDraft, clearRoaDraft, hasMeaningfulDraftData } from '@/lib/roaDraftStorage';
 import { getBrokerFeeSummary } from '@/lib/brokerFee';
-import { authHeader } from '@/lib/apiAuth';
+import { createSubmissionSnapshot } from '@/lib/roaSubmissionSnapshot';
+import { createSubmission, sendNotificationEmail, getSubmission } from '@/lib/roaSubmissionClient';
+import { rememberLastSubmission, forgetLastSubmission, readLastSubmission } from '@/lib/roaSubmissionRecovery';
 import CommercialStepClientDetails from '../components/hrs/commercial/steps/CommercialStepClientDetails';
 import CommercialStepInsuranceHistory from '../components/hrs/commercial/steps/CommercialStepInsuranceHistory';
 import CommercialStepProductsAdvice from '../components/hrs/commercial/steps/CommercialStepProductsAdvice';
@@ -78,7 +80,26 @@ export default function CommercialAdviceRecord() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
   const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
+  const [submission, setSubmission] = useState(null);
   const pendingDraftRef = useRef(null);
+
+  useEffect(() => {
+    const last = readLastSubmission(FLOW_TYPE);
+    if (!last) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const record = await getSubmission(last.submissionId);
+        if (!cancelled && record) {
+          setSubmission(record);
+          setStep(CHECKLIST_STEP);
+        }
+      } catch {
+        forgetLastSubmission(FLOW_TYPE);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const { status, draft } = getDraftStatus(FLOW_TYPE);
@@ -193,56 +214,67 @@ export default function CommercialAdviceRecord() {
 
     setIsSubmitting(true);
     try {
-      const { base64, filename } = await generateCommercialROABase64(formData);
+      // ROA-1: freeze snapshot → generate canonical PDF once → persist.
+      const frozen = createSubmissionSnapshot('Commercial', formData, {
+        applyCleanup: applyConditionalCleanup,
+      });
+      const { bytes } = await generateCanonicalCommercialROA(frozen.snapshot, {
+        submissionId: frozen.submissionId,
+        templateVersion: frozen.versions.templateVersion,
+      });
+      const created = await createSubmission({
+        submissionId: frozen.submissionId,
+        roaType: 'Commercial',
+        snapshot: frozen.snapshotForDb,
+        versions: frozen.versions,
+        pdfBytes: bytes,
+      });
+
       const brokerEmail = BROKER_EMAIL_MAP[formData.brokerName] || DEFAULT_BROKER_EMAIL;
       const subject = `New Commercial Advice Record – ${formData.companyName} (${formData.brokerName})`;
-      const body = `New Commercial Advice Record Submitted
-========================================
+      const body = `New Commercial Lines Advice Record Submitted
+============================================
 Broker / Advisor: ${formData.brokerName}
 Company Name: ${formData.companyName}
-Registration No.: ${formData.registrationNo || '-'}
-VAT No.: ${formData.vatNo || '-'}
 Nature of Business: ${formData.natureOfBusiness}
-Risk Address: ${formData.riskAddress}
 Contact Person: ${formData.contactPerson}
-Email: ${formData.email}
-Contact No.: ${formData.contactNo}
-Inception Date: ${formData.inceptionDate}
-
 Recommended Insurer: ${formData.recInsurer}
 Broker Fee: ${getBrokerFeeSummary(formData).consentRequired ? getBrokerFeeSummary(formData).displayValue : 'No broker fee applicable'}
-Option 1: ${formData.ins0 || '-'} — R${formData.prem0 || '-'}
-Option 2: ${formData.ins1 || '-'} — R${formData.prem1 || '-'}
-Option 3 (Recommended): ${formData.ins2 || '-'} — R${formData.prem2 || '-'}
 
-Replacing Existing Policy: ${formData.replacingExisting === 'yes' ? 'Yes' : 'No'}
-Signature Date: ${formData.sigDate}
+The complete Commercial Record of Advice — including registration and
+contact detail, premium options and the replacement-policy declaration —
+is in the PDF attached to this email. Treat the attachment as the
+authoritative document.
 
 ---
 Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
 
-      const res = await fetch('/api/send-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-        body: JSON.stringify({ to: brokerEmail, subject, body, pdfBase64: base64, pdfFilename: filename }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Failed to send email');
+      try {
+        await sendNotificationEmail({
+          submissionId: created.submissionId,
+          to: brokerEmail,
+          subject,
+          body,
+        });
+      } catch (emailErr) {
+        toast({
+          variant: "destructive",
+          title: "Submission saved, but notification email failed",
+          description: emailErr.message || 'The broker notification email could not be sent — please retry from the checklist screen.',
+        });
       }
 
+      rememberLastSubmission(FLOW_TYPE, { submissionId: created.submissionId });
       clearRoaDraft(FLOW_TYPE);
-      // CRM sync now runs (with visible status + retry) on the Checklist screen itself —
-      // see CommercialStepChecklist.jsx — rather than fire-and-forget here.
-
+      const record = await getSubmission(created.submissionId).catch(() => null);
+      setSubmission(record);
       setStep(CHECKLIST_STEP);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       toast({
         variant: "destructive",
         title: "Submission failed",
-        description: err.message || "Could not send the email. Please try again.",
+        description: err.message || "Could not save the submission. Please try again — no evidence was lost.",
       });
     } finally {
       setIsSubmitting(false);
@@ -251,6 +283,8 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
 
   const restart = () => {
     clearRoaDraft(FLOW_TYPE);
+    forgetLastSubmission(FLOW_TYPE);
+    setSubmission(null);
     setFormData(getCommercialInitialFormData());
     setStep(0);
     setStepErrors([]);
@@ -345,7 +379,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
             isSubmitting={isSubmitting}
           />
         )}
-        {step === 8 && <CommercialStepChecklist data={formData} onRestart={restart} />}
+        {step === 8 && <CommercialStepChecklist data={formData} submission={submission} onSubmissionUpdate={setSubmission} onRestart={restart} />}
       </main>
       <SignatureIncompleteDialog
         open={signatureDialogOpen}
