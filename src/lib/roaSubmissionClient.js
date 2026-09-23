@@ -80,7 +80,7 @@ export async function sendNotificationEmail({ submissionId, to, subject, body })
   return postJson('/api/roa-submissions/notify-email', { submissionId, to, subject, body });
 }
 
-/** Triggers a browser download of the given canonical / signed / certificate PDF. */
+/** Triggers a browser download of canonical / signed / certificate / audit evidence. */
 export async function downloadEvidencePdf(submissionId, kind = 'canonical', suggestedFilename) {
   const url = `/api/roa-submissions/pdf?id=${encodeURIComponent(submissionId)}&kind=${encodeURIComponent(kind)}`;
   const res = await fetch(url, { headers: { ...(await authHeader()) } });
