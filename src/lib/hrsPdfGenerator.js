@@ -772,7 +772,7 @@ export async function generateROABase64(formData, extras = {}) {
 /**
  * Canonical Personal ROA PDF (Phase ROA-1). Stamps submissionId + template
  * version into the footer and returns the exact bytes that get persisted and
- * later downloaded / emailed / sent to DocuSign.
+ * later downloaded / emailed / sent to the signing provider.
  */
 export async function generateCanonicalPersonalROA(formData, { submissionId, templateVersion }) {
   const [logo, clientSig, advisorSig] = await Promise.all([
