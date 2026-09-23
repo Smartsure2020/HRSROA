@@ -766,7 +766,7 @@ export async function generateCommercialROABase64(formData, extras = {}) {
 /**
  * Canonical Commercial ROA PDF (Phase ROA-1). Stamps submissionId + template
  * version into the footer and returns the exact bytes that get persisted and
- * later downloaded / emailed / sent to DocuSign.
+ * later downloaded / emailed / sent to the signing provider.
  */
 export async function generateCanonicalCommercialROA(formData, { submissionId, templateVersion }) {
   const [logo, clientSig, advisorSig] = await Promise.all([
