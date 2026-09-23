@@ -5,6 +5,7 @@ import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from './hrsCom
 import { getBrokerFeeSummary } from './brokerFee';
 import { HRS_PDF_THEME, drawDocumentHeader, drawPageFooter, drawSectionHeader, drawClientSummary, ensurePageSpace } from './pdf/hrsPdfTheme';
 import { SIGNATURE_LABELS } from './pdf/signatureLabels';
+import { SIGNING_MARKERS } from './pdf/signingMarkers';
 import { HRS_TEMPLATE_VERSION } from './pdf/templateVersion';
 
 const APPOINTMENT = HRS_COMPLIANCE_CONTENT.brokerAppointment.personal;
@@ -369,6 +370,18 @@ class PDFBuilder {
     d.rect(x, y + 3.5, w, 3, 'F');
     d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
     d.text(label.toUpperCase(), x + w / 2, y + 5, { align: 'center' });
+
+    // Invisible provider-neutral anchor. It remains part of the exact canonical
+    // PDF bytes and lets a signing provider locate the signature area without
+    // regenerating the ROA or hard-coding page coordinates.
+    const signingMarker =
+      label === SIGNATURE_LABELS.advisor
+        ? SIGNING_MARKERS.advisorSignature
+        : SIGNING_MARKERS.clientSignature;
+    d.setFont('helvetica', 'normal');
+    d.setFontSize(2);
+    d.setTextColor(...C.lightBg);
+    d.text(signingMarker, x + 5, y + 11);
     if (sigDataURL) {
       try {
         const props = d.getImageProperties(sigDataURL);
