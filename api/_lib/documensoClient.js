@@ -127,6 +127,15 @@ export async function getDocumensoEnvelope(envelopeId) {
   return jsonRequest(`/envelope/${encodeURIComponent(envelopeId)}`, { method: 'GET' });
 }
 
+export async function findDocumensoEnvelopeByExternalId(externalId) {
+  const result = await jsonRequest(
+    `/envelope?type=DOCUMENT&query=${encodeURIComponent(externalId)}&perPage=100`,
+    { method: 'GET' },
+  );
+  const rows = Array.isArray(result?.data) ? result.data : [];
+  return rows.find((row) => row?.externalId === externalId) || null;
+}
+
 export async function addRoaSigningFields({ envelopeId, envelope }) {
   const recipients = Array.isArray(envelope?.recipients) ? envelope.recipients : [];
   const items = Array.isArray(envelope?.envelopeItems) ? envelope.envelopeItems : [];
