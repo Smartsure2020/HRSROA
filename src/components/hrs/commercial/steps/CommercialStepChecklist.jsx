@@ -157,11 +157,11 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
     "Other": "",
   });
 
-  // DocuSign e-signature state — derived from `submission` so it survives refreshes.
+  // Remote e-signature state — derived from `submission` so it survives refreshes.
   const [sigSending, setSigSending] = useState(false);
   const [sigError, setSigError] = useState(null);
-  const sigSent = Boolean(submission?.docusignEnvelopeId);
-  const sigEnvelopeId = submission?.docusignEnvelopeId || null;
+  const sigSent = Boolean(submission?.signatureEnvelopeId);
+  const sigEnvelopeId = submission?.signatureEnvelopeId || null;
   const sigSentAt = submission?.sentForSignatureAt || null;
 
   // CRM sync + retry — same pattern and shared hook as the Personal checklist.
@@ -193,7 +193,8 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
     if (!submission?.submissionId) return;
     const isTerminal = submission.status === 'completed'
       && submission.hasSignedPdf
-      && submission.hasCertificate;
+      && submission.hasCertificate
+      && submission.hasAuditLog;
     if (isTerminal) return;
     let cancelled = false;
     async function tick() {
@@ -205,7 +206,7 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
     tick();
     const interval = setInterval(tick, 30000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [submission?.submissionId, submission?.status, submission?.hasSignedPdf, submission?.hasCertificate, onSubmissionUpdate]);
+  }, [submission?.submissionId, submission?.status, submission?.hasSignedPdf, submission?.hasCertificate, submission?.hasAuditLog, onSubmissionUpdate]);
 
   const netPrem = parseFloat(data.prem2) || 0;
   const feeVal = parseFloat(data.brokerFeePercent) || 0;
@@ -248,6 +249,14 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
     setDownloading('certificate');
     try {
       await downloadEvidencePdf(submission.submissionId, 'certificate', `HRS_Commercial_ROA_${submission.submissionId}_certificate.pdf`);
+    } finally { setDownloading(null); }
+  };
+
+  const handleDownloadAudit = async () => {
+    if (!submission?.submissionId || !submission.hasAuditLog) return;
+    setDownloading('audit');
+    try {
+      await downloadEvidencePdf(submission.submissionId, 'audit', `HRS_Commercial_ROA_${submission.submissionId}_audit.pdf`);
     } finally { setDownloading(null); }
   };
 
@@ -294,8 +303,8 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
         crmStatus={crm.status}
         crmSyncedAt={crm.status === 'synced' ? crm.result?.lastAttemptAt : null}
         checklistComplete={downloaded}
-        docusignStatus={sigSent ? 'envelope_created' : 'not_sent'}
-        docusignSentAt={sigSentAt}
+        signatureStatus={sigSent ? 'envelope_created' : 'not_sent'}
+        signatureSentAt={sigSentAt}
         submission={submission}
       />
 
@@ -499,6 +508,13 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
                 {downloading === 'certificate' ? 'Downloading...' : 'Download Certificate of Completion'}
               </button>
             )}
+            {submission?.hasAuditLog && (
+              <button onClick={handleDownloadAudit} disabled={!!downloading}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-body font-semibold text-[0.82rem] bg-white/10 text-white border border-white/30 transition-all hover:bg-white/20 disabled:opacity-60">
+                <FileDown className="w-4 h-4" />
+                {downloading === 'audit' ? 'Downloading...' : 'Download Signing Audit Log'}
+              </button>
+            )}
           </div>
         )}
         {submission?.submissionId && (
@@ -507,10 +523,10 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
           </p>
         )}
 
-        {/* DocuSign e-signature */}
+        {/* Documenso remote e-signature */}
         <div className="mt-1 pt-3 border-t border-white/20">
           <p className="text-[0.72rem] text-white/60 mb-2 font-semibold uppercase tracking-wider">
-            Send for Remote E-Signature via DocuSign
+            Send for Remote E-Signature via Documenso
           </p>
           {sigSent ? (
             <div className="bg-hrs-green/20 border border-hrs-green/40 rounded-lg px-4 py-3">
@@ -528,7 +544,7 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
               className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-body font-semibold text-[0.85rem] bg-white/10 text-white border border-white/30 transition-all hover:bg-white/20 hover:border-white/60 disabled:opacity-60"
             >
               <Send className="w-4 h-4" />
-              {sigSending ? 'Sending to DocuSign...' : `Send to ${signerEmail || 'client'} for e-signature`}
+              {sigSending ? 'Sending to Documenso...' : `Send to ${signerEmail || 'client'} for e-signature`}
             </button>
           )}
           {sigError && (
