@@ -60,7 +60,7 @@ export async function updateSubmission(submissionId, patch) {
 }
 
 /**
- * Idempotent envelope reservation.
+ * Idempotent signing-envelope reservation.
  * Atomically transitions status → 'awaiting_signature' iff no envelope is
  * already recorded and status is currently 'submitted' or 'signature_failed'.
  * Returns { reserved, row } — when `reserved` is false, `row` contains the
@@ -74,7 +74,7 @@ export async function reserveEnvelopeSlot(submissionId, brokerUserId) {
     .update({ status: 'awaiting_signature', sent_for_signature_at: new Date().toISOString() })
     .eq('id', submissionId)
     .eq('advisor_user_id', brokerUserId)
-    .is('docusign_envelope_id', null)
+    .is('signature_envelope_id', null)
     .in('status', ['submitted', 'signature_failed'])
     .select('*')
     .maybeSingle();
@@ -92,12 +92,12 @@ export async function releaseEnvelopeReservation(submissionId, brokerUserId, { r
     .update({
       status: 'signature_failed',
       sent_for_signature_at: null,
-      docusign_status: reason ? `failed: ${reason}`.slice(0, 200) : 'failed',
+      signature_status: reason ? `failed: ${reason}`.slice(0, 200) : 'failed',
     })
     .eq('id', submissionId)
     .eq('advisor_user_id', brokerUserId)
     .eq('status', 'awaiting_signature')
-    .is('docusign_envelope_id', null);
+    .is('signature_envelope_id', null);
   if (error) throw new Error(`Release envelope reservation failed: ${error.message}`);
 }
 
