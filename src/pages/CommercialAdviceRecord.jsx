@@ -161,7 +161,7 @@ export default function CommercialAdviceRecord() {
   const isChecklist = step === CHECKLIST_STEP;
 
   const tryNext = () => {
-    // Signatures step (6) — optional if sending via DocuSign
+    // Signatures step (6) — optional if sending via Documenso
     const errors = getCommercialStepErrors(step, formData);
     if (errors.length && step !== 6) {
       setStepErrors(errors);
@@ -385,7 +385,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         open={signatureDialogOpen}
         onOpenChange={setSignatureDialogOpen}
         onGoToSignatures={goToSignatures}
-        signingRoute="docusign"
+        signingRoute="documenso"
       />
     </div>
   );
