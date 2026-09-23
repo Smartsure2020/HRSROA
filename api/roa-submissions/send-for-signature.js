@@ -36,6 +36,7 @@ import {
   EMAIL_TO_BROKER,
 } from '../../src/lib/brokerDirectory.js';
 import { toClientView } from './get.js';
+import { sendViaDocumenso } from '../_lib/documensoSigning.js';
 
 const DOCUSIGN_TRANSACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -169,6 +170,35 @@ export default async function handler(req, res) {
 
   const row = await loadSubmissionForBroker(submissionId, user.id);
   if (!row) return res.status(404).json({ error: 'not_found' });
+
+  if (String(process.env.ROA_SIGNING_PROVIDER || '').toLowerCase() === 'documenso') {
+    try {
+      const result = await sendViaDocumenso({
+        submissionId,
+        row,
+        user,
+        signerName,
+        signerEmail,
+        subject,
+        message,
+      });
+      return res.status(200).json({
+        ok: true,
+        provider: 'documenso',
+        alreadySent: result.alreadySent || undefined,
+        recovered: result.recovered || undefined,
+        envelopeId: result.envelopeId,
+        status: result.status,
+        submission: toClientView(result.row),
+      });
+    } catch (err) {
+      console.error('send-for-signature: Documenso error', err?.message);
+      return res.status(err?.status || 500).json({
+        error: err?.message || 'documenso_send_failed',
+        retryable: err?.retryable,
+      });
+    }
+  }
 
   if (row.docusign_envelope_id) {
     return res.status(200).json({
