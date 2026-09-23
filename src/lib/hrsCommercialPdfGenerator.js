@@ -4,7 +4,7 @@ import logoUrl from '../assets/hrs-logo.png';
 import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from './hrsComplianceContent';
 import { getBrokerFeeSummary } from './brokerFee';
 import { HRS_PDF_THEME, drawDocumentHeader, drawPageFooter, drawSectionHeader, drawClientSummary, ensurePageSpace } from './pdf/hrsPdfTheme';
-import { SIGNATURE_LABELS } from './pdf/signatureLabels';
+import { SIGNATURE_LABELS, SIGNATURE_MARKERS } from './pdf/signatureLabels';
 import { HRS_TEMPLATE_VERSION } from './pdf/templateVersion';
 
 const APPOINTMENT = HRS_COMPLIANCE_CONTENT.brokerAppointment.commercial;
@@ -347,7 +347,7 @@ class CommercialPDFBuilder {
     this.cy = topY + ch + 5;
   }
 
-  sigBox(label, sigDataURL, x, y, w, h) {
+  sigBox(label, sigDataURL, x, y, w, h, markers = null) {
     const d = this.doc;
     d.setFillColor(...C.lightBg); d.roundedRect(x, y, w, h, 1.5, 1.5, 'F');
     d.setDrawColor(...C.border); d.setLineWidth(0.4); d.roundedRect(x, y, w, h, 1.5, 1.5, 'S');
@@ -355,6 +355,14 @@ class CommercialPDFBuilder {
     d.rect(x, y + 3.5, w, 3, 'F');
     d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
     d.text(label.toUpperCase(), x + w / 2, y + 5, { align: 'center' });
+
+    // Tiny background-coloured machine markers give Documenso deterministic
+    // placement points without changing the visible signature-box design.
+    if (markers?.signature && markers?.date) {
+      d.setFont('helvetica', 'normal'); d.setFontSize(1.1); d.setTextColor(...C.lightBg);
+      d.text(markers.signature, x + 8, y + 8.5);
+      d.text(markers.date, x + 4, y + h - 8);
+    }
     if (sigDataURL) {
       try {
         const props = d.getImageProperties(sigDataURL);
@@ -622,8 +630,8 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   pdf.gap(6);
   pdf._needSpace(42);
   const hw = (CW - 8) / 2;
-  pdf.sigBox(SIGNATURE_LABELS.commercialClient, clientSig, ML, pdf.cy, hw, 38);
-  pdf.sigBox(SIGNATURE_LABELS.advisor, advisorSig, ML + hw + 8, pdf.cy, hw, 38);
+  pdf.sigBox(SIGNATURE_LABELS.commercialClient, clientSig, ML, pdf.cy, hw, 38, { signature: SIGNATURE_MARKERS.clientSignature, date: SIGNATURE_MARKERS.clientDate });
+  pdf.sigBox(SIGNATURE_LABELS.advisor, advisorSig, ML + hw + 8, pdf.cy, hw, 38, { signature: SIGNATURE_MARKERS.advisorSignature, date: SIGNATURE_MARKERS.advisorDate });
   pdf.cy += 42;
   d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
   d.text(formData.companyName || 'Client', ML + hw / 2, pdf.cy, { align: 'center' });
