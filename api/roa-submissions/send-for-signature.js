@@ -156,6 +156,7 @@ export default async function handler(req, res) {
 
   let envelope = null;
   let ownsFreshReservation = false;
+  let resumedExistingEnvelope = Boolean(row.signature_envelope_id);
 
   // If a provider id is already persisted, this is a resumable retry. Never
   // create again: load the exact envelope and continue any missing setup.
@@ -179,6 +180,7 @@ export default async function handler(req, res) {
       try {
         envelope = await getEnvelope(recovered.id);
         row = await persistProviderEnvelope(submissionId, envelope);
+        resumedExistingEnvelope = true;
       } catch (err) {
         return providerErrorResponse(res, err, { ambiguous: true });
       }
@@ -211,6 +213,7 @@ export default async function handler(req, res) {
         try {
           envelope = await getEnvelope(current.signature_envelope_id);
           row = current;
+          resumedExistingEnvelope = true;
         } catch (err) {
           return providerErrorResponse(res, err, { ambiguous: true });
         }
@@ -317,7 +320,7 @@ export default async function handler(req, res) {
     provider: 'documenso',
     envelopeId: envelope.id,
     status: providerStatus,
-    alreadySent: Boolean(row.signature_envelope_id),
+    alreadySent: resumedExistingEnvelope,
     submission: toClientView(updated),
     message: `Signature request sent to ${signerEmail}. ${broker.brokerName} will countersign after the client.`,
   });
