@@ -31,6 +31,7 @@ import {
 import { sha256HexOfBytes } from '../_lib/sha256.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
 import { toClientView } from './get.js';
+import { refreshViaDocumenso } from '../_lib/documensoSigning.js';
 
 const LIFECYCLE_STATUS_FROM_DOCUSIGN = {
   sent: 'awaiting_signature',
@@ -82,6 +83,23 @@ export default async function handler(req, res) {
 
   const row = await loadSubmissionForBroker(submissionId, user.id);
   if (!row) return res.status(404).json({ error: 'not_found' });
+
+  if (row.signing_provider === 'documenso') {
+    try {
+      const result = await refreshViaDocumenso({ submissionId, row });
+      return res.status(200).json({
+        ok: true,
+        provider: 'documenso',
+        submission: toClientView(result.row),
+        refreshed: result.refreshed,
+        observedStatus: result.observedStatus,
+        evidenceErrors: result.evidenceErrors?.length ? result.evidenceErrors : undefined,
+      });
+    } catch (err) {
+      console.error('refresh: Documenso error', err?.message);
+      return res.status(err?.status || 500).json({ error: err?.message || 'documenso_refresh_failed' });
+    }
+  }
 
   if (!row.docusign_envelope_id) {
     return res.status(200).json({ ok: true, submission: toClientView(row), refreshed: false });
