@@ -54,13 +54,17 @@ create table if not exists public.roa_submissions (
   pdf_storage_path text not null,
   pdf_byte_length integer not null,
 
-  -- DocuSign lifecycle.
-  docusign_envelope_id text,
-  docusign_status text,
+  -- Signing-provider lifecycle. ROA remains the evidence authority; the
+  -- provider only supplies the signing workflow and completion artefacts.
+  signature_provider text check (signature_provider in ('documenso')),
+  signature_envelope_id text,
+  signature_status text,
   signed_pdf_storage_path text,
   signed_pdf_sha256 text,
   certificate_storage_path text,
   certificate_sha256 text,
+  audit_log_storage_path text,
+  audit_log_sha256 text,
 
   -- CRM references — do NOT copy CRM data here, just the ids.
   crm_client_id text,
@@ -70,7 +74,7 @@ create table if not exists public.roa_submissions (
   submitted_at timestamptz not null default now(),
   sent_for_signature_at timestamptz,
   completed_at timestamptz,
-  evidence_retrieved_at timestamptz,               -- signed + certificate both present
+  evidence_retrieved_at timestamptz,               -- signed + certificate + audit log all present
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -79,8 +83,8 @@ create index if not exists roa_submissions_advisor_idx
   on public.roa_submissions (advisor_user_id, submitted_at desc);
 
 create index if not exists roa_submissions_envelope_idx
-  on public.roa_submissions (docusign_envelope_id)
-  where docusign_envelope_id is not null;
+  on public.roa_submissions (signature_envelope_id)
+  where signature_envelope_id is not null;
 
 -- ============================================================================
 -- 2. updated_at trigger
