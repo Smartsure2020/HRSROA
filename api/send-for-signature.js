@@ -1,8 +1,8 @@
 // POST /api/send-for-signature — DEPRECATED (Phase ROA-1).
 //
-// Since ROA-1, DocuSign envelopes are created by
+// Since ROA-1, remote signing envelopes are created by
 // /api/roa-submissions/send-for-signature, which uses the canonical PDF
-// bytes stored server-side (idempotent on submissionId, hash-verified before
+// canonical bytes stored server-side (idempotent on submissionId, hash-verified before
 // each send). This endpoint is retained only long enough to give any
 // straggling clients a clear 410 with the new route.
 
