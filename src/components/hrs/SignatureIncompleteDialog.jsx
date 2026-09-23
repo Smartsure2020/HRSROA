@@ -35,7 +35,7 @@ export default function SignatureIncompleteDialog({ open, onOpenChange, onGoToSi
     onGoToSignatures();
   };
 
-  const isDocuSign = signingRoute === 'docusign';
+  const isRemoteSignature = signingRoute === 'documenso';
 
   return (
     <AlertDialog open={open} onOpenChange={(nextOpen) => {
@@ -54,8 +54,8 @@ export default function SignatureIncompleteDialog({ open, onOpenChange, onGoToSi
         <AlertDialogHeader className="pr-7 text-left">
           <AlertDialogTitle>Signatures not completed</AlertDialogTitle>
           <AlertDialogDescription className="leading-relaxed">
-            {isDocuSign
-              ? 'Manual signatures are not present. The selected DocuSign workflow can complete the signatures electronically.'
+            {isRemoteSignature
+              ? 'Manual signatures are not present. The selected Documenso workflow can complete the signatures electronically.'
               : 'The required manual signatures are not present. You may return to the Signatures step to complete them.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
