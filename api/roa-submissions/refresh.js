@@ -1,79 +1,47 @@
-// POST /api/roa-submissions/refresh — poll DocuSign for the submission's
-// envelope and, on completion, retrieve + store the signed document and the
-// Certificate of Completion (Phase ROA-1 §17-§20).
+// POST /api/roa-submissions/refresh
+//
+// Polls the Documenso envelope and, on completion, retains the final signed
+// PDF, signing certificate and audit-log PDF as ROA evidence.
 //
 // Contract:
-//   • Broker-scoped (owner-only, 404 otherwise).
-//   • No envelope on the row → return current state, no external call.
-//   • DocuSign status persisted as-observed (`sent`, `delivered`, `completed`,
-//     `declined`, `voided`, `expired`). No invented states.
-//   • On `completed`:
-//       – download combined signed PDF → store at signed.pdf (hash recorded).
-//       – download certificate of completion → store at certificate.pdf.
-//       – Persist completed_at (first observation) and, only when BOTH
-//         artefacts are stored, evidence_retrieved_at.
-//   • Partial retrieval failure is safe to retry — the row is NOT marked
-//     "fully retrieved" if only one of the two artefacts landed.
+//   • Broker-scoped.
+//   • Provider status is persisted as observed.
+//   • completed_at means COMPLETED only.
+//   • Each artefact is hashed and stored at a deterministic private path.
+//   • Partial evidence retrieval is safe to retry.
+//   • evidence_retrieved_at is set only when signed + certificate + audit exist.
 
 import { requireAuthenticatedBroker } from '../_lib/auth.js';
 import {
-  getConfiguredBaseUrlOverride,
-  getDocusignConfig,
-} from '../_lib/docusignConfig.js';
-import { resolveDocusignAccountBaseUrl } from '../_lib/docusignAccount.js';
-import { getDocusignAccessToken } from '../_lib/docusignJwt.js';
+  downloadAuditLogPdf,
+  downloadCertificatePdf,
+  downloadSignedPdf,
+  getEnvelope,
+  isDocumensoConfigured,
+  mapDocumensoEnvelopeState,
+} from '../_lib/documensoClient.js';
 import {
+  ensurePdfStored,
   loadSubmissionForBroker,
   StoragePaths,
-  ensurePdfStored,
   updateSubmission,
 } from '../_lib/submissionRepo.js';
 import { sha256HexOfBytes } from '../_lib/sha256.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
 import { toClientView } from './get.js';
 
-const LIFECYCLE_STATUS_FROM_DOCUSIGN = {
-  sent: 'awaiting_signature',
-  delivered: 'awaiting_signature',
-  completed: 'completed',
-  declined: 'declined',
-  voided: 'voided',
-  expired: 'expired',
-};
-
-async function docusignGetJson(url, accessToken) {
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const err = new Error(data?.message || data?.errorCode || `DocuSign GET ${response.status}`);
-    err.status = response.status;
-    err.body = data;
-    throw err;
+function completedTimestamp(envelope) {
+  const providerValue = envelope?.completedAt;
+  if (providerValue) {
+    const date = new Date(providerValue);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
   }
-  return data;
-}
-
-async function docusignGetPdf(url, accessToken) {
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/pdf' },
-  });
-  if (!response.ok) {
-    let body = '';
-    try { body = await response.text(); } catch { /* ignore */ }
-    const err = new Error(`DocuSign PDF GET ${response.status}${body ? `: ${body.slice(0, 200)}` : ''}`);
-    err.status = response.status;
-    throw err;
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  return new Date().toISOString();
 }
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
   const user = await requireAuthenticatedBroker(req, res);
   if (!user) return;
 
@@ -83,99 +51,88 @@ export default async function handler(req, res) {
   const row = await loadSubmissionForBroker(submissionId, user.id);
   if (!row) return res.status(404).json({ error: 'not_found' });
 
-  if (!row.docusign_envelope_id) {
-    return res.status(200).json({ ok: true, submission: toClientView(row), refreshed: false });
-  }
-
-  // Terminal states with all evidence already stored — nothing to do.
-  if (row.status === 'completed' && row.signed_pdf_storage_path && row.certificate_storage_path) {
-    return res.status(200).json({ ok: true, submission: toClientView(row), refreshed: false });
-  }
-
-  // Dev mock — no DocuSign credentials configured. Refresh is a no-op in
-  // dev; the client can still exercise the checklist UI.
-  if (!process.env.DOCUSIGN_INTEGRATION_KEY) {
+  if (!row.signature_envelope_id) {
     return res.status(200).json({
       ok: true,
       submission: toClientView(row),
       refreshed: false,
-      message: 'Dev mock — no DocuSign refresh performed',
     });
   }
 
-  let docusignConfig;
-  try { docusignConfig = getDocusignConfig(); }
-  catch (err) {
-    console.error('refresh: docusign config', err?.message);
-    return res.status(500).json({ error: 'docusign_environment_misconfigured' });
+  if (
+    row.status === 'completed'
+    && row.signed_pdf_storage_path
+    && row.certificate_storage_path
+    && row.audit_log_storage_path
+  ) {
+    return res.status(200).json({
+      ok: true,
+      submission: toClientView(row),
+      refreshed: false,
+    });
   }
 
-  let accessToken;
-  let accountBaseUrl;
-  const accountId = process.env.DOCUSIGN_ACCOUNT_ID;
-  try {
-    accessToken = await getDocusignAccessToken(docusignConfig.authServer);
-    if (!accountId) throw new Error('DOCUSIGN_ACCOUNT_ID is not configured');
-    const override = getConfiguredBaseUrlOverride();
-    accountBaseUrl = override
-      ? override.replace(/\/+$/, '')
-      : (await resolveDocusignAccountBaseUrl({
-          authServer: docusignConfig.authServer,
-          accessToken,
-          accountId,
-        })).baseUrl;
-  } catch (err) {
-    console.error('refresh: docusign bootstrap failed', err?.message);
-    return res.status(500).json({ error: err?.message || 'docusign_bootstrap_failed' });
+  if (!isDocumensoConfigured()) {
+    return res.status(200).json({
+      ok: true,
+      submission: toClientView(row),
+      refreshed: false,
+      message: 'Dev mock — no Documenso refresh performed',
+    });
   }
-
-  const envelopeUrl = `${accountBaseUrl}/v2.1/accounts/${accountId}/envelopes/${row.docusign_envelope_id}`;
 
   let envelope;
-  try { envelope = await docusignGetJson(envelopeUrl, accessToken); }
-  catch (err) {
-    console.error('refresh: envelope status fetch failed', err?.message);
-    return res.status(500).json({ error: 'docusign_status_failed' });
+  try {
+    envelope = await getEnvelope(row.signature_envelope_id);
+  } catch (err) {
+    console.error('refresh: Documenso envelope fetch failed', err?.message);
+    return res.status(503).json({
+      error: 'signature_provider_status_failed',
+      provider: 'documenso',
+    });
   }
 
-  const observedStatus = String(envelope?.status || '').toLowerCase();
-  const patch = {};
-  if (observedStatus) patch.docusign_status = observedStatus;
+  const { providerStatus, lifecycleStatus } = mapDocumensoEnvelopeState(envelope);
+  const patch = {
+    signature_provider: 'documenso',
+    signature_envelope_id: envelope.id,
+  };
 
-  const lifecycleStatus = LIFECYCLE_STATUS_FROM_DOCUSIGN[observedStatus];
+  if (providerStatus) patch.signature_status = providerStatus;
   if (lifecycleStatus && lifecycleStatus !== row.status) patch.status = lifecycleStatus;
 
-  // completed_at has one meaning only: DocuSign actually reached completed.
-  if (observedStatus === 'completed' && !row.completed_at) {
-    patch.completed_at = new Date().toISOString();
+  if (providerStatus === 'completed' && !row.completed_at) {
+    patch.completed_at = completedTimestamp(envelope);
   }
 
   let signedRetrieved = Boolean(row.signed_pdf_storage_path);
   let certificateRetrieved = Boolean(row.certificate_storage_path);
-  let evidenceErrors = [];
+  let auditRetrieved = Boolean(row.audit_log_storage_path);
+  const evidenceErrors = [];
 
-  if (observedStatus === 'completed') {
+  if (providerStatus === 'completed') {
     if (!signedRetrieved) {
       try {
-        const signedBytes = await docusignGetPdf(`${envelopeUrl}/documents/combined`, accessToken);
-        const signedPath = StoragePaths.signed(submissionId);
+        const signedBytes = await downloadSignedPdf(envelope);
         const signedHash = sha256HexOfBytes(signedBytes);
+        const signedPath = StoragePaths.signed(submissionId);
         await ensurePdfStored(signedPath, signedBytes, { expectedSha256: signedHash });
         patch.signed_pdf_storage_path = signedPath;
         patch.signed_pdf_sha256 = signedHash;
         signedRetrieved = true;
       } catch (err) {
-        console.error('refresh: signed doc retrieval failed', err?.message);
+        console.error('refresh: signed PDF retrieval failed', err?.message);
         evidenceErrors.push('signed');
       }
     }
+
     if (!certificateRetrieved) {
       try {
-        const certBytes = await docusignGetPdf(`${envelopeUrl}/documents/certificate`, accessToken);
-        const certPath = StoragePaths.certificate(submissionId);
-        const certificateHash = sha256HexOfBytes(certBytes);
-        await ensurePdfStored(certPath, certBytes, { expectedSha256: certificateHash });
-        patch.certificate_storage_path = certPath;
+        const certificateBytes = await downloadCertificatePdf(envelope.id);
+        const certificateHash = sha256HexOfBytes(certificateBytes);
+        const certificatePath = StoragePaths.certificate(submissionId);
+        await ensurePdfStored(certificatePath, certificateBytes, { expectedSha256: certificateHash });
+        patch.certificate_storage_path = certificatePath;
         patch.certificate_sha256 = certificateHash;
         certificateRetrieved = true;
       } catch (err) {
@@ -183,21 +140,52 @@ export default async function handler(req, res) {
         evidenceErrors.push('certificate');
       }
     }
-    // Only mark evidence fully retrieved once BOTH artefacts are stored.
-    if (signedRetrieved && certificateRetrieved && !row.evidence_retrieved_at) {
+
+    if (!auditRetrieved) {
+      try {
+        const auditBytes = await downloadAuditLogPdf(envelope.id);
+        const auditHash = sha256HexOfBytes(auditBytes);
+        const auditPath = StoragePaths.audit(submissionId);
+        await ensurePdfStored(auditPath, auditBytes, { expectedSha256: auditHash });
+        patch.audit_log_storage_path = auditPath;
+        patch.audit_log_sha256 = auditHash;
+        auditRetrieved = true;
+      } catch (err) {
+        console.error('refresh: audit log retrieval failed', err?.message);
+        evidenceErrors.push('audit');
+      }
+    }
+
+    if (
+      signedRetrieved
+      && certificateRetrieved
+      && auditRetrieved
+      && !row.evidence_retrieved_at
+    ) {
       patch.evidence_retrieved_at = new Date().toISOString();
     }
   }
 
-  const updated = Object.keys(patch).length > 0
-    ? await updateSubmission(submissionId, patch)
-    : row;
+  let updated;
+  try {
+    updated = Object.keys(patch).length > 0
+      ? await updateSubmission(submissionId, patch)
+      : row;
+  } catch (err) {
+    console.error('refresh: evidence metadata persistence failed', err?.message);
+    return res.status(500).json({
+      error: 'evidence_metadata_persist_failed',
+      provider: 'documenso',
+      evidenceErrors: evidenceErrors.length ? evidenceErrors : undefined,
+    });
+  }
 
   return res.status(200).json({
     ok: true,
+    provider: 'documenso',
     submission: toClientView(updated),
     refreshed: true,
-    observedStatus,
+    observedStatus: providerStatus,
     evidenceErrors: evidenceErrors.length ? evidenceErrors : undefined,
   });
 }
