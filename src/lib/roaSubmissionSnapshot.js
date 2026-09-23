@@ -3,7 +3,7 @@
 // A submission snapshot is the exact, immutable data record that produced the
 // canonical PDF. Once created it never changes. Live wizard `formData` can
 // keep editing in the UI but MUST NOT drive PDF download, notification email,
-// DocuSign document, or evidence retention — those all read the frozen
+// signing-provider document, or evidence retention — those all read the frozen
 // snapshot (or the canonical bytes derived from it).
 //
 // The snapshot captures:
