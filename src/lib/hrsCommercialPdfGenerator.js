@@ -360,14 +360,18 @@ class CommercialPDFBuilder {
     // Invisible provider-neutral anchor. It remains part of the exact canonical
     // PDF bytes and lets a signing provider locate the signature area without
     // regenerating the ROA or hard-coding page coordinates.
-    const signingMarker =
-      label === SIGNATURE_LABELS.advisor
-        ? SIGNING_MARKERS.advisorSignature
-        : SIGNING_MARKERS.clientSignature;
+    const isAdvisor = label === SIGNATURE_LABELS.advisor;
+    const signingMarker = isAdvisor
+      ? SIGNING_MARKERS.advisorSignature
+      : SIGNING_MARKERS.clientSignature;
+    const dateMarker = isAdvisor
+      ? SIGNING_MARKERS.advisorDate
+      : SIGNING_MARKERS.clientDate;
     d.setFont('helvetica', 'normal');
     d.setFontSize(2);
     d.setTextColor(...C.lightBg);
     d.text(signingMarker, x + 5, y + 11);
+    d.text(dateMarker, x + 5, y + h - 5);
     if (sigDataURL) {
       try {
         const props = d.getImageProperties(sigDataURL);
