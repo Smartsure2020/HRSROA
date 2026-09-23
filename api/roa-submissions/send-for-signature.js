@@ -1,27 +1,28 @@
-// POST /api/roa-submissions/send-for-signature — create the DocuSign envelope
-// for a submission's canonical PDF (Phase ROA-1 / ROA-1.1 reliability).
+// POST /api/roa-submissions/send-for-signature
 //
-// Idempotency contract:
-//   • One submission maps to one stable DocuSign transactionId (the submission id).
-//   • Once an envelope id is stored, every later Send returns it.
-//   • A definite provider rejection releases the reservation and is retryable.
-//   • A network-ambiguous create is reconciled by transactionId before any retry.
-//   • If reconciliation itself is unavailable, the reservation stays locked.
-//   • transactionId lookups are only authoritative for DocuSign's documented
-//     seven-day window; after that, "not found" does NOT permit blind resend.
+// Creates or resumes the Documenso signing envelope for the submission's
+// canonical PDF. ROA remains the evidence authority; Documenso is the signing
+// provider only.
 //
-// Canonical PDF contract:
-//   • The PDF sent to DocuSign comes from Storage, not from the request.
-//   • Its SHA-256 is verified against roa_submissions.pdf_sha256 before send.
+// Reliability contract:
+//   • ROA submissionId is Documenso externalId.
+//   • The DB reservation blocks concurrent duplicate sends.
+//   • Lost provider responses reconcile by externalId before any new create.
+//   • Once an envelope id is known, retries resume field/distribution setup.
+//   • Canonical bytes are loaded from private Storage and hash-verified before
+//     the first provider upload.
 
 import { requireAuthenticatedBroker } from '../_lib/auth.js';
 import {
-  getConfiguredBaseUrlOverride,
-  getDocusignConfig,
-} from '../_lib/docusignConfig.js';
-import { resolveDocusignAccountBaseUrl } from '../_lib/docusignAccount.js';
-import { getDocusignAccessToken } from '../_lib/docusignJwt.js';
-import { buildEnvelope } from '../_lib/buildEnvelope.js';
+  DocumensoApiError,
+  ensureEnvelopeCreated,
+  ensureEnvelopeDistributed,
+  ensureRoaFields,
+  findEnvelopeByExternalId,
+  getEnvelope,
+  isDocumensoConfigured,
+  mapDocumensoEnvelopeState,
+} from '../_lib/documensoClient.js';
 import {
   downloadPdf,
   loadSubmissionForBroker,
@@ -37,128 +38,66 @@ import {
 } from '../../src/lib/brokerDirectory.js';
 import { toClientView } from './get.js';
 
-const DOCUSIGN_TRANSACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const AMBIGUOUS_SEND_GRACE_MS = 2 * 60 * 1000;
 
-export function transactionIdForSubmission(submissionId) {
-  return submissionId;
+function brokerForAuthenticatedUser(user) {
+  const authenticatedBrokerEmail = user.email;
+  const brokerName = EMAIL_TO_BROKER[authenticatedBrokerEmail]
+    || EMAIL_TO_BROKER[authenticatedBrokerEmail?.toLowerCase?.() ?? '']
+    || Object.entries(BROKER_EMAIL_MAP).find(
+      ([, email]) => email.toLowerCase() === String(authenticatedBrokerEmail).toLowerCase(),
+    )?.[0];
+
+  if (!brokerName) return null;
+  return { brokerName, brokerEmail: BROKER_EMAIL_MAP[brokerName] };
 }
 
-function transactionLookupStillAuthoritative(sentForSignatureAt) {
-  const sentAt = Date.parse(sentForSignatureAt || '');
-  if (!Number.isFinite(sentAt)) return false;
-  const age = Date.now() - sentAt;
-  return age >= 0 && age < DOCUSIGN_TRANSACTION_TTL_MS;
+function reservationAgeMs(row) {
+  const sentAt = Date.parse(row?.sent_for_signature_at || '');
+  if (!Number.isFinite(sentAt)) return 0;
+  return Math.max(0, Date.now() - sentAt);
 }
 
-async function resolveDocusignRuntime() {
-  const config = getDocusignConfig();
-  const accessToken = await getDocusignAccessToken(config.authServer);
-  const accountId = process.env.DOCUSIGN_ACCOUNT_ID;
-  if (!accountId) throw new Error('DOCUSIGN_ACCOUNT_ID is not configured');
-
-  const override = getConfiguredBaseUrlOverride();
-  const accountBaseUrl = override
-    ? override.replace(/\/+$/, '')
-    : (await resolveDocusignAccountBaseUrl({
-        authServer: config.authServer,
-        accessToken,
-        accountId,
-      })).baseUrl;
-
-  return { config, accessToken, accountId, accountBaseUrl };
-}
-
-async function findEnvelopeByTransactionId(runtime, transactionId) {
-  const url =
-    `${runtime.accountBaseUrl}/v2.1/accounts/${runtime.accountId}/envelopes`
-    + `?transaction_ids=${encodeURIComponent(transactionId)}`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${runtime.accessToken}`,
-      Accept: 'application/json',
-    },
-  });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const err = new Error(data?.message || data?.errorCode || `DocuSign reconciliation failed (${response.status})`);
-    err.status = response.status;
-    throw err;
-  }
-
-  const envelopes = Array.isArray(data?.envelopes) ? data.envelopes : [];
-  const match = envelopes.find((e) => e?.transactionId === transactionId)
-    || (envelopes.length === 1 ? envelopes[0] : null);
-
-  if (!match?.envelopeId) return null;
-  return {
-    envelopeId: match.envelopeId,
-    status: String(match.status || 'sent').toLowerCase(),
+async function persistProviderEnvelope(submissionId, envelope) {
+  const { providerStatus, lifecycleStatus } = mapDocumensoEnvelopeState(envelope);
+  const patch = {
+    signature_provider: 'documenso',
+    signature_envelope_id: envelope.id,
+    signature_status: providerStatus,
   };
+  if (lifecycleStatus) patch.status = lifecycleStatus;
+  return updateSubmission(submissionId, patch);
 }
 
-async function reconcileAmbiguousSend({
-  submissionId,
-  user,
-  row,
-  runtime,
-  res,
-}) {
-  const transactionId = transactionIdForSubmission(submissionId);
+function providerErrorResponse(res, err, { ambiguous = false } = {}) {
+  console.error('send-for-signature: Documenso error', err?.message);
 
-  let recovered;
-  try {
-    recovered = await findEnvelopeByTransactionId(runtime, transactionId);
-  } catch (err) {
-    console.error('send-for-signature: ambiguous send reconciliation failed', err?.message);
+  if (ambiguous || !(err instanceof DocumensoApiError)) {
     return res.status(503).json({
-      error: 'docusign_send_ambiguous',
-      message: 'Envelope creation could not be confirmed. The submission remains locked until DocuSign can be reconciled safely.',
+      error: 'signature_provider_ambiguous',
+      provider: 'documenso',
       retryable: false,
+      message: 'The signing request could not be confirmed safely. The ROA remains locked for reconciliation.',
     });
   }
 
-  if (recovered) {
-    const updated = await updateSubmission(submissionId, {
-      docusign_envelope_id: recovered.envelopeId,
-      docusign_status: recovered.status,
-    });
-    return res.status(200).json({
-      ok: true,
-      recovered: true,
-      envelopeId: recovered.envelopeId,
-      status: recovered.status,
-      environment: runtime.config.environment,
-      submission: toClientView(updated),
-    });
-  }
-
-  if (!transactionLookupStillAuthoritative(row.sent_for_signature_at)) {
-    return res.status(409).json({
-      error: 'docusign_manual_reconciliation_required',
-      message: 'The transaction lookup window has expired. Do not resend until the envelope is checked manually in DocuSign.',
-      retryable: false,
-    });
-  }
-
-  await releaseEnvelopeReservation(submissionId, user.id, {
-    reason: 'not_found_after_ambiguous_send',
-  });
-  return res.status(503).json({
-    error: 'docusign_send_unconfirmed',
-    message: 'DocuSign confirmed no envelope for this transaction id. The reservation was released and a retry is safe.',
-    retryable: true,
+  const status = err.status >= 400 && err.status < 500 ? err.status : 503;
+  return res.status(status).json({
+    error: 'signature_provider_failed',
+    provider: 'documenso',
+    retryable: status >= 500,
+    message: err.message,
   });
 }
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
   const user = await requireAuthenticatedBroker(req, res);
   if (!user) return;
 
   const { submissionId, signerName, signerEmail, subject, message } = req.body ?? {};
+
   if (!isSubmissionId(submissionId)) return res.status(400).json({ error: 'Invalid submissionId' });
   if (typeof signerName !== 'string' || !signerName.trim()) {
     return res.status(400).json({ error: 'Missing signerName' });
@@ -167,176 +106,219 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing signerEmail' });
   }
 
-  const row = await loadSubmissionForBroker(submissionId, user.id);
+  let row = await loadSubmissionForBroker(submissionId, user.id);
   if (!row) return res.status(404).json({ error: 'not_found' });
 
-  if (row.docusign_envelope_id) {
-    return res.status(200).json({
-      ok: true,
-      alreadySent: true,
-      envelopeId: row.docusign_envelope_id,
-      status: row.docusign_status,
-      submission: toClientView(row),
-    });
-  }
+  const broker = brokerForAuthenticatedUser(user);
+  if (!broker) return res.status(500).json({ error: 'broker_lookup_failed' });
 
-  if (row.status === 'awaiting_signature') {
-    if (!process.env.DOCUSIGN_INTEGRATION_KEY) {
-      return res.status(409).json({
-        error: 'send_in_progress',
-        submission: toClientView(row),
-      });
-    }
-
-    let runtime;
-    try {
-      runtime = await resolveDocusignRuntime();
-    } catch (err) {
-      console.error('send-for-signature: reconciliation bootstrap failed', err?.message);
-      return res.status(503).json({ error: 'docusign_reconciliation_unavailable' });
-    }
-    return reconcileAmbiguousSend({ submissionId, user, row, runtime, res });
-  }
-
-  const reservation = await reserveEnvelopeSlot(submissionId, user.id);
-  if (!reservation.reserved) {
-    const current = reservation.row;
-    if (current?.docusign_envelope_id) {
+  // Development path: preserves the endpoint/UI contract without any external
+  // signing call. Production/staging acceptance requires real Documenso env.
+  if (!isDocumensoConfigured()) {
+    if (row.signature_envelope_id) {
       return res.status(200).json({
         ok: true,
         alreadySent: true,
-        envelopeId: current.docusign_envelope_id,
-        status: current.docusign_status,
-        submission: toClientView(current),
+        provider: 'documenso',
+        envelopeId: row.signature_envelope_id,
+        status: row.signature_status,
+        submission: toClientView(row),
+        message: 'Dev mock — no Documenso request sent',
       });
     }
-    return res.status(409).json({
-      ok: false,
-      error: 'send_in_progress',
-      submission: toClientView(current),
-    });
-  }
 
-  const reservedRow = reservation.row;
+    const reservation = await reserveEnvelopeSlot(submissionId, user.id);
+    if (!reservation.reserved) {
+      return res.status(409).json({
+        ok: false,
+        error: 'send_in_progress',
+        submission: toClientView(reservation.row),
+      });
+    }
 
-  const authenticatedBrokerEmail = user.email;
-  const brokerName = EMAIL_TO_BROKER[authenticatedBrokerEmail]
-    || EMAIL_TO_BROKER[authenticatedBrokerEmail?.toLowerCase?.() ?? '']
-    || Object.entries(BROKER_EMAIL_MAP).find(
-      ([, email]) => email.toLowerCase() === String(authenticatedBrokerEmail).toLowerCase(),
-    )?.[0];
-  if (!brokerName) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'broker_lookup_failed' });
-    return res.status(500).json({ error: 'broker_lookup_failed' });
-  }
-  const brokerEmail = BROKER_EMAIL_MAP[brokerName];
-
-  let pdfBytes;
-  try {
-    pdfBytes = await downloadPdf(reservedRow.pdf_storage_path);
-  } catch (err) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'canonical_download_failed' });
-    console.error('send-for-signature: canonical download failed', err?.message);
-    return res.status(500).json({ error: 'canonical_download_failed' });
-  }
-  const actualHash = sha256HexOfBytes(pdfBytes);
-  if (actualHash !== reservedRow.pdf_sha256) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'canonical_hash_mismatch' });
-    return res.status(500).json({ error: 'canonical_hash_mismatch' });
-  }
-
-  let docusignConfig;
-  try {
-    docusignConfig = getDocusignConfig();
-  } catch (err) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'docusign_config' });
-    console.error('send-for-signature: docusign config', err?.message);
-    return res.status(500).json({ error: 'docusign_environment_misconfigured' });
-  }
-
-  if (!process.env.DOCUSIGN_INTEGRATION_KEY) {
-    const mockEnvelopeId = `dev-mock-${submissionId.slice(4, 12)}`;
+    const mockEnvelopeId = `dev-documenso-${submissionId.slice(4, 12)}`;
     const updated = await updateSubmission(submissionId, {
-      docusign_envelope_id: mockEnvelopeId,
-      docusign_status: 'sent',
+      signature_provider: 'documenso',
+      signature_envelope_id: mockEnvelopeId,
+      signature_status: 'pending',
+      status: 'awaiting_signature',
     });
+
     return res.status(200).json({
       ok: true,
+      provider: 'documenso',
       envelopeId: mockEnvelopeId,
-      status: 'sent',
-      environment: docusignConfig.environment,
+      status: 'pending',
       submission: toClientView(updated),
-      message: 'Dev mock — no actual request sent',
+      message: 'Dev mock — no Documenso request sent',
     });
   }
 
-  let runtime;
+  let envelope = null;
+  let ownsFreshReservation = false;
+
+  // If a provider id is already persisted, this is a resumable retry. Never
+  // create again: load the exact envelope and continue any missing setup.
+  if (row.signature_envelope_id) {
+    try {
+      envelope = await getEnvelope(row.signature_envelope_id);
+    } catch (err) {
+      return providerErrorResponse(res, err, { ambiguous: true });
+    }
+  } else if (row.status === 'awaiting_signature') {
+    // A previous request reserved the row but may have lost the provider
+    // response before persisting the envelope id. Reconcile by externalId.
+    let recovered;
+    try {
+      recovered = await findEnvelopeByExternalId(submissionId);
+    } catch (err) {
+      return providerErrorResponse(res, err, { ambiguous: true });
+    }
+
+    if (recovered?.id) {
+      try {
+        envelope = await getEnvelope(recovered.id);
+        row = await persistProviderEnvelope(submissionId, envelope);
+      } catch (err) {
+        return providerErrorResponse(res, err, { ambiguous: true });
+      }
+    } else if (reservationAgeMs(row) < AMBIGUOUS_SEND_GRACE_MS) {
+      return res.status(409).json({
+        ok: false,
+        error: 'send_in_progress',
+        provider: 'documenso',
+        retryable: true,
+        submission: toClientView(row),
+      });
+    } else {
+      await releaseEnvelopeReservation(submissionId, user.id, {
+        reason: 'documenso_external_id_not_found',
+      });
+      const released = await loadSubmissionForBroker(submissionId, user.id);
+      return res.status(503).json({
+        error: 'signature_send_unconfirmed',
+        provider: 'documenso',
+        retryable: true,
+        message: 'No Documenso envelope exists for this ROA. The reservation was released and a retry is safe.',
+        submission: toClientView(released),
+      });
+    }
+  } else {
+    const reservation = await reserveEnvelopeSlot(submissionId, user.id);
+    if (!reservation.reserved) {
+      const current = reservation.row;
+      if (current?.signature_envelope_id) {
+        try {
+          envelope = await getEnvelope(current.signature_envelope_id);
+          row = current;
+        } catch (err) {
+          return providerErrorResponse(res, err, { ambiguous: true });
+        }
+      } else {
+        return res.status(409).json({
+          ok: false,
+          error: 'send_in_progress',
+          submission: toClientView(current),
+        });
+      }
+    } else {
+      row = reservation.row;
+      ownsFreshReservation = true;
+    }
+  }
+
+  if (!envelope) {
+    // Only the request that acquired the fresh reservation is allowed to upload
+    // and create. Verify the canonical bytes immediately before provider upload.
+    let pdfBytes;
+    try {
+      pdfBytes = await downloadPdf(row.pdf_storage_path);
+    } catch (err) {
+      if (ownsFreshReservation) {
+        await releaseEnvelopeReservation(submissionId, user.id, { reason: 'canonical_download_failed' });
+      }
+      console.error('send-for-signature: canonical download failed', err?.message);
+      return res.status(500).json({ error: 'canonical_download_failed' });
+    }
+
+    const actualHash = sha256HexOfBytes(pdfBytes);
+    if (actualHash !== row.pdf_sha256) {
+      if (ownsFreshReservation) {
+        await releaseEnvelopeReservation(submissionId, user.id, { reason: 'canonical_hash_mismatch' });
+      }
+      return res.status(500).json({ error: 'canonical_hash_mismatch' });
+    }
+
+    try {
+      envelope = await ensureEnvelopeCreated({
+        submissionId,
+        roaType: row.roa_type,
+        signerName: signerName.trim(),
+        signerEmail: signerEmail.trim(),
+        brokerName: broker.brokerName,
+        brokerEmail: broker.brokerEmail,
+        pdfBytes,
+        subject,
+        message,
+      });
+      row = await persistProviderEnvelope(submissionId, envelope);
+    } catch (err) {
+      // A 4xx returned after externalId reconciliation is a definite provider
+      // rejection and can be released. Network/5xx stays locked.
+      const definiteFailure =
+        err instanceof DocumensoApiError
+        && err.status >= 400
+        && err.status < 500
+        && !err.reconciliationError;
+
+      if (ownsFreshReservation && definiteFailure) {
+        await releaseEnvelopeReservation(submissionId, user.id, {
+          reason: `documenso_http_${err.status}`,
+        });
+      }
+
+      return providerErrorResponse(res, err, { ambiguous: !definiteFailure });
+    }
+  }
+
+  // From this point an envelope id is durable in ROA. Every failure is
+  // resumable against that exact provider envelope and must never release the
+  // reservation into a create-again state.
   try {
-    runtime = await resolveDocusignRuntime();
-  } catch (err) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'docusign_bootstrap_failed' });
-    console.error('send-for-signature: docusign bootstrap failed', err?.message);
-    return res.status(500).json({ error: 'docusign_bootstrap_failed' });
-  }
-
-  const transactionId = transactionIdForSubmission(submissionId);
-  const envelope = buildEnvelope({
-    roaType: reservedRow.roa_type,
-    signerName,
-    signerEmail,
-    brokerName,
-    brokerEmail,
-    pdfBase64: pdfBytes.toString('base64'),
-    pdfFilename: `${submissionId}-canonical.pdf`,
-    transactionId,
-    subject,
-    message,
-  });
-
-  let response;
-  try {
-    response = await fetch(
-      `${runtime.accountBaseUrl}/v2.1/accounts/${runtime.accountId}/envelopes`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${runtime.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(envelope),
-      },
-    );
-  } catch (err) {
-    console.error('send-for-signature: envelope response lost', err?.message);
-    return reconcileAmbiguousSend({ submissionId, user, row: reservedRow, runtime, res });
-  }
-
-  const data = await response.json().catch(() => null);
-
-  if (!response.ok && response.status < 500) {
-    await releaseEnvelopeReservation(submissionId, user.id, {
-      reason: `docusign_http_${response.status}`,
+    envelope = await ensureRoaFields(envelope, {
+      signerEmail: signerEmail.trim(),
+      brokerEmail: broker.brokerEmail,
     });
-    console.error('send-for-signature: DocuSign envelope rejected', data);
-    return res.status(response.status).json({
-      error: data?.message || data?.errorCode || 'Failed to create DocuSign envelope',
-    });
+
+    envelope = await ensureEnvelopeDistributed(envelope, { subject, message });
+  } catch (err) {
+    console.error('send-for-signature: Documenso setup/distribution failed', err?.message);
+
+    const currentEnvelope = envelope?.id ? envelope : null;
+    if (currentEnvelope) {
+      const { providerStatus } = mapDocumensoEnvelopeState(currentEnvelope);
+      if (providerStatus) {
+        await updateSubmission(submissionId, {
+          signature_provider: 'documenso',
+          signature_envelope_id: currentEnvelope.id,
+          signature_status: providerStatus,
+        }).catch(() => {});
+      }
+    }
+
+    return providerErrorResponse(res, err, { ambiguous: !(err instanceof DocumensoApiError) });
   }
 
-  if (!response.ok || !data?.envelopeId) {
-    return reconcileAmbiguousSend({ submissionId, user, row: reservedRow, runtime, res });
-  }
+  const updated = await persistProviderEnvelope(submissionId, envelope);
+  const { providerStatus } = mapDocumensoEnvelopeState(envelope);
 
-  const updated = await updateSubmission(submissionId, {
-    docusign_envelope_id: data.envelopeId,
-    docusign_status: data.status || 'sent',
-  });
   return res.status(200).json({
     ok: true,
-    envelopeId: data.envelopeId,
-    status: data.status || 'sent',
-    environment: runtime.config.environment,
+    provider: 'documenso',
+    envelopeId: envelope.id,
+    status: providerStatus,
+    alreadySent: Boolean(row.signature_envelope_id),
     submission: toClientView(updated),
-    message: `Signature request sent to ${signerEmail}. ${brokerName} will countersign after client.`,
+    message: `Signature request sent to ${signerEmail}. ${broker.brokerName} will countersign after the client.`,
   });
 }
