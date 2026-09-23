@@ -1,11 +1,11 @@
-// Single source of truth for the on-page signature block labels used by both PDF
-// generators AND by the DocuSign envelope builder. These strings are the anchor
-// contract: DocuSign places its signHere / dateSigned tabs by matching this exact
-// text inside the generated PDF. If a label ever changes here, the corresponding
-// generator's `sigBox()` call and the DocuSign envelope's `anchorString` must both
-// update together — which is why they now all read from this file.
+// Single source of truth for the visible signature block labels and the hidden
+// provider-placement markers rendered into both ROA PDFs.
 //
-// Never inline these strings in a generator or in the DocuSign envelope again.
+// The visible labels are presentation. The hidden markers are machine anchors:
+// Documenso locates them in the canonical PDF, whites out the tiny marker text,
+// and places the corresponding signature/date field at that position.
+//
+// Never inline either labels or markers in a PDF generator or provider adapter.
 
 export const SIGNATURE_LABELS = Object.freeze({
   /** Personal Lines ROA — client signature block label. */
@@ -16,23 +16,26 @@ export const SIGNATURE_LABELS = Object.freeze({
   advisor: 'Advisor / Broker Signature',
 });
 
-/** Valid `roaType` values the app supports for envelope creation. */
+/**
+ * PII-free hidden markers. Keep these short, unique and stable: they form the
+ * canonical PDF ↔ signing-provider placement contract.
+ */
+export const SIGNATURE_MARKERS = Object.freeze({
+  clientSignature: 'HRS_ROA_CS',
+  clientDate: 'HRS_ROA_CD',
+  advisorSignature: 'HRS_ROA_AS',
+  advisorDate: 'HRS_ROA_AD',
+});
+
+/** Valid roaType values the app supports for envelope creation. */
 export const ROA_TYPES = Object.freeze(['Personal', 'Commercial']);
 
-/**
- * Resolves the correct client signature anchor for the given ROA type.
- * Throws for unknown values so the envelope builder fails closed rather than
- * silently defaulting to a mismatched anchor.
- * @param {string} roaType
- * @returns {string}
- */
 export function getClientSignatureLabel(roaType) {
   if (roaType === 'Personal') return SIGNATURE_LABELS.personalClient;
   if (roaType === 'Commercial') return SIGNATURE_LABELS.commercialClient;
   throw new Error(`Unknown ROA type: ${JSON.stringify(roaType)} — expected one of ${ROA_TYPES.join(', ')}`);
 }
 
-/** The advisor / broker signature block label, identical across both ROA flows. */
 export function getAdvisorSignatureLabel() {
   return SIGNATURE_LABELS.advisor;
 }
