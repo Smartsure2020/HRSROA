@@ -1,4 +1,4 @@
-// GET /api/roa-submissions/pdf?id=ROA-<uuid>&kind=canonical|signed|certificate
+// GET /api/roa-submissions/pdf?id=ROA-<uuid>&kind=canonical|signed|certificate|audit
 //
 // Downloads one of the stored evidence artefacts for the submission. Broker-
 // scoped (404 for non-owner, same as get.js). Never streams from a browser-
@@ -8,16 +8,16 @@
 // Contract:
 //   • canonical    → StoragePaths.canonical(id); must always exist for any
 //                    non-terminal submission.
-//   • signed       → StoragePaths.signed(id); only exists after DocuSign
-//                    completion; 409 if not yet available.
-//   • certificate  → StoragePaths.certificate(id); same 409 semantics.
+//   • signed       → final completed signing-provider PDF; 409 if unavailable.
+//   • certificate  → signing certificate PDF; same 409 semantics.
+//   • audit        → signing audit-log PDF; same 409 semantics.
 
 import { requireAuthenticatedBroker } from '../_lib/auth.js';
 import { downloadPdf, loadSubmissionForBroker, StoragePaths } from '../_lib/submissionRepo.js';
 import { sha256HexOfBytes } from '../_lib/sha256.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
 
-const KINDS = ['canonical', 'signed', 'certificate'];
+const KINDS = ['canonical', 'signed', 'certificate', 'audit'];
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -41,10 +41,14 @@ export default async function handler(req, res) {
     storagePath = row.signed_pdf_storage_path;
     expectedHash = row.signed_pdf_sha256;
     if (!storagePath) return res.status(409).json({ error: 'signed_not_available' });
-  } else {
+  } else if (kind === 'certificate') {
     storagePath = row.certificate_storage_path;
     expectedHash = row.certificate_sha256;
     if (!storagePath) return res.status(409).json({ error: 'certificate_not_available' });
+  } else {
+    storagePath = row.audit_log_storage_path;
+    expectedHash = row.audit_log_sha256;
+    if (!storagePath) return res.status(409).json({ error: 'audit_not_available' });
   }
 
   let bytes;
