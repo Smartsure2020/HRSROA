@@ -319,7 +319,7 @@ export default function AdviceRecord() {
         open={signatureDialogOpen}
         onOpenChange={setSignatureDialogOpen}
         onGoToSignatures={goToSignatures}
-        signingRoute="docusign"
+        signingRoute="documenso"
       />
     </div>
   );
