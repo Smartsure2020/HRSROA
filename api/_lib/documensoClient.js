@@ -18,6 +18,23 @@ export class DocumensoApiError extends Error {
   }
 }
 
+export function mapDocumensoEnvelopeState(envelope) {
+  const providerStatus = String(envelope?.status || '').toUpperCase();
+
+  const lifecycleStatus = {
+    DRAFT: 'awaiting_signature',
+    PENDING: 'awaiting_signature',
+    COMPLETED: 'completed',
+    REJECTED: 'declined',
+    CANCELLED: 'voided',
+  }[providerStatus] || null;
+
+  return {
+    providerStatus: providerStatus ? providerStatus.toLowerCase() : null,
+    lifecycleStatus,
+  };
+}
+
 export function isDocumensoConfigured() {
   return Boolean(process.env.DOCUMENSO_API_URL && process.env.DOCUMENSO_API_TOKEN);
 }
