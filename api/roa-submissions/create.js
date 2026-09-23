@@ -11,10 +11,10 @@
 //   4. Server uploads the exact bytes to Storage at
 //      `roa-pdfs/<submissionId>/canonical.pdf`.
 //   5. Returns { submissionId, pdfSha256, ... } — the client uses these ids
-//      for every downstream action (download, email, DocuSign).
+//      for every downstream action (download, email, remote signing).
 //
 // Non-goals here:
-//   • The endpoint does NOT send email or a DocuSign envelope.
+//   • The endpoint does NOT send email or create a signing envelope.
 //   • The endpoint does NOT accept an existing submissionId (call is
 //     insert-only; the id is authoritative per submission).
 
