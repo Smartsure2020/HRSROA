@@ -59,7 +59,7 @@ export async function updateSubmission(submissionId, patch) {
   return data;
 }
 
-/** Records the first observed DocuSign completion time without overwriting it. */
+/** Records the first observed provider completion time without overwriting it. */
 export async function setCompletionIfMissing(submissionId, brokerUserId, completedAt) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
@@ -114,6 +114,48 @@ export async function releaseEnvelopeReservation(submissionId, brokerUserId, { r
     .eq('status', 'awaiting_signature')
     .is('docusign_envelope_id', null);
   if (error) throw new Error(`Release envelope reservation failed: ${error.message}`);
+}
+
+
+/**
+ * Provider-neutral signing reservation used by new signing integrations.
+ */
+export async function reserveSigningSlot(submissionId, brokerUserId, provider) {
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .update({
+      status: 'awaiting_signature',
+      sent_for_signature_at: new Date().toISOString(),
+      signing_provider: provider,
+    })
+    .eq('id', submissionId)
+    .eq('advisor_user_id', brokerUserId)
+    .is('signing_envelope_id', null)
+    .in('status', ['submitted', 'signature_failed'])
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Reserve signing slot failed: ${error.message}`);
+  if (data) return { reserved: true, row: data };
+  const current = await loadSubmissionForBroker(submissionId, brokerUserId);
+  return { reserved: false, row: current };
+}
+
+export async function releaseSigningReservation(submissionId, brokerUserId, provider, { reason } = {}) {
+  const supabase = getServerSupabase();
+  const { error } = await supabase
+    .from('roa_submissions')
+    .update({
+      status: 'signature_failed',
+      sent_for_signature_at: null,
+      signing_status: reason ? `failed: ${reason}`.slice(0, 200) : 'failed',
+    })
+    .eq('id', submissionId)
+    .eq('advisor_user_id', brokerUserId)
+    .eq('signing_provider', provider)
+    .eq('status', 'awaiting_signature')
+    .is('signing_envelope_id', null);
+  if (error) throw new Error(`Release signing reservation failed: ${error.message}`);
 }
 
 // ---------- Storage ---------------------------------------------------------

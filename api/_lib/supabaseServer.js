@@ -47,4 +47,5 @@ export const StoragePaths = Object.freeze({
   canonical: (submissionId) => `${submissionId}/canonical.pdf`,
   signed: (submissionId) => `${submissionId}/signed.pdf`,
   certificate: (submissionId) => `${submissionId}/certificate.pdf`,
+  auditLog: (submissionId) => `${submissionId}/audit-log.pdf`,
 });

@@ -36,6 +36,7 @@ import {
   EMAIL_TO_BROKER,
 } from '../../src/lib/brokerDirectory.js';
 import { toClientView } from './get.js';
+import { sendViaDocumenso } from '../_lib/documensoSigning.js';
 
 const DOCUSIGN_TRANSACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DOCUSIGN_SEND_IN_FLIGHT_GRACE_MS = 60 * 1000;
@@ -44,7 +45,7 @@ export function transactionIdForSubmission(submissionId) {
   return submissionId;
 }
 
-function signerForSubmission(row) {
+export function signerForSubmission(row) {
   const snapshot = row?.snapshot_json || {};
   const signerEmail = typeof snapshot.email === 'string' ? snapshot.email.trim() : '';
   const signerName = row?.roa_type === 'Commercial'
@@ -189,6 +190,35 @@ export default async function handler(req, res) {
   const signer = signerForSubmission(row);
   if (!signer) return res.status(409).json({ error: 'frozen_signer_identity_invalid' });
   const { signerName, signerEmail } = signer;
+
+  const configuredProvider = String(process.env.ROA_SIGNING_PROVIDER || '').toLowerCase();
+  const selectedProvider = row.signing_provider || configuredProvider;
+  if (selectedProvider === 'documenso') {
+    try {
+      const result = await sendViaDocumenso({
+        submissionId,
+        row,
+        user,
+        signerName,
+        signerEmail,
+      });
+      return res.status(200).json({
+        ok: true,
+        provider: 'documenso',
+        alreadySent: result.alreadySent || undefined,
+        recovered: result.recovered || undefined,
+        envelopeId: result.envelopeId,
+        status: result.status,
+        submission: toClientView(result.row),
+      });
+    } catch (err) {
+      console.error('send-for-signature: Documenso error', err?.message);
+      return res.status(err?.status || 500).json({
+        error: err?.message || 'documenso_send_failed',
+        retryable: err?.retryable,
+      });
+    }
+  }
 
   if (row.docusign_envelope_id) {
     return res.status(200).json({
