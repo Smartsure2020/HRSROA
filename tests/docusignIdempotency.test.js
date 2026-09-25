@@ -67,7 +67,7 @@ async function seedSubmission(token = 'token-andrew') {
       body: {
         submissionId,
         roaType: 'Personal',
-        snapshot: { firstName: 'Jane', surname: 'Doe', brokerName: 'Andrew Penney' },
+        snapshot: { firstName: 'Jane', surname: 'Doe', email: 'jane@example.com', brokerName: 'Andrew Penney' },
         versions: {
           templateVersion: 'HRS-TEMPLATE-2026-01',
           statutoryDisclosureVersion: 'HRS-STAT-DISC-2026-01',

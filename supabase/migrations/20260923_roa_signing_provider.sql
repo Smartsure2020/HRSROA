@@ -15,6 +15,19 @@ alter table public.roa_submissions
   add column if not exists audit_log_storage_path text,
   add column if not exists audit_log_sha256 text;
 
+-- The baseline migration deliberately grants service_role UPDATE only on
+-- lifecycle/evidence columns. Extend that least-privilege grant for the new
+-- provider fields without reopening canonical identity columns or DELETE.
+grant update (
+  signing_provider,
+  signing_envelope_id,
+  signing_status,
+  signing_item_id,
+  signing_meta,
+  audit_log_storage_path,
+  audit_log_sha256
+) on public.roa_submissions to service_role;
+
 alter table public.roa_submissions
   drop constraint if exists roa_submissions_signing_provider_check;
 

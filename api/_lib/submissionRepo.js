@@ -59,6 +59,21 @@ export async function updateSubmission(submissionId, patch) {
   return data;
 }
 
+/** Records the first observed provider completion time without overwriting it. */
+export async function setCompletionIfMissing(submissionId, brokerUserId, completedAt) {
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .update({ completed_at: completedAt })
+    .eq('id', submissionId)
+    .eq('advisor_user_id', brokerUserId)
+    .is('completed_at', null)
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Set completion timestamp failed: ${error.message}`);
+  return data;
+}
+
 /**
  * Idempotent envelope reservation.
  * Atomically transitions status → 'awaiting_signature' iff no envelope is

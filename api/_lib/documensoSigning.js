@@ -15,6 +15,7 @@ import {
   ensurePdfStored,
   releaseSigningReservation,
   reserveSigningSlot,
+  setCompletionIfMissing,
   StoragePaths,
   updateSubmission,
 } from './submissionRepo.js';
@@ -22,6 +23,14 @@ import { sha256HexOfBytes } from './sha256.js';
 import { BROKER_EMAIL_MAP, EMAIL_TO_BROKER } from '../../src/lib/brokerDirectory.js';
 
 const PROVIDER = 'documenso';
+const SEND_IN_FLIGHT_GRACE_MS = 60 * 1000;
+
+function reservationMayStillBeInFlight(sentForSignatureAt) {
+  const sentAt = Date.parse(sentForSignatureAt || '');
+  if (!Number.isFinite(sentAt)) return false;
+  const age = Date.now() - sentAt;
+  return age >= 0 && age < SEND_IN_FLIGHT_GRACE_MS;
+}
 
 function brokerIdentity(user) {
   const email = String(user?.email || '');
@@ -102,6 +111,12 @@ export async function sendViaDocumenso({
   const broker = brokerIdentity(user);
 
   if (row.status === 'awaiting_signature' && !row.signing_envelope_id) {
+    if (reservationMayStillBeInFlight(row.sent_for_signature_at)) {
+      const err = new Error('send_in_progress');
+      err.status = 409;
+      throw err;
+    }
+
     const recovered = await findDocumensoEnvelopeByExternalId(submissionId);
     if (!recovered?.id) {
       await releaseSigningReservation(submissionId, user.id, PROVIDER, {
@@ -176,6 +191,15 @@ export async function sendViaDocumenso({
       message,
     });
   } catch (createErr) {
+    // A provider 4xx response is a definite rejection. A 5xx or network/runtime
+    // failure is ambiguous and must never unlock a potentially-created send.
+    if (Number.isFinite(createErr?.status) && createErr.status < 500) {
+      await releaseSigningReservation(submissionId, user.id, PROVIDER, {
+        reason: `create_http_${createErr.status}`,
+      });
+      throw createErr;
+    }
+
     let recovered = null;
     try {
       recovered = await findDocumensoEnvelopeByExternalId(submissionId);
@@ -183,14 +207,15 @@ export async function sendViaDocumenso({
       // Keep the reservation locked: create outcome is ambiguous.
       const err = new Error('documenso_send_ambiguous');
       err.status = 503;
+      err.retryable = false;
       throw err;
     }
 
     if (!recovered?.id) {
-      await releaseSigningReservation(submissionId, user.id, PROVIDER, {
-        reason: 'create_failed_no_envelope',
-      });
-      throw createErr;
+      const err = new Error('documenso_send_ambiguous');
+      err.status = 503;
+      err.retryable = false;
+      throw err;
     }
     envelopeId = recovered.id;
   }
@@ -217,7 +242,7 @@ export async function sendViaDocumenso({
   };
 }
 
-export async function refreshViaDocumenso({ submissionId, row }) {
+export async function refreshViaDocumenso({ submissionId, row, brokerUserId }) {
   if (!row.signing_envelope_id) {
     return { refreshed: false, row };
   }
@@ -231,7 +256,11 @@ export async function refreshViaDocumenso({ submissionId, row }) {
   if (lifecycleStatus && lifecycleStatus !== row.status) patch.status = lifecycleStatus;
 
   if (observed.status === 'COMPLETED' && !row.completed_at) {
-    patch.completed_at = observed.completedAt || new Date().toISOString();
+    await setCompletionIfMissing(
+      submissionId,
+      brokerUserId,
+      observed.completedAt || new Date().toISOString(),
+    );
   }
 
   const itemId = row.signing_item_id || observed.envelopeItemId;
