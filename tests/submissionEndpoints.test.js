@@ -161,6 +161,23 @@ describe('/api/roa-submissions/create', () => {
     expect(mock.fixtures.getRow(submissionId).pdf_sha256).toBe(sha256HexOfBytes(bytes));
   });
 
+  it('retries safely after Storage succeeds but the DB insert fails', async () => {
+    const submissionId = generateSubmissionId();
+    const bytes = fakePdfBytes(submissionId);
+    mock.fixtures.failNextInsert('database unavailable');
+
+    const first = await createFor('token-andrew', { submissionId, bytes });
+    expect(first.res.statusCode).toBe(500);
+    expect(first.res.body.error).toBe('persist_failed');
+    expect(mock.fixtures.getRow(submissionId)).toBeNull();
+    expect(mock.fixtures.getStorage(`${submissionId}/canonical.pdf`).equals(bytes)).toBe(true);
+
+    const retry = await createFor('token-andrew', { submissionId, bytes });
+    expect(retry.res.statusCode).toBe(200);
+    expect(retry.res.body.submissionId).toBe(submissionId);
+    expect(mock.fixtures.getRow(submissionId).pdf_sha256).toBe(sha256HexOfBytes(bytes));
+  });
+
   it('fails closed when canonical Storage contains different bytes', async () => {
     const submissionId = generateSubmissionId();
     const bytes = fakePdfBytes(submissionId);

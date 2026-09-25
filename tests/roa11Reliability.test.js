@@ -68,7 +68,7 @@ async function seed() {
     body: {
       submissionId: id,
       roaType: 'Personal',
-      snapshot: { firstName: 'Jane', surname: 'Doe', brokerName: 'Andrew Penney' },
+      snapshot: { firstName: 'Jane', surname: 'Doe', email: 'jane@example.com', brokerName: 'Andrew Penney' },
       versions: { templateVersion: 'T', statutoryDisclosureVersion: 'S', brokerAppointmentVersion: 'A', brokerFeeVersion: 'F' },
       pdfBase64: pdfBytes(id).toString('base64'),
     },
@@ -87,6 +87,61 @@ async function send(id) {
 }
 
 describe('ROA-1.1 DocuSign ambiguous-send reconciliation', () => {
+  it('binds the DocuSign recipient to the frozen snapshot, not request input', async () => {
+    const id = await seed();
+    let posted;
+    script.push((_url, options) => {
+      posted = JSON.parse(options.body);
+      return jsonResponse({ envelopeId: 'env-bound', status: 'sent' });
+    });
+
+    const r = res();
+    await sendHandler({
+      method: 'POST',
+      headers: { authorization: 'Bearer token-andrew' },
+      body: {
+        submissionId: id,
+        signerName: 'Attacker',
+        signerEmail: 'attacker@example.com',
+        subject: 'Injected subject',
+        message: 'Injected message',
+      },
+    }, r);
+
+    expect(r.statusCode).toBe(200);
+    expect(posted.recipients.signers[0].name).toBe('Jane Doe');
+    expect(posted.recipients.signers[0].email).toBe('jane@example.com');
+    expect(posted.emailSubject).not.toContain('Injected subject');
+    expect(posted.emailBlurb).not.toContain('Injected message');
+  });
+
+  it('does not reconcile or release a reservation while the original POST is still in flight', async () => {
+    const id = await seed();
+    let resolvePost;
+    let markPostStarted;
+    const postStarted = new Promise((resolve) => { markPostStarted = resolve; });
+    const pendingPost = new Promise((resolve) => { resolvePost = resolve; });
+    script.push(() => {
+      markPostStarted();
+      return pendingPost;
+    });
+
+    const firstSend = send(id);
+    await postStarted;
+
+    const concurrent = await send(id);
+    expect(concurrent.statusCode).toBe(409);
+    expect(concurrent.body.error).toBe('send_in_progress');
+    expect(mock.fixtures.getRow(id).status).toBe('awaiting_signature');
+    expect(script).toHaveLength(0);
+
+    resolvePost(jsonResponse({ envelopeId: 'env-original', status: 'sent' }));
+    const first = await firstSend;
+    expect(first.statusCode).toBe(200);
+    expect(first.body.envelopeId).toBe('env-original');
+    expect(mock.fixtures.getRow(id).docusign_envelope_id).toBe('env-original');
+  });
+
   it('includes transactionId and recovers the created envelope after a lost POST response', async () => {
     const id = await seed();
     let posted;
@@ -118,6 +173,7 @@ describe('ROA-1.1 DocuSign ambiguous-send reconciliation', () => {
     expect(first.body.error).toBe('docusign_send_ambiguous');
     expect(mock.fixtures.getRow(id).status).toBe('awaiting_signature');
 
+    mock.fixtures.putRow(id, { sent_for_signature_at: new Date(Date.now() - 61_000).toISOString() });
     script.push(jsonResponse({ envelopes: [{ envelopeId: 'env-late', status: 'sent', transactionId: id }] }));
     const retry = await send(id);
     expect(retry.statusCode).toBe(200);

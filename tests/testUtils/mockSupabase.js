@@ -11,6 +11,7 @@ export function makeMockSupabase() {
   /** @type {Map<string, Buffer>} */ const storage = new Map();
   /** @type {Map<string, {user: {id: string, email: string}} | null>} */
   const authUsers = new Map();
+  let nextInsertError = null;
 
   function respondUserForToken(token) {
     const entry = authUsers.get(token);
@@ -62,6 +63,11 @@ export function makeMockSupabase() {
           select() {
             return {
               async single() {
+                if (nextInsertError) {
+                  const message = nextInsertError;
+                  nextInsertError = null;
+                  return { data: null, error: { message } };
+                }
                 if (rows.has(row.id)) {
                   return { data: null, error: { message: `duplicate id ${row.id}` } };
                 }
@@ -172,6 +178,7 @@ export function makeMockSupabase() {
       putStorage: (path, bytes) => storage.set(path, Buffer.from(bytes)),
       deleteStorage: (path) => storage.delete(path),
       putRow: (id, patch) => Object.assign(rows.get(id) || {}, patch),
+      failNextInsert: (message = 'injected insert failure') => { nextInsertError = message; },
     },
   };
 }

@@ -26,6 +26,7 @@ import {
   loadSubmissionForBroker,
   StoragePaths,
   ensurePdfStored,
+  setCompletionIfMissing,
   updateSubmission,
 } from '../_lib/submissionRepo.js';
 import { sha256HexOfBytes } from '../_lib/sha256.js';
@@ -147,7 +148,7 @@ export default async function handler(req, res) {
 
   // completed_at has one meaning only: DocuSign actually reached completed.
   if (observedStatus === 'completed' && !row.completed_at) {
-    patch.completed_at = new Date().toISOString();
+    await setCompletionIfMissing(submissionId, user.id, new Date().toISOString());
   }
 
   let signedRetrieved = Boolean(row.signed_pdf_storage_path);

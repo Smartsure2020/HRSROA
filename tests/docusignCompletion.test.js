@@ -30,6 +30,7 @@ vi.mock('../api/_lib/docusignAccount.js', () => ({
 const createHandler = (await import('../api/roa-submissions/create.js')).default;
 const sendHandler = (await import('../api/roa-submissions/send-for-signature.js')).default;
 const refreshHandler = (await import('../api/roa-submissions/refresh.js')).default;
+const { setCompletionIfMissing } = await import('../api/_lib/submissionRepo.js');
 const { _resetServerSupabaseForTests } = await import('../api/_lib/supabaseServer.js');
 const { generateSubmissionId } = await import('../src/lib/roaSubmissionSnapshot.js');
 
@@ -102,7 +103,7 @@ async function seedSubmission(token = 'token-andrew') {
       body: {
         submissionId,
         roaType: 'Personal',
-        snapshot: { firstName: 'Jane', surname: 'Doe', brokerName: 'Andrew Penney' },
+        snapshot: { firstName: 'Jane', surname: 'Doe', email: 'jane@example.com', brokerName: 'Andrew Penney' },
         versions: {
           templateVersion: 'T', statutoryDisclosureVersion: 'S',
           brokerAppointmentVersion: 'A', brokerFeeVersion: 'F',
@@ -195,6 +196,17 @@ describe('DocuSign real-envelope send + status persistence', () => {
 });
 
 describe('refresh — polling DocuSign', () => {
+  it('preserves the first completed_at value across competing observations', async () => {
+    const id = await seedSubmission();
+    const firstObserved = '2026-09-25T08:00:00.000Z';
+    const laterObserved = '2026-09-25T08:00:05.000Z';
+
+    await setCompletionIfMissing(id, 'user-andrew', firstObserved);
+    await setCompletionIfMissing(id, 'user-andrew', laterObserved);
+
+    expect(mock.fixtures.getRow(id).completed_at).toBe(firstObserved);
+  });
+
   it('sent → persists observed status, does not create signed/certificate objects', async () => {
     const id = await seedSubmission();
     await sendReal('token-andrew', id, { envelopeId: 'env-1', envelopeStatus: 'sent' });

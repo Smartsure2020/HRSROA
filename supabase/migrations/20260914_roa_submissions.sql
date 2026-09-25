@@ -17,6 +17,7 @@
 --   drop policy if exists "roa_submissions_owner_insert" on public.roa_submissions;
 --   drop policy if exists "roa_submissions_owner_update" on public.roa_submissions;
 --   drop table if exists public.roa_submissions;
+--   drop function if exists public.roa_submissions_touch_updated_at();
 --   delete from storage.buckets where id = 'roa-pdfs';
 
 -- ============================================================================
@@ -114,8 +115,22 @@ drop policy if exists roa_submissions_owner_select on public.roa_submissions;
 drop policy if exists roa_submissions_owner_insert on public.roa_submissions;
 drop policy if exists roa_submissions_owner_update on public.roa_submissions;
 
-revoke all privileges on table public.roa_submissions from anon, authenticated;
-grant select, insert, update on table public.roa_submissions to service_role;
+revoke all privileges on table public.roa_submissions from anon, authenticated, service_role;
+grant select, insert on table public.roa_submissions to service_role;
+grant update (
+  status,
+  docusign_envelope_id,
+  docusign_status,
+  signed_pdf_storage_path,
+  signed_pdf_sha256,
+  certificate_storage_path,
+  certificate_sha256,
+  crm_client_id,
+  crm_deal_id,
+  sent_for_signature_at,
+  completed_at,
+  evidence_retrieved_at
+) on public.roa_submissions to service_role;
 
 -- No DELETE grant/policy on purpose — ROA evidence is durable.
 
@@ -129,3 +144,15 @@ grant select, insert, update on table public.roa_submissions to service_role;
 insert into storage.buckets (id, name, public)
 values ('roa-pdfs', 'roa-pdfs', false)
 on conflict (id) do update set public = false;
+
+-- Existing permissive Storage policies are combined with OR. A restrictive
+-- policy is therefore required to keep browser roles out of this bucket even
+-- when another project-wide policy permits access to storage.objects.
+drop policy if exists roa_pdfs_server_only on storage.objects;
+create policy roa_pdfs_server_only
+  on storage.objects
+  as restrictive
+  for all
+  to anon, authenticated
+  using (bucket_id <> 'roa-pdfs')
+  with check (bucket_id <> 'roa-pdfs');

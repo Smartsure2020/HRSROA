@@ -38,9 +38,24 @@ import {
 import { toClientView } from './get.js';
 
 const DOCUSIGN_TRANSACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DOCUSIGN_SEND_IN_FLIGHT_GRACE_MS = 60 * 1000;
 
 export function transactionIdForSubmission(submissionId) {
   return submissionId;
+}
+
+function signerForSubmission(row) {
+  const snapshot = row?.snapshot_json || {};
+  const signerEmail = typeof snapshot.email === 'string' ? snapshot.email.trim() : '';
+  const signerName = row?.roa_type === 'Commercial'
+    ? String(snapshot.contactPerson || snapshot.companyName || '').trim()
+    : [snapshot.title, snapshot.firstName, snapshot.surname]
+        .filter((part) => typeof part === 'string' && part.trim())
+        .map((part) => part.trim())
+        .join(' ');
+
+  if (!signerName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signerEmail)) return null;
+  return { signerName, signerEmail };
 }
 
 function transactionLookupStillAuthoritative(sentForSignatureAt) {
@@ -48,6 +63,13 @@ function transactionLookupStillAuthoritative(sentForSignatureAt) {
   if (!Number.isFinite(sentAt)) return false;
   const age = Date.now() - sentAt;
   return age >= 0 && age < DOCUSIGN_TRANSACTION_TTL_MS;
+}
+
+function reservationMayStillBeInFlight(sentForSignatureAt) {
+  const sentAt = Date.parse(sentForSignatureAt || '');
+  if (!Number.isFinite(sentAt)) return false;
+  const age = Date.now() - sentAt;
+  return age >= 0 && age < DOCUSIGN_SEND_IN_FLIGHT_GRACE_MS;
 }
 
 async function resolveDocusignRuntime() {
@@ -158,17 +180,15 @@ export default async function handler(req, res) {
   const user = await requireAuthenticatedBroker(req, res);
   if (!user) return;
 
-  const { submissionId, signerName, signerEmail, subject, message } = req.body ?? {};
+  const { submissionId } = req.body ?? {};
   if (!isSubmissionId(submissionId)) return res.status(400).json({ error: 'Invalid submissionId' });
-  if (typeof signerName !== 'string' || !signerName.trim()) {
-    return res.status(400).json({ error: 'Missing signerName' });
-  }
-  if (typeof signerEmail !== 'string' || !signerEmail.includes('@')) {
-    return res.status(400).json({ error: 'Missing signerEmail' });
-  }
 
   const row = await loadSubmissionForBroker(submissionId, user.id);
   if (!row) return res.status(404).json({ error: 'not_found' });
+
+  const signer = signerForSubmission(row);
+  if (!signer) return res.status(409).json({ error: 'frozen_signer_identity_invalid' });
+  const { signerName, signerEmail } = signer;
 
   if (row.docusign_envelope_id) {
     return res.status(200).json({
@@ -181,6 +201,15 @@ export default async function handler(req, res) {
   }
 
   if (row.status === 'awaiting_signature') {
+    // A concurrent request can observe the reservation before the original
+    // DocuSign POST has completed. Do not query-and-release that live slot.
+    if (reservationMayStillBeInFlight(row.sent_for_signature_at)) {
+      return res.status(409).json({
+        error: 'send_in_progress',
+        submission: toClientView(row),
+      });
+    }
+
     if (!process.env.DOCUSIGN_INTEGRATION_KEY) {
       return res.status(409).json({
         error: 'send_in_progress',
@@ -289,8 +318,6 @@ export default async function handler(req, res) {
     pdfBase64: pdfBytes.toString('base64'),
     pdfFilename: `${submissionId}-canonical.pdf`,
     transactionId,
-    subject,
-    message,
   });
 
   let response;

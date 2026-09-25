@@ -10,7 +10,7 @@ const sql = readFileSync(
 describe('ROA evidence migration — server-only boundary', () => {
   it('revokes direct anon/authenticated table privileges', () => {
     expect(sql).toMatch(
-      /revoke all privileges on table public\.roa_submissions from anon, authenticated;/i,
+      /revoke all privileges on table public\.roa_submissions from anon, authenticated, service_role;/i,
     );
   });
 
@@ -19,9 +19,15 @@ describe('ROA evidence migration — server-only boundary', () => {
   });
 
   it('keeps the service-role backend explicitly permitted', () => {
-    expect(sql).toMatch(
-      /grant select, insert, update on table public\.roa_submissions to service_role;/i,
-    );
+    expect(sql).toMatch(/revoke all privileges[^;]*service_role;/i);
+    expect(sql).toMatch(/grant select, insert on table public\.roa_submissions to service_role;/i);
+    expect(sql).toMatch(/grant update \([\s\S]*?\) on public\.roa_submissions to service_role;/i);
+    expect(sql).not.toMatch(/grant[^;]*delete[^;]*service_role/i);
+  });
+
+  it('blocks browser roles from the private evidence bucket even with broader policies', () => {
+    expect(sql).toMatch(/create policy roa_pdfs_server_only[\s\S]*?as restrictive/i);
+    expect(sql).toMatch(/to anon, authenticated[\s\S]*?bucket_id <> 'roa-pdfs'/i);
   });
 
   it('describes client_reference as a display reference, not non-PII', () => {
