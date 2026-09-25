@@ -44,15 +44,15 @@ function fmtTime(iso) {
 }
 
 /**
- * @param {object} props
- * @param {boolean} [props.roaPrepared]
- * @param {'sent'|'failed'|'not_attempted'} [props.emailStatus]
- * @param {string|null} [props.emailSentAt]
- * @param {'idle'|'syncing'|'synced'|'failed'} [props.crmStatus]
- * @param {string|null} [props.crmSyncedAt]
- * @param {boolean} [props.checklistComplete]
- * @param {'not_sent'|'envelope_created'} [props.docusignStatus]
- * @param {string|null} [props.docusignSentAt]
+ * Truthful workflow-status panel. Phase ROA-1 adds durable states derived
+ * from the `submission` row when available:
+ *   • Canonical PDF stored → good (with SHA-256 fragment)
+ *   • DocuSign envelope + status (sent / delivered / completed / declined / …)
+ *   • Final signed document stored → good iff signed.pdf exists
+ *   • Certificate of Completion stored → good iff certificate.pdf exists
+ *
+ * When `submission` is absent the panel falls back to the ROA-0 prop-driven
+ * behaviour so pre-submit / older callers still work.
  */
 export default function WorkflowStatusPanel({
   roaPrepared = true,
@@ -63,7 +63,18 @@ export default function WorkflowStatusPanel({
   checklistComplete = false,
   docusignStatus = 'not_sent',
   docusignSentAt = null,
+  submission = null,
 }) {
+  const canonicalStored = Boolean(submission?.hasCanonicalPdf);
+  const envelopeId = submission?.docusignEnvelopeId || null;
+  const dsStatus = submission?.docusignStatus || null;
+  const docusignSentAtDerived = submission?.sentForSignatureAt || docusignSentAt;
+  const signedStored = Boolean(submission?.hasSignedPdf);
+  const certificateStored = Boolean(submission?.hasCertificate);
+  const completedAt = submission?.completedAt || null;
+  const evidenceRetrievedAt = submission?.evidenceRetrievedAt || null;
+  const sha256Frag = submission?.pdfSha256 ? `SHA-256 ${String(submission.pdfSha256).slice(0, 12)}…` : null;
+
   return (
     <div className="rounded-lg border border-hrs-border bg-card p-3.5">
       <p className="text-[0.7rem] uppercase tracking-[0.1em] text-hrs-muted mb-2">Workflow Status</p>
@@ -71,6 +82,17 @@ export default function WorkflowStatusPanel({
       <StatusRow label="ROA prepared" tone={roaPrepared ? "good" : "neutral"} icon={roaPrepared ? Check : Minus}>
         {roaPrepared ? "Complete" : "Not yet generated"}
       </StatusRow>
+
+      {submission && (
+        <StatusRow
+          label="Canonical PDF stored"
+          tone={canonicalStored ? "good" : "bad"}
+          icon={canonicalStored ? Check : X}
+          timestamp={fmtTime(submission?.submittedAt)}
+        >
+          {canonicalStored ? (sha256Frag || 'Stored') : 'Not stored'}
+        </StatusRow>
+      )}
 
       <StatusRow
         label="Submission email"
@@ -95,20 +117,47 @@ export default function WorkflowStatusPanel({
       </StatusRow>
 
       <StatusRow
-        label="DocuSign"
-        tone={docusignStatus === 'envelope_created' ? "pending" : "neutral"}
-        icon={docusignStatus === 'envelope_created' ? Check : Minus}
-        timestamp={fmtTime(docusignSentAt)}
+        label="Sent for signature"
+        tone={envelopeId ? "good" : (docusignStatus === 'envelope_created' ? "pending" : "neutral")}
+        icon={envelopeId ? Check : (docusignStatus === 'envelope_created' ? Check : Minus)}
+        timestamp={fmtTime(docusignSentAtDerived)}
       >
-        {docusignStatus === 'envelope_created' ? "Envelope created" : "Not sent"}
+        {envelopeId
+          ? (dsStatus ? `${dsStatus} · ${envelopeId.slice(0, 8)}…` : `Sent · ${envelopeId.slice(0, 8)}…`)
+          : (docusignStatus === 'envelope_created' ? "Envelope created" : "Not sent")}
       </StatusRow>
 
-      <StatusRow label="Client signature" tone="neutral" icon={Minus}>
-        {docusignStatus === 'envelope_created' ? "Awaiting external confirmation" : "Not tracked"}
+      <StatusRow
+        label="Client / advisor signature"
+        tone={dsStatus === 'completed' ? "good" : (dsStatus ? "pending" : "neutral")}
+        icon={dsStatus === 'completed' ? Check : Minus}
+        timestamp={fmtTime(completedAt)}
+      >
+        {!dsStatus && "Not tracked"}
+        {dsStatus === 'sent' && "Awaiting client signature"}
+        {dsStatus === 'delivered' && "Client viewed — awaiting signature"}
+        {dsStatus === 'completed' && "Signed"}
+        {dsStatus === 'declined' && "Declined"}
+        {dsStatus === 'voided' && "Voided"}
+        {dsStatus === 'expired' && "Expired"}
+        {dsStatus && !['sent','delivered','completed','declined','voided','expired'].includes(dsStatus) && dsStatus}
       </StatusRow>
 
-      <StatusRow label="Final signed document" tone="neutral" icon={Minus}>
-        Not yet stored by the ROA application
+      <StatusRow
+        label="Final signed document stored"
+        tone={signedStored ? "good" : (dsStatus === 'completed' ? "pending" : "neutral")}
+        icon={signedStored ? Check : Minus}
+      >
+        {signedStored ? "Stored" : (dsStatus === 'completed' ? "Retrieving…" : "Not yet")}
+      </StatusRow>
+
+      <StatusRow
+        label="Certificate of Completion stored"
+        tone={certificateStored ? "good" : (dsStatus === 'completed' ? "pending" : "neutral")}
+        icon={certificateStored ? Check : Minus}
+        timestamp={fmtTime(evidenceRetrievedAt)}
+      >
+        {certificateStored ? "Stored" : (dsStatus === 'completed' ? "Retrieving…" : "Not yet")}
       </StatusRow>
     </div>
   );

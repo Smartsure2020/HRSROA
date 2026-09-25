@@ -200,7 +200,10 @@ describe('/api/send-email — rejects unauthenticated callers before touching Re
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('valid broker + no RESEND_API_KEY → dev-mock 200 and never fetches Resend', async () => {
+  it('valid broker → 410 deprecated (post-ROA-1) and never fetches Resend', async () => {
+    // /api/send-email is deprecated as of ROA-1 in favour of
+    // /api/roa-submissions/notify-email, which loads the canonical PDF from
+    // Storage rather than accepting arbitrary bytes. Auth still runs first.
     pushGetUserResponse(validSupabaseUser('andrew@hrsinsurance.co.za'));
     const res = mockRes();
     await sendEmail(
@@ -211,8 +214,8 @@ describe('/api/send-email — rejects unauthenticated callers before touching Re
       },
       res,
     );
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toMatchObject({ ok: true, id: 'dev-mock' });
+    expect(res.statusCode).toBe(410);
+    expect(res.body.error).toBe('endpoint_deprecated');
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });
@@ -257,42 +260,19 @@ describe('/api/send-for-signature — rejects unauthenticated callers before tou
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('authenticated broker whose email differs from requested broker → 403', async () => {
-    pushGetUserResponse(validSupabaseUser('werner@hrsinsurance.co.za'));
-    const res = mockRes();
-    await sendForSignature(
-      { method: 'POST', headers: { authorization: 'Bearer good' }, body: validPayload },
-      res,
-    );
-    expect(res.statusCode).toBe(403);
-    expect(global.fetch).not.toHaveBeenCalled();
-  });
-
-  it('unknown roaType → 400 and never fetches DocuSign', async () => {
-    pushGetUserResponse(validSupabaseUser('andrew@hrsinsurance.co.za'));
-    const res = mockRes();
-    await sendForSignature(
-      {
-        method: 'POST',
-        headers: { authorization: 'Bearer good' },
-        body: { ...validPayload, roaType: 'Motor' },
-      },
-      res,
-    );
-    expect(res.statusCode).toBe(400);
-    expect(res.body.error).toMatch(/Invalid roaType/);
-    expect(global.fetch).not.toHaveBeenCalled();
-  });
-
-  it('valid broker + no DocuSign credentials → dev mock 200 and never fetches DocuSign', async () => {
+  it('valid broker → 410 deprecated (post-ROA-1) and never fetches DocuSign', async () => {
+    // /api/send-for-signature is deprecated as of ROA-1 in favour of
+    // /api/roa-submissions/send-for-signature, which is idempotent on
+    // submissionId and uses the stored canonical PDF. Auth still runs first
+    // so the endpoint cannot be used as an unauthenticated probe.
     pushGetUserResponse(validSupabaseUser('andrew@hrsinsurance.co.za'));
     const res = mockRes();
     await sendForSignature(
       { method: 'POST', headers: { authorization: 'Bearer good' }, body: validPayload },
       res,
     );
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toMatchObject({ ok: true, envelopeId: 'dev-mock-envelope-id', environment: 'sandbox' });
+    expect(res.statusCode).toBe(410);
+    expect(res.body.error).toBe('endpoint_deprecated');
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });
