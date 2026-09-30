@@ -7,6 +7,7 @@ import {
   isPendingSubmission,
   loadSubmissionRegister,
   refreshSubmissionRegister,
+  syncCrmSubmission,
 } from '../lib/roaSubmissionClient';
 
 const FILTERS = [
@@ -30,6 +31,13 @@ function matchesFilter(item, filter) {
   if (filter === 'completed') return item.status === 'completed' || item.signingStatus === 'completed';
   if (filter === 'failed') return item.status === 'signature_failed' || String(item.signingStatus || '').startsWith('failed');
   return true;
+}
+
+export function crmStatusLabel(item) {
+  if (item?.crmSyncStatus === 'linked') return 'Linked';
+  if (item?.crmSyncStatus === 'failed') return 'Sync failed';
+  if (item?.crmSyncStatus === 'partial' || item?.crmClientId || item?.crmDealId) return 'Partial';
+  return 'Not linked';
 }
 
 function EvidenceButton({ item, kind, label, available = true }) {
@@ -57,6 +65,7 @@ export default function RoaRegister() {
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [crmRetrying, setCrmRetrying] = useState(false);
   const refreshInFlight = useRef(false);
 
   const applyItems = useCallback((nextItems) => {
@@ -94,6 +103,19 @@ export default function RoaRegister() {
     return () => clearInterval(interval);
   }, [hasPending, load]);
   const visible = useMemo(() => items.filter((item) => matchesFilter(item, filter)), [items, filter]);
+
+  const retryCrm = useCallback(async () => {
+    if (!selected?.submissionId || crmRetrying) return;
+    setCrmRetrying(true);
+    setError('');
+    try {
+      const updated = await syncCrmSubmission(selected.submissionId);
+      applyItems(items.map((item) => item.submissionId === updated.submissionId ? updated : item));
+    } catch (err) {
+      setError(err.message || 'CRM sync failed. The ROA evidence is still safely retained.');
+      await load();
+    } finally { setCrmRetrying(false); }
+  }, [selected?.submissionId, crmRetrying, applyItems, items, load]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -135,7 +157,7 @@ export default function RoaRegister() {
                   <td className="p-3 text-hrs-muted">{item.roaType}</td>
                   <td className="p-3 text-hrs-muted">{formatDate(item.submittedAt)}</td>
                   <td className="p-3 text-hrs-blue2">{item.signingStatus || item.status || 'Not sent'}</td>
-                  <td className="p-3 text-hrs-muted">{item.crmClientId || item.crmDealId ? 'Linked' : 'Not linked'}</td>
+                  <td className="p-3 text-hrs-muted">{crmStatusLabel(item)}</td>
                 </tr>
               ))}
             </tbody>
@@ -158,12 +180,22 @@ export default function RoaRegister() {
               <div><span className="text-hrs-muted">Evidence retrieved</span><p className="text-hrs-blue">{formatDate(selected.evidenceRetrievedAt)}</p></div>
               <div><span className="text-hrs-muted">CRM client</span><p className="text-hrs-blue">{selected.crmClientId || '—'}</p></div>
               <div><span className="text-hrs-muted">CRM deal</span><p className="text-hrs-blue">{selected.crmDealId || '—'}</p></div>
+              <div><span className="text-hrs-muted">CRM status</span><p className="text-hrs-blue">{crmStatusLabel(selected)}</p></div>
+              <div><span className="text-hrs-muted">CRM last attempt</span><p className="text-hrs-blue">{formatDate(selected.crmSyncAttemptedAt)}</p></div>
+              <div><span className="text-hrs-muted">CRM evidence</span><p className="text-hrs-blue">{selected.crmSignedRoaDocumentId && selected.crmCertificateDocumentId ? 'Signed ROA + certificate filed' : 'Not fully filed'}</p></div>
             </div>
             <div className="flex flex-wrap gap-2">
               <EvidenceButton item={selected} kind="canonical" label="Original / Canonical ROA" available={selected.hasCanonicalPdf} />
               <EvidenceButton item={selected} kind="signed" label="Signed ROA" available={selected.hasSignedPdf} />
               <EvidenceButton item={selected} kind="certificate" label="Certificate of Completion" available={selected.hasCertificate} />
               <EvidenceButton item={selected} kind="audit-log" label="Audit Log" available={selected.hasAuditLog} />
+              {selected.crmSyncStatus !== 'linked' && (
+                <button type="button" onClick={retryCrm} disabled={crmRetrying}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hrs-orange text-[0.75rem] font-semibold text-hrs-blue disabled:opacity-40">
+                  <RefreshCw className={`w-3.5 h-3.5 ${crmRetrying ? 'animate-spin' : ''}`} />
+                  {crmRetrying ? 'Syncing CRM…' : 'Retry CRM sync'}
+                </button>
+              )}
             </div>
           </section>
         )}

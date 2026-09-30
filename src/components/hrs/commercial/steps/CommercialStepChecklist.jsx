@@ -5,12 +5,11 @@ import FormCard from "../../FormCard";
 import WorkflowStatusPanel from "../../WorkflowStatusPanel";
 import { generateCommercialCombinedPDF } from "../../../../lib/hrsCommercialPdfGenerator";
 import { MANAGER_NAME } from "../../../../lib/hrsConstants";
-import { syncCommercialROAToCRM } from "../../../../lib/crmAdapter";
+import { syncRoaSubmissionToCRM } from "../../../../lib/crmAdapter";
 import { useCrmSyncStatus } from "../../../../lib/useCrmSyncStatus";
 import { toast } from "@/components/ui/use-toast";
 import { buildSignatureSendFeedback } from "../../../../lib/signatureSendFeedback";
 import {
-  attachCrmIds,
   downloadEvidencePdf,
   refreshSubmission,
   sendForSignature as sendForSignatureApi,
@@ -110,29 +109,18 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
   const sigSentAt = submission?.sentForSignatureAt || null;
 
   // CRM sync + retry — same pattern and shared hook as the Personal checklist.
-  const crm = useCrmSyncStatus(syncCommercialROAToCRM);
+  const crm = useCrmSyncStatus(syncRoaSubmissionToCRM);
   const crmTriggered = useRef(false);
-  const crmAttachedIdsRef = useRef(false);
   useEffect(() => {
-    if (crmTriggered.current) return;
+    if (crmTriggered.current || !submission?.submissionId) return;
     crmTriggered.current = true;
-    crm.sync(data);
+    crm.sync(submission.submissionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [submission?.submissionId]);
 
   useEffect(() => {
-    if (crmAttachedIdsRef.current) return;
-    if (!submission?.submissionId) return;
-    if (crm.status !== 'synced') return;
-    if (!crm.result?.clientId && !crm.result?.dealId) return;
-    crmAttachedIdsRef.current = true;
-    attachCrmIds(submission.submissionId, {
-      crmClientId: crm.result.clientId,
-      crmDealId: crm.result.dealId,
-    })
-      .then((updated) => { if (updated && onSubmissionUpdate) onSubmissionUpdate(updated); })
-      .catch(() => { /* silent */ });
-  }, [crm.status, crm.result, submission?.submissionId, onSubmissionUpdate]);
+    if (crm.result?.submission && onSubmissionUpdate) onSubmissionUpdate(crm.result.submission);
+  }, [crm.result?.submission, onSubmissionUpdate]);
 
   useEffect(() => {
     if (!submission?.submissionId) return;
@@ -278,7 +266,7 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
           {crm.result?.error && <p className="text-[0.76rem] text-amber-700 mt-0.5">{crm.result.error}</p>}
           <button
             type="button"
-            onClick={() => crm.retry(data)}
+            onClick={() => crm.retry(submission.submissionId)}
             className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-400 text-amber-800 text-[0.76rem] font-semibold hover:bg-amber-100 transition-colors disabled:opacity-50"
           >
             <RefreshCw className="w-3.5 h-3.5" /> Retry CRM Sync

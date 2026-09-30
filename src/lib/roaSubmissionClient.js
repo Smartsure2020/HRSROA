@@ -95,8 +95,9 @@ export async function refreshSubmission(submissionId) {
   return data.submission;
 }
 
-export async function attachCrmIds(submissionId, { crmClientId, crmDealId }) {
-  const data = await postJson('/api/roa-submissions/attach-crm', { submissionId, crmClientId, crmDealId });
+export async function syncCrmSubmission(submissionId) {
+  if (!isSubmissionId(submissionId)) throw new Error('syncCrmSubmission: invalid submissionId');
+  const data = await postJson('/api/roa-submissions/sync-crm', { submissionId });
   return data.submission;
 }
 

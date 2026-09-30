@@ -12,6 +12,7 @@ import {
 } from './submissionRepo.js';
 import { sha256HexOfBytes } from './sha256.js';
 import { refreshViaDocumenso } from './documensoSigning.js';
+import { maybeSyncCompletedSubmissionToCrm } from './crmIntegration.js';
 import {
   shouldReconcileSigningRecord,
   signingProviderFor,
@@ -131,16 +132,22 @@ async function reconcileViaDocusign({ submissionId, row, brokerUserId }) {
 
 export async function reconcileSigningSubmission({ submissionId, row, brokerUserId }) {
   if (!shouldReconcileSigningRecord(row)) {
-    return { row, provider: signingProviderFor(row), refreshed: false, skipped: true };
+    const syncedRow = await maybeSyncCompletedSubmissionToCrm(row);
+    return { row: syncedRow, provider: signingProviderFor(row), refreshed: false, skipped: true };
   }
 
   if (signingProviderFor(row) === 'documenso') {
     const result = await refreshViaDocumenso({ submissionId, row, brokerUserId });
-    return { ...result, provider: 'documenso' };
+    return {
+      ...result,
+      row: await maybeSyncCompletedSubmissionToCrm(result.row),
+      provider: 'documenso',
+    };
   }
 
   if (!row.docusign_envelope_id) {
     return { row, provider: signingProviderFor(row), refreshed: false, skipped: true };
   }
-  return reconcileViaDocusign({ submissionId, row, brokerUserId });
+  const result = await reconcileViaDocusign({ submissionId, row, brokerUserId });
+  return { ...result, row: await maybeSyncCompletedSubmissionToCrm(result.row) };
 }

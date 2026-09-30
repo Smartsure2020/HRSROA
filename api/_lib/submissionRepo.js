@@ -45,6 +45,8 @@ export async function listSubmissionsForBroker(brokerUserId) {
     'submitted_at', 'sent_for_signature_at', 'completed_at', 'evidence_retrieved_at',
     'pdf_storage_path', 'signed_pdf_storage_path', 'certificate_storage_path',
     'audit_log_storage_path', 'crm_client_id', 'crm_deal_id',
+    'crm_sync_status', 'crm_sync_error', 'crm_sync_attempted_at', 'crm_synced_at',
+    'crm_signed_roa_document_id', 'crm_certificate_document_id',
   ].join(',');
   const { data, error } = await supabase
     .from('roa_submissions')

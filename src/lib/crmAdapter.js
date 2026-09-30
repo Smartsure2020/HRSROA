@@ -1,12 +1,11 @@
 // HRSROA CRM integration seam.
 //
-// The current implementation is the legacy browser adapter. Callers import
-// only from this module so Pass 2 can replace it with an authenticated
-// server-side submission adapter without changing checklist workflow code.
-// CRM remains best-effort and never gates ROA evidence or e-signature.
-export {
-  syncPersonalROAToCRM,
-  syncCommercialROAToCRM,
-} from './crmSync';
+// Browser-safe seam: only an HRSROA submission id crosses the browser boundary.
+// Frozen data and evidence are loaded and sent by the HRSROA server.
+import { syncCrmSubmission } from './roaSubmissionClient';
 
-export const CRM_ADAPTER_MODE = 'browser_legacy';
+export async function syncRoaSubmissionToCRM(submissionId) {
+  return syncCrmSubmission(submissionId);
+}
+
+export const CRM_ADAPTER_MODE = 'server_submission';

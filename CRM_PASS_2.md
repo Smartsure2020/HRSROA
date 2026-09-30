@@ -3,32 +3,30 @@
 The ROA evidence and e-signature lifecycle does not depend on CRM sync. CRM
 failures remain visible and retryable, but non-blocking.
 
-## Current browser-side calls
+## Implemented boundary
 
-`src/lib/crmSync.js` currently sends the signed-in user's Supabase bearer token
-directly from the browser to `https://crm.hrsinsurance.co.za/api`:
+The browser now sends only the HRSROA submission ID to the broker-authenticated
+`POST /api/roa-submissions/sync-crm` endpoint. Frozen client data and verified
+evidence bytes are loaded by the HRSROA server. No CRM URL, CRM credential, or
+browser-supplied CRM record ID is used by the checklist flow.
 
-- `POST /clients-check-duplicate`
-- `POST /clients?action=create`
-- `POST /deals?action=create`
+HRSROA requires these server-only variables (never prefix them with `VITE_`):
 
-No Preview origin has been added to the live CRM CORS allow-list, and no CRM
-service credential has been added to this repository or to Production.
+- `CRM_BASE_URL`: the CRM deployment origin, without `/api`
+- `CRM_INTEGRATION_SECRET`: a random value of at least 32 characters
 
-## Replacement seam
+Set the identical secret in CRM as `HRS_ROA_INTEGRATION_SECRET`. CRM also
+requires its existing Supabase service-role and private Vercel Blob settings.
 
-Checklist screens import CRM operations from `src/lib/crmAdapter.js`. It
-currently delegates to the legacy browser implementation so existing
-Production behaviour is preserved. Pass 2 should replace that adapter with a
-server-side HRSROA endpoint that:
+## Safe staging order
 
-1. authenticates the broker through the existing Supabase authority;
-2. derives an idempotency key from the durable ROA submission ID;
-3. keeps CRM credentials server-side;
-4. writes only returned CRM IDs through the existing `attach-crm` endpoint or
-   equivalent broker-owned repository operation; and
-5. remains a soft failure that cannot block canonical evidence, signing, or
-   evidence reconciliation.
+1. Apply CRM migration `018_add_roa_integration_receipts.sql`.
+2. Deploy CRM with `HRS_ROA_INTEGRATION_SECRET`, then verify unauthorized and
+   authorized endpoint behavior using a non-production test submission.
+3. Apply HRSROA migration `20260930_crm_integration.sql`.
+4. Deploy HRSROA with `CRM_BASE_URL` and `CRM_INTEGRATION_SECRET`.
+5. Submit and sign a staging ROA, then verify the linked client, one deal, and
+   the two private CRM document rows before enabling production traffic.
 
 Staging tests must use a non-production CRM tenant or a safe mock. Do not send
 acceptance-test client data into the Production CRM.
