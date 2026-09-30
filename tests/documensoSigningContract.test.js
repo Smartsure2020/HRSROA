@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SIGNING_MARKERS } from '../src/lib/pdf/signingMarkers.js';
 import {
   addRoaSigningFields,
+  createDocumensoEnvelope,
   findDocumensoEnvelopeByExternalId,
 } from '../api/_lib/documensoClient.js';
 
@@ -59,6 +60,32 @@ describe('Documenso ROA signing contract', () => {
       ['SIGNATURE', 22, SIGNING_MARKERS.advisorSignature],
       ['DATE', 22, SIGNING_MARKERS.advisorDate],
     ]);
+  });
+
+  it('sends the Documenso API token directly without a Bearer prefix', async () => {
+    let captured;
+    vi.spyOn(global, 'fetch').mockImplementation(async (url, options) => {
+      captured = { url: String(url), options };
+      return {
+        ok: true,
+        status: 200,
+        async json() { return { id: 'envelope_test' }; },
+      };
+    });
+
+    await createDocumensoEnvelope({
+      submissionId: 'ROA-123',
+      pdfBytes: Buffer.from('%PDF-1.4 test'),
+      filename: 'test.pdf',
+      signerName: 'Test Client',
+      signerEmail: 'client@example.test',
+      brokerName: 'Test Broker',
+      brokerEmail: 'broker@example.test',
+    });
+
+    expect(captured.url).toBe('https://sign.example.test/api/v2/envelope/create');
+    expect(captured.options.headers.Authorization).toBe('api_test');
+    expect(captured.options.headers.Authorization).not.toMatch(/^Bearer\\s/i);
   });
 
   it('reconciles by exact ROA externalId rather than creating blindly', async () => {
