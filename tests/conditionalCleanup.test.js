@@ -78,23 +78,23 @@ describe('applySharedConditionalCleanup — cancelReasonText (Phase ROA-0)', () 
   });
 });
 
-describe('applySharedConditionalCleanup — perilsOther (Phase ROA-0)', () => {
-  it('clears perilsOther when "Other" is not selected', () => {
-    const data = { perilsSelected: ['Theft', 'Fire'], perilsOther: 'previous stale text' };
+describe('applySharedConditionalCleanup — removed local evidence fields', () => {
+  it('drops stale perils and local-signature fields safely', () => {
+    const data = {
+      perilsSelected: ['Fire', 'Other'],
+      perilsOther: 'Cyber incident',
+      clientSig: 'data:image/png;base64,AAA',
+      advisorSig: 'data:image/png;base64,BBB',
+      sigDate: '2026-09-30',
+      valueToBeInsured: 'Replacement Value',
+    };
     const next = applySharedConditionalCleanup(data);
-    expect(next.perilsOther).toBe('');
-  });
-
-  it('clears perilsOther when perilsSelected is empty', () => {
-    const data = { perilsSelected: [], perilsOther: 'stale' };
-    const next = applySharedConditionalCleanup(data);
-    expect(next.perilsOther).toBe('');
-  });
-
-  it('preserves perilsOther while "Other" remains selected', () => {
-    const data = { perilsSelected: ['Fire', 'Other'], perilsOther: 'Cyber incident' };
-    const next = applySharedConditionalCleanup(data);
-    expect(next.perilsOther).toBe('Cyber incident');
+    expect(next).not.toHaveProperty('perilsSelected');
+    expect(next).not.toHaveProperty('perilsOther');
+    expect(next).not.toHaveProperty('clientSig');
+    expect(next).not.toHaveProperty('advisorSig');
+    expect(next).not.toHaveProperty('sigDate');
+    expect(next.valueToBeInsured).toBe('Replacement Value');
   });
 });
 

@@ -1,0 +1,142 @@
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, Download, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import AppHeader from '../components/hrs/AppHeader';
+import { downloadEvidencePdf, listSubmissions } from '../lib/roaSubmissionClient';
+
+const FILTERS = [
+  ['all', 'All'],
+  ['awaiting', 'Awaiting signature'],
+  ['completed', 'Completed'],
+  ['failed', 'Failed'],
+  ['personal', 'Personal'],
+  ['commercial', 'Commercial'],
+];
+
+function formatDate(value) {
+  if (!value) return '—';
+  return new Date(value).toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function matchesFilter(item, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'personal' || filter === 'commercial') return item.roaType?.toLowerCase() === filter;
+  if (filter === 'awaiting') return item.status === 'awaiting_signature' || ['sent', 'delivered'].includes(item.signingStatus);
+  if (filter === 'completed') return item.status === 'completed' || item.signingStatus === 'completed';
+  if (filter === 'failed') return item.status === 'signature_failed' || String(item.signingStatus || '').startsWith('failed');
+  return true;
+}
+
+function EvidenceButton({ item, kind, label, available = true }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={!available || busy}
+      onClick={async () => {
+        setBusy(true);
+        try { await downloadEvidencePdf(item.submissionId, kind); }
+        finally { setBusy(false); }
+      }}
+      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hrs-border text-[0.75rem] font-semibold text-hrs-blue hover:border-hrs-orange disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      <Download className="w-3.5 h-3.5" /> {busy ? 'Downloading…' : label}
+    </button>
+  );
+}
+
+export default function RoaRegister() {
+  const navigate = useNavigate();
+  const [items, setItems] = useState([]);
+  const [filter, setFilter] = useState('all');
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try { setItems(await listSubmissions()); }
+    catch (err) { setError(err.message || 'Could not load the ROA register.'); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+  const visible = useMemo(() => items.filter((item) => matchesFilter(item, filter)), [items, filter]);
+
+  return (
+    <div className="min-h-screen bg-background">
+      <AppHeader title="My ROAs / ROA Register" />
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        <div className="flex items-center justify-between gap-4 mb-6">
+          <div>
+            <button onClick={() => navigate('/')} className="inline-flex items-center gap-1 text-[0.78rem] text-hrs-muted hover:text-hrs-blue mb-2">
+              <ArrowLeft className="w-3.5 h-3.5" /> Back to Home
+            </button>
+            <h1 className="font-heading text-2xl text-hrs-blue">My ROAs</h1>
+            <p className="text-[0.82rem] text-hrs-muted mt-1">Your durable submission and signature evidence register.</p>
+          </div>
+          <button onClick={load} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-hrs-border text-[0.78rem] font-semibold text-hrs-blue disabled:opacity-50">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2 mb-5">
+          {FILTERS.map(([value, label]) => (
+            <button key={value} onClick={() => setFilter(value)} className={`px-3 py-1.5 rounded-full border text-[0.74rem] font-semibold ${filter === value ? 'bg-hrs-blue text-white border-hrs-blue' : 'bg-card text-hrs-muted border-hrs-border'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {error && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-[0.8rem] text-red-700">{error}</div>}
+
+        <div className="rounded-xl border border-hrs-border bg-card overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left">
+            <thead className="bg-hrs-blue text-white text-[0.72rem] uppercase tracking-wider">
+              <tr><th className="p-3">Client</th><th className="p-3">Type</th><th className="p-3">Submission date</th><th className="p-3">Signature status</th><th className="p-3">CRM status</th></tr>
+            </thead>
+            <tbody>
+              {!loading && visible.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-hrs-muted text-sm">No ROAs match this filter.</td></tr>}
+              {visible.map((item) => (
+                <tr key={item.submissionId} onClick={() => setSelected(item)} className="border-t border-hrs-border hover:bg-hrs-blue/5 cursor-pointer text-[0.8rem]">
+                  <td className="p-3 font-semibold text-hrs-blue">{item.clientReference || item.submissionId}</td>
+                  <td className="p-3 text-hrs-muted">{item.roaType}</td>
+                  <td className="p-3 text-hrs-muted">{formatDate(item.submittedAt)}</td>
+                  <td className="p-3 text-hrs-blue2">{item.signingStatus || item.status || 'Not sent'}</td>
+                  <td className="p-3 text-hrs-muted">{item.crmClientId || item.crmDealId ? 'Linked' : 'Not linked'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {selected && (
+          <section className="mt-6 rounded-xl border border-hrs-border bg-card p-5">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div><h2 className="font-heading text-lg text-hrs-blue">{selected.clientReference || 'ROA detail'}</h2><p className="text-[0.72rem] text-hrs-muted mt-1 break-all">{selected.submissionId}</p></div>
+              <button onClick={() => setSelected(null)} className="text-hrs-muted text-sm">Close</button>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 text-[0.78rem] mb-5">
+              <div><span className="text-hrs-muted">Adviser</span><p className="text-hrs-blue">{selected.adviser || '—'}</p></div>
+              <div><span className="text-hrs-muted">Signing provider</span><p className="text-hrs-blue">{selected.signingProvider || 'Not sent'}</p></div>
+              <div><span className="text-hrs-muted">Signature status</span><p className="text-hrs-blue">{selected.signingStatus || selected.status || '—'}</p></div>
+              <div><span className="text-hrs-muted">Submitted</span><p className="text-hrs-blue">{formatDate(selected.submittedAt)}</p></div>
+              <div><span className="text-hrs-muted">Sent for signature</span><p className="text-hrs-blue">{formatDate(selected.sentForSignatureAt)}</p></div>
+              <div><span className="text-hrs-muted">Completed</span><p className="text-hrs-blue">{formatDate(selected.completedAt)}</p></div>
+              <div><span className="text-hrs-muted">Evidence retrieved</span><p className="text-hrs-blue">{formatDate(selected.evidenceRetrievedAt)}</p></div>
+              <div><span className="text-hrs-muted">CRM client</span><p className="text-hrs-blue">{selected.crmClientId || '—'}</p></div>
+              <div><span className="text-hrs-muted">CRM deal</span><p className="text-hrs-blue">{selected.crmDealId || '—'}</p></div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <EvidenceButton item={selected} kind="canonical" label="Original / Canonical ROA" available={selected.hasCanonicalPdf} />
+              <EvidenceButton item={selected} kind="signed" label="Signed ROA" available={selected.hasSignedPdf} />
+              <EvidenceButton item={selected} kind="certificate" label="Certificate of Completion" available={selected.hasCertificate} />
+              <EvidenceButton item={selected} kind="audit-log" label="Audit Log" available={selected.hasAuditLog} />
+            </div>
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}

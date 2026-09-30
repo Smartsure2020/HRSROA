@@ -202,26 +202,23 @@ export const HRS_COMPLIANCE_CONTENT = {
 
 /**
  * Derives the Statutory Disclosure evidence status for Review / PDF display.
- * Deliberately three-state rather than a plain boolean — an unsigned-but-acknowledged
- * record should say "Pending signature", not falsely claim "Yes" or alarm with "No".
+ * HRS records the acknowledgement, while the signing provider later records
+ * the authoritative signature. The canonical pre-sign PDF must therefore
+ * never infer a completed signature from local form state.
  *
  * @param {object} formData
  * @returns {{ version: string, acknowledged: boolean, signatureStatus: 'yes'|'no'|'pending', evidenceLine: string }}
  */
 export function getStatutoryDisclosureEvidence(formData) {
   const acknowledged = !!formData?.ackStatutoryDisclosure;
-  const hasSignature = !!formData?.clientSig;
   /** @type {'yes'|'no'|'pending'} */
-  let signatureStatus = 'no';
-  if (acknowledged) signatureStatus = hasSignature ? 'yes' : 'pending';
+  const signatureStatus = acknowledged ? 'pending' : 'no';
 
   let evidenceLine;
   if (!acknowledged) {
     evidenceLine = 'Not yet reviewed and acknowledged by the client.';
-  } else if (hasSignature) {
-    evidenceLine = 'Reviewed and acknowledged by the client; confirmed under the general signed ROA declaration.';
   } else {
-    evidenceLine = 'Reviewed and acknowledged by the client; awaiting the general ROA client signature to confirm.';
+    evidenceLine = 'Reviewed and acknowledged by the client; awaiting confirmation through the e-signature workflow.';
   }
 
   return {

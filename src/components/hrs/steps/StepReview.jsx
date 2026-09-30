@@ -4,6 +4,7 @@ import SectionTitle from "../SectionTitle";
 import NavBar from "../NavBar";
 import { RISK_CATEGORIES } from "../../../lib/hrsConstants";
 import { getBrokerFeeSummary } from "../../../lib/brokerFee";
+import { isSasriaConfirmed } from "../../../lib/sasriaApplicability";
 import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from "../../../lib/hrsComplianceContent";
 
 const DISCLOSURE = HRS_COMPLIANCE_CONTENT.statutoryDisclosure;
@@ -101,7 +102,6 @@ export default function StepReview({ data, onPrev, onSubmit, isSubmitting }) {
         </ReviewSection>
 
         <ReviewSection title="Needs Analysis">
-          <ReviewRow label="Perils to be Insured" value={(data.perilsSelected || []).join(', ')} />
           <ReviewRow label="Value to be Insured" value={data.valueToBeInsured} />
           <ReviewRow label="Compulsory Excess" value={yn(data.compulsoryExcess)} />
           <ReviewRow label="Voluntary Excess" value={data.voluntaryExcess} />
@@ -115,7 +115,7 @@ export default function StepReview({ data, onPrev, onSubmit, isSubmitting }) {
             let cv = "—";
             if (s.cover === "yes") cv = "✓ YES";
             if (s.cover === "no") cv = "✗ NO";
-            if (s.sasria && s.cover === "yes") cv += " · SASRIA ✓";
+            if (isSasriaConfirmed(cat, s, data.sasriaIncludedClasses)) cv += " · SASRIA confirmed ✓";
             return <ReviewRow key={i} label={cat.name} value={cv} />;
           })}
         </ReviewSection>
@@ -150,7 +150,7 @@ export default function StepReview({ data, onPrev, onSubmit, isSubmitting }) {
           <ReviewRow label="Disclosure Version" value={disclosureEvidence.version} />
           <ReviewRow label="Reviewed & Acknowledged" value={disclosureEvidence.acknowledged ? "Yes" : "No"} />
           <ReviewRow
-            label="Signed Under General ROA Declaration"
+            label="E-signature Status"
             value={disclosureEvidence.signatureStatus === 'yes' ? "Yes" : disclosureEvidence.signatureStatus === 'pending' ? "Pending signature" : "No"}
           />
         </ReviewSection>

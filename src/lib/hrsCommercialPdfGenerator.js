@@ -7,6 +7,7 @@ import { HRS_PDF_THEME, drawDocumentHeader, drawPageFooter, drawSectionHeader, d
 import { SIGNATURE_LABELS } from './pdf/signatureLabels';
 import { SIGNING_MARKERS } from './pdf/signingMarkers';
 import { HRS_TEMPLATE_VERSION } from './pdf/templateVersion';
+import { isSasriaConfirmed } from './sasriaApplicability';
 
 const APPOINTMENT = HRS_COMPLIANCE_CONTENT.brokerAppointment.commercial;
 const FEE_CONTENT = HRS_COMPLIANCE_CONTENT.brokerFeeConsent;
@@ -65,7 +66,7 @@ function getPdfMetadata(formData, extras = {}) {
     clientName: formData.companyName || 'Company',
     advisorName: formData.brokerName,
     policyType: formData.policyType,
-    documentDate: formData.sigDate || formData.inceptionDate,
+    documentDate: formData.inceptionDate,
     disclosureVersion: disclosure.version,
     documentType: 'Commercial Lines ROA',
     submissionId: extras.submissionId ?? null,
@@ -292,17 +293,11 @@ class CommercialPDFBuilder {
       d.setFont('helvetica', 'normal'); d.setFontSize(6.3); d.setTextColor(...C.grey);
       d.text('Not specified', bx + 2.5, this.cy + 5.2);
     }
-    if (cover === 'yes') {
+    if (cover === 'yes' && sasria) {
       const sx = bx + 27;
-      if (sasria) {
-        d.setFillColor(...C.blue); d.roundedRect(sx, this.cy + 1.5, 16, 5, 1, 1, 'F');
-        d.setFont('helvetica', 'bold'); d.setFontSize(6); d.setTextColor(...C.white);
-        d.text('SASRIA', sx + 2.2, this.cy + 5.2);
-      } else {
-        d.setDrawColor(...C.border); d.roundedRect(sx, this.cy + 1.5, 16, 5, 1, 1, 'S');
-        d.setFont('helvetica', 'normal'); d.setFontSize(6); d.setTextColor(...C.grey);
-        d.text('SASRIA', sx + 2.2, this.cy + 5.2);
-      }
+      d.setFillColor(...C.blue); d.roundedRect(sx, this.cy + 1.5, 16, 5, 1, 1, 'F');
+      d.setFont('helvetica', 'bold'); d.setFontSize(6); d.setTextColor(...C.white);
+      d.text('SASRIA', sx + 2.2, this.cy + 5.2);
     }
     this.cy += rh;
   }
@@ -348,7 +343,7 @@ class CommercialPDFBuilder {
     this.cy = topY + ch + 5;
   }
 
-  sigBox(label, sigDataURL, x, y, w, h) {
+  sigBox(label, x, y, w, h) {
     const d = this.doc;
     d.setFillColor(...C.lightBg); d.roundedRect(x, y, w, h, 1.5, 1.5, 'F');
     d.setDrawColor(...C.border); d.setLineWidth(0.4); d.roundedRect(x, y, w, h, 1.5, 1.5, 'S');
@@ -372,24 +367,11 @@ class CommercialPDFBuilder {
     d.setTextColor(...C.lightBg);
     d.text(signingMarker, x + 5, y + 11);
     d.text(dateMarker, x + 5, y + h - 5);
-    if (sigDataURL) {
-      try {
-        const props = d.getImageProperties(sigDataURL);
-        const scale = Math.min((w - 10) / props.width, (h - 18) / props.height);
-        const imageW = props.width * scale;
-        const imageH = props.height * scale;
-        d.addImage(sigDataURL, 'PNG', x + (w - imageW) / 2, y + 9 + ((h - 18) - imageH) / 2, imageW, imageH, undefined, 'MEDIUM');
-      } catch {
-        d.setFont('helvetica', 'italic'); d.setFontSize(6.5); d.setTextColor(...C.grey);
-        d.text('Signature image unavailable', x + w / 2, y + 20, { align: 'center' });
-      }
-    } else {
-      d.setDrawColor(...C.border); d.setLineWidth(0.3); d.setLineDash([1.5, 1.5]);
-      d.line(x + 8, y + h - 9, x + w - 8, y + h - 9);
-      d.setLineDash([]);
-      d.setFont('helvetica', 'italic'); d.setFontSize(6.5); d.setTextColor(...C.grey);
-      d.text('Sign here', x + w / 2, y + h - 5, { align: 'center' });
-    }
+    d.setDrawColor(...C.border); d.setLineWidth(0.3); d.setLineDash([1.5, 1.5]);
+    d.line(x + 8, y + h - 9, x + w - 8, y + h - 9);
+    d.setLineDash([]);
+    d.setFont('helvetica', 'italic'); d.setFontSize(6.5); d.setTextColor(...C.grey);
+    d.text('Completed through e-signature', x + w / 2, y + h - 5, { align: 'center' });
     d.setFont('helvetica', 'normal'); d.setFontSize(6.5); d.setTextColor(...C.grey);
     d.text('Date: ________________________', x + 4, y + h - 1.5);
   }
@@ -398,7 +380,7 @@ class CommercialPDFBuilder {
   save(filename) { this.doc.save(filename); }
 }
 
-function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
+function buildCommercialROA(pdf, formData) {
   const feeSummary = getBrokerFeeSummary(formData);
   const feeStr = feeSummary.consentRequired ? feeSummary.displayValue : 'No broker fee applicable';
   const disclosureEvidence = getStatutoryDisclosureEvidence(formData);
@@ -593,7 +575,6 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   // 6. NEEDS ANALYSIS
   pdf.sectionHeading('6.  NEEDS ANALYSIS', 22);
   sh = false;
-  pdf.dataRow('Perils to be Insured', (formData.perilsSelected || []).join(', ') || (formData.perilsSelected?.includes('Other') ? formData.perilsOther : ''), sh = !sh);
   pdf.dataRow('Value to be Insured', formData.valueToBeInsured, sh = !sh);
   pdf.twoColRow({ label: 'Compulsory Excess', value: yn(formData.compulsoryExcess) }, { label: 'Voluntary Excess', value: formData.voluntaryExcess }, sh = !sh);
   pdf.dataRow('No Claims Bonus', yn(formData.noClaimsBonus), sh = !sh);
@@ -635,12 +616,11 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
     pdf.cy += 2;
   });
   pdf.gap(4);
-  pdf.dataRow('Signature Date', formData.sigDate);
-  pdf.gap(6);
+  pdf.gap(2);
   pdf._needSpace(42);
   const hw = (CW - 8) / 2;
-  pdf.sigBox(SIGNATURE_LABELS.commercialClient, clientSig, ML, pdf.cy, hw, 38);
-  pdf.sigBox(SIGNATURE_LABELS.advisor, advisorSig, ML + hw + 8, pdf.cy, hw, 38);
+  pdf.sigBox(SIGNATURE_LABELS.commercialClient, ML, pdf.cy, hw, 38);
+  pdf.sigBox(SIGNATURE_LABELS.advisor, ML + hw + 8, pdf.cy, hw, 38);
   pdf.cy += 42;
   d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
   d.text(formData.companyName || 'Client', ML + hw / 2, pdf.cy, { align: 'center' });
@@ -661,12 +641,12 @@ function buildCommercialROA(pdf, formData, clientSig, advisorSig) {
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
   d.text('CATEGORY OF RISK', ML + 3, pdf.cy + 5);
   d.text('COVER', ML + CW - 42, pdf.cy + 5);
-  d.text('SASRIA', ML + CW - 14, pdf.cy + 5);
+  d.text('SASRIA CONFIRMED', ML + CW - 24, pdf.cy + 5);
   pdf.cy += 8;
   sh = false;
   COMMERCIAL_RISK_CATEGORIES.forEach((cat, i) => {
     const s = formData.riskState?.[i];
-    pdf.riskRow(cat.name, cat.note, s?.cover, s?.cover === 'yes' && s?.sasria, sh = !sh, !!s?.flagged);
+    pdf.riskRow(cat.name, cat.note, s?.cover, isSasriaConfirmed(cat, s, formData.sasriaIncludedClasses), sh = !sh, !!s?.flagged);
   });
   if (formData.additionalComments) {
     pdf.gap(2);
@@ -745,26 +725,18 @@ function buildCommercialChecklist(pdf, formData, checklistState) {
 }
 
 export async function generateCommercialPDF(formData) {
-  const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(logoUrl),
-    loadImgAsDataURL(formData.clientSig),
-    loadImgAsDataURL(formData.advisorSig),
-  ]);
+  const logo = await loadImgAsDataURL(logoUrl);
   const pdf = new CommercialPDFBuilder(logo, getPdfMetadata(formData));
-  buildCommercialROA(pdf, formData, clientSig, advisorSig);
+  buildCommercialROA(pdf, formData);
   pdf._finalizeFooters();
   const name = (formData.companyName || 'Commercial').replace(/[^a-zA-Z0-9_]/g, '_');
   pdf.save(`HRS_Commercial_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
 export async function generateCommercialROABase64(formData, extras = {}) {
-  const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(logoUrl),
-    loadImgAsDataURL(formData.clientSig),
-    loadImgAsDataURL(formData.advisorSig),
-  ]);
+  const logo = await loadImgAsDataURL(logoUrl);
   const pdf = new CommercialPDFBuilder(logo, getPdfMetadata(formData, extras));
-  buildCommercialROA(pdf, formData, clientSig, advisorSig);
+  buildCommercialROA(pdf, formData);
   pdf._finalizeFooters();
   const name = (formData.companyName || 'Commercial').replace(/[^a-zA-Z0-9_]/g, '_');
   const filename = `HRS_Commercial_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
@@ -778,13 +750,9 @@ export async function generateCommercialROABase64(formData, extras = {}) {
  * later downloaded / emailed / sent to DocuSign.
  */
 export async function generateCanonicalCommercialROA(formData, { submissionId, templateVersion }) {
-  const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(logoUrl),
-    loadImgAsDataURL(formData.clientSig),
-    loadImgAsDataURL(formData.advisorSig),
-  ]);
+  const logo = await loadImgAsDataURL(logoUrl);
   const pdf = new CommercialPDFBuilder(logo, getPdfMetadata(formData, { submissionId, templateVersion }));
-  buildCommercialROA(pdf, formData, clientSig, advisorSig);
+  buildCommercialROA(pdf, formData);
   pdf._finalizeFooters();
   const name = (formData.companyName || 'Commercial').replace(/[^a-zA-Z0-9_]/g, '_');
   const filename = `HRS_Commercial_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
@@ -794,13 +762,9 @@ export async function generateCanonicalCommercialROA(formData, { submissionId, t
 }
 
 export async function generateCommercialCombinedPDF(formData, checklistState) {
-  const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(logoUrl),
-    loadImgAsDataURL(formData.clientSig),
-    loadImgAsDataURL(formData.advisorSig),
-  ]);
+  const logo = await loadImgAsDataURL(logoUrl);
   const pdf = new CommercialPDFBuilder(logo, getPdfMetadata(formData));
-  buildCommercialROA(pdf, formData, clientSig, advisorSig);
+  buildCommercialROA(pdf, formData);
   buildCommercialChecklist(pdf, formData, checklistState);
   pdf._finalizeFooters();
   const name = (formData.companyName || 'Commercial').replace(/[^a-zA-Z0-9_]/g, '_');

@@ -36,6 +36,25 @@ export async function loadSubmissionForBroker(submissionId, brokerUserId) {
   return row;
 }
 
+export async function listSubmissionsForBroker(brokerUserId) {
+  const supabase = getServerSupabase();
+  const columns = [
+    'id', 'roa_type', 'client_reference', 'advisor_email', 'status',
+    'signing_provider', 'signing_status', 'docusign_envelope_id', 'docusign_status',
+    'submitted_at', 'sent_for_signature_at', 'completed_at', 'evidence_retrieved_at',
+    'pdf_storage_path', 'signed_pdf_storage_path', 'certificate_storage_path',
+    'audit_log_storage_path', 'crm_client_id', 'crm_deal_id',
+  ].join(',');
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .select(columns)
+    .eq('advisor_user_id', brokerUserId);
+  if (error) throw new Error(`List submissions failed: ${error.message}`);
+  return (data || [])
+    .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')))
+    .slice(0, 250);
+}
+
 export async function insertSubmission(row) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase

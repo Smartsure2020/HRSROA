@@ -1,13 +1,17 @@
-import { POLICY_TYPES, PERILS, VALUE_TYPES } from './hrsConstants';
+import { POLICY_TYPES, VALUE_TYPES } from './hrsConstants';
 import { getBrokerFeeSummary } from './brokerFee';
 import { applySharedConditionalCleanup, clearStaleReplacementFields } from './conditionalCleanup';
 import { COMMERCIAL_STEPS as AUTHORITATIVE_COMMERCIAL_STEPS } from './flowSteps';
+import { normaliseSasriaSelection } from './sasriaApplicability';
 
-export { POLICY_TYPES, PERILS, VALUE_TYPES };
+export { POLICY_TYPES, VALUE_TYPES };
 
 /** Enforces the Phase 3 conditional-cleanup invariants for the Commercial flow. */
 export function applyConditionalCleanup(formData) {
-  return clearStaleReplacementFields(applySharedConditionalCleanup(formData));
+  return normaliseSasriaSelection(
+    clearStaleReplacementFields(applySharedConditionalCleanup(formData)),
+    COMMERCIAL_RISK_CATEGORIES,
+  );
 }
 
 // Compatibility export for callers that previously imported this constant.
@@ -15,33 +19,33 @@ export function applyConditionalCleanup(formData) {
 export const COMMERCIAL_STEPS = AUTHORITATIVE_COMMERCIAL_STEPS;
 
 export const COMMERCIAL_RISK_CATEGORIES = [
-  { name: "Fire", note: "", sasria: true },
-  { name: "Buildings Combined", note: "", sasria: true },
-  { name: "Office Contents", note: "", sasria: true },
-  { name: "Business Interruption", note: "", sasria: true },
-  { name: "Accidental Damage", note: "", sasria: false },
-  { name: "Theft", note: "Forcible entry and/or exit applicable", sasria: false },
-  { name: "Money", note: "", sasria: false },
-  { name: "Glass", note: "", sasria: false },
-  { name: "Business All Risks", note: "", sasria: false },
-  { name: "Electronic Equipment", note: "Make, model and serial numbers required", sasria: false },
-  { name: "Goods in Transit", note: "", sasria: false },
-  { name: "Marine", note: "", sasria: false },
-  { name: "Fidelity Guarantee", note: "", sasria: false },
-  { name: "Public Liability", note: "", sasria: false },
-  { name: "Products Liability", note: "", sasria: false },
-  { name: "Employers Liability", note: "", sasria: false },
-  { name: "Other Specific Liability", note: "", sasria: false },
-  { name: "Motor", note: "Comprehensive / TPF&T / Third Party Only", sasria: true },
-  { name: "Motor Traders", note: "", sasria: false },
-  { name: "Homeowners", note: "", sasria: true },
-  { name: "Household Contents", note: "", sasria: true },
-  { name: "Personal Liability", note: "", sasria: false },
-  { name: "D&O Liability", note: "Directors & Officers", sasria: false },
-  { name: "Professional Indemnity", note: "", sasria: false },
-  { name: "GPA and / or Stated Benefits", note: "", sasria: false },
-  { name: "Any Other Specific", note: "", sasria: false },
-  { name: "Value Added Products", note: "Roadside Assistance", sasria: false },
+  { name: "Fire", note: "", sasriaClass: "material_damage" },
+  { name: "Buildings Combined", note: "", sasriaClass: "material_damage" },
+  { name: "Office Contents", note: "", sasriaClass: "material_damage" },
+  { name: "Business Interruption", note: "", sasriaClass: "business_interruption" },
+  { name: "Accidental Damage", note: "", sasriaClass: null },
+  { name: "Theft", note: "Forcible entry and/or exit applicable; ordinary theft is not represented as SASRIA cover", sasriaClass: null },
+  { name: "Money", note: "", sasriaClass: "money" },
+  { name: "Glass", note: "", sasriaClass: null },
+  { name: "Business All Risks", note: "", sasriaClass: null },
+  { name: "Electronic Equipment", note: "Make, model and serial numbers required", sasriaClass: null },
+  { name: "Goods in Transit", note: "", sasriaClass: "goods_in_transit" },
+  { name: "Marine", note: "", sasriaClass: null },
+  { name: "Fidelity Guarantee", note: "", sasriaClass: null },
+  { name: "Public Liability", note: "", sasriaClass: null },
+  { name: "Products Liability", note: "", sasriaClass: null },
+  { name: "Employers Liability", note: "", sasriaClass: null },
+  { name: "Other Specific Liability", note: "", sasriaClass: null },
+  { name: "Motor", note: "Comprehensive / TPF&T / Third Party Only", sasriaClass: "motor" },
+  { name: "Motor Traders", note: "Applicable motor exposure only", sasriaClass: "motor" },
+  { name: "Homeowners", note: "", sasriaClass: "material_damage" },
+  { name: "Household Contents", note: "", sasriaClass: "material_damage" },
+  { name: "Personal Liability", note: "", sasriaClass: null },
+  { name: "D&O Liability", note: "Directors & Officers", sasriaClass: null },
+  { name: "Professional Indemnity", note: "", sasriaClass: null },
+  { name: "GPA and / or Stated Benefits", note: "", sasriaClass: null },
+  { name: "Any Other Specific", note: "Applicability requires adviser review", sasriaClass: "conditional" },
+  { name: "Value Added Products", note: "Roadside Assistance", sasriaClass: null },
 ];
 
 export const COMMERCIAL_PRINCIPLES = [
@@ -207,12 +211,11 @@ export function getCommercialInitialFormData() {
     agreedFees: '',
 
     // Risk categories
-    riskState: COMMERCIAL_RISK_CATEGORIES.map(() => ({ cover: null, sasria: false })),
+    riskState: COMMERCIAL_RISK_CATEGORIES.map(() => ({ cover: null })),
+    sasriaIncludedClasses: [],
     additionalComments: '',
 
     // Needs analysis
-    perilsSelected: [],
-    perilsOther: '',
     valueToBeInsured: '',
     compulsoryExcess: null,
     voluntaryExcess: '',
@@ -245,10 +248,6 @@ export function getCommercialInitialFormData() {
     apptInsurer: '',
     apptPolicyNo: '',
 
-    // Signatures
     inceptionDate: today,
-    sigDate: today,
-    clientSig: null,
-    advisorSig: null,
   };
 }

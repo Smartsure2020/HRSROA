@@ -19,7 +19,7 @@
 import { getInitialFormData, applyConditionalCleanup as applyPersonalCleanup } from './hrsConstants';
 import { getCommercialInitialFormData, applyConditionalCleanup as applyCommercialCleanup } from './hrsCommercialConstants';
 
-export const DRAFT_SCHEMA_VERSION = 1;
+export const DRAFT_SCHEMA_VERSION = 2;
 export const DRAFT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 const LEGACY_PERSONAL_KEY = 'hrs_roa_draft';
@@ -30,7 +30,7 @@ const KEYS = {
 };
 
 // Never persisted, regardless of what the caller passes in.
-const EXCLUDED_FIELDS = ['clientSig', 'advisorSig'];
+const EXCLUDED_FIELDS = ['clientSig', 'advisorSig', 'sigDate', 'perilsSelected', 'perilsOther'];
 
 // Curated "did the user actually start entering something" fields, used only to decide
 // whether a beforeunload warning is warranted (the initial form shape already carries
@@ -122,10 +122,6 @@ function normaliseFormData(flowType, rawFormData) {
       merged[key] = incoming ?? initialVal;
     }
   });
-
-  // Signatures are never restored from a draft, even if an old draft happens to contain one.
-  merged.clientSig = null;
-  merged.advisorSig = null;
 
   // Re-apply conditional-cleanup invariants so stale legacy child values (e.g. an
   // acknowledged Letter of Investigation saved while changingBroker was 'yes', restored

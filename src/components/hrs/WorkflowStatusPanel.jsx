@@ -47,7 +47,7 @@ function fmtTime(iso) {
  * Truthful workflow-status panel. Phase ROA-1 adds durable states derived
  * from the `submission` row when available:
  *   • Canonical PDF stored → good (with SHA-256 fragment)
- *   • DocuSign envelope + status (sent / delivered / completed / declined / …)
+ *   • Signing-provider envelope + status (sent / delivered / completed / declined / …)
  *   • Final signed document stored → good iff signed.pdf exists
  *   • Certificate of Completion stored → good iff certificate.pdf exists
  *
@@ -66,11 +66,13 @@ export default function WorkflowStatusPanel({
   submission = null,
 }) {
   const canonicalStored = Boolean(submission?.hasCanonicalPdf);
-  const envelopeId = submission?.docusignEnvelopeId || null;
-  const dsStatus = submission?.docusignStatus || null;
+  const envelopeId = submission?.signingEnvelopeId || submission?.docusignEnvelopeId || null;
+  const signingStatus = submission?.signingStatus || submission?.docusignStatus || null;
+  const signingProvider = submission?.signingProvider || (submission?.docusignEnvelopeId ? 'docusign' : null);
   const docusignSentAtDerived = submission?.sentForSignatureAt || docusignSentAt;
   const signedStored = Boolean(submission?.hasSignedPdf);
   const certificateStored = Boolean(submission?.hasCertificate);
+  const auditLogStored = Boolean(submission?.hasAuditLog);
   const completedAt = submission?.completedAt || null;
   const evidenceRetrievedAt = submission?.evidenceRetrievedAt || null;
   const sha256Frag = submission?.pdfSha256 ? `SHA-256 ${String(submission.pdfSha256).slice(0, 12)}…` : null;
@@ -117,47 +119,55 @@ export default function WorkflowStatusPanel({
       </StatusRow>
 
       <StatusRow
-        label="Sent for signature"
+        label="Signing provider"
         tone={envelopeId ? "good" : (docusignStatus === 'envelope_created' ? "pending" : "neutral")}
         icon={envelopeId ? Check : (docusignStatus === 'envelope_created' ? Check : Minus)}
         timestamp={fmtTime(docusignSentAtDerived)}
       >
         {envelopeId
-          ? (dsStatus ? `${dsStatus} · ${envelopeId.slice(0, 8)}…` : `Sent · ${envelopeId.slice(0, 8)}…`)
+          ? `${signingProvider || 'E-signature'} · ${envelopeId.slice(0, 8)}…`
           : (docusignStatus === 'envelope_created' ? "Envelope created" : "Not sent")}
       </StatusRow>
 
       <StatusRow
-        label="Client / advisor signature"
-        tone={dsStatus === 'completed' ? "good" : (dsStatus ? "pending" : "neutral")}
-        icon={dsStatus === 'completed' ? Check : Minus}
+        label="Signature status"
+        tone={signingStatus === 'completed' ? "good" : (signingStatus ? "pending" : "neutral")}
+        icon={signingStatus === 'completed' ? Check : Minus}
         timestamp={fmtTime(completedAt)}
       >
-        {!dsStatus && "Not tracked"}
-        {dsStatus === 'sent' && "Awaiting client signature"}
-        {dsStatus === 'delivered' && "Client viewed — awaiting signature"}
-        {dsStatus === 'completed' && "Signed"}
-        {dsStatus === 'declined' && "Declined"}
-        {dsStatus === 'voided' && "Voided"}
-        {dsStatus === 'expired' && "Expired"}
-        {dsStatus && !['sent','delivered','completed','declined','voided','expired'].includes(dsStatus) && dsStatus}
+        {!signingStatus && "Not tracked"}
+        {signingStatus === 'sent' && "Awaiting client signature"}
+        {signingStatus === 'delivered' && "Client viewed — awaiting signature"}
+        {signingStatus === 'completed' && "Signed"}
+        {signingStatus === 'declined' && "Declined"}
+        {signingStatus === 'voided' && "Voided"}
+        {signingStatus === 'expired' && "Expired"}
+        {signingStatus && !['sent','delivered','completed','declined','voided','expired'].includes(signingStatus) && signingStatus}
       </StatusRow>
 
       <StatusRow
         label="Final signed document stored"
-        tone={signedStored ? "good" : (dsStatus === 'completed' ? "pending" : "neutral")}
+        tone={signedStored ? "good" : (signingStatus === 'completed' ? "pending" : "neutral")}
         icon={signedStored ? Check : Minus}
       >
-        {signedStored ? "Stored" : (dsStatus === 'completed' ? "Retrieving…" : "Not yet")}
+        {signedStored ? "Stored" : (signingStatus === 'completed' ? "Retrieving…" : "Not yet")}
       </StatusRow>
 
       <StatusRow
         label="Certificate of Completion stored"
-        tone={certificateStored ? "good" : (dsStatus === 'completed' ? "pending" : "neutral")}
+        tone={certificateStored ? "good" : (signingStatus === 'completed' ? "pending" : "neutral")}
         icon={certificateStored ? Check : Minus}
         timestamp={fmtTime(evidenceRetrievedAt)}
       >
-        {certificateStored ? "Stored" : (dsStatus === 'completed' ? "Retrieving…" : "Not yet")}
+        {certificateStored ? "Stored" : (signingStatus === 'completed' ? "Retrieving…" : "Not yet")}
+      </StatusRow>
+
+      <StatusRow
+        label="Audit log stored"
+        tone={auditLogStored ? "good" : (signingStatus === 'completed' ? "pending" : "neutral")}
+        icon={auditLogStored ? Check : Minus}
+      >
+        {auditLogStored ? "Stored" : (signingStatus === 'completed' ? "Retrieving…" : "Not yet")}
       </StatusRow>
     </div>
   );

@@ -18,6 +18,7 @@ vi.mock('@supabase/supabase-js', () => ({
 // Load handlers AFTER the mock is registered.
 const createHandler = (await import('../api/roa-submissions/create.js')).default;
 const getHandler = (await import('../api/roa-submissions/get.js')).default;
+const listHandler = (await import('../api/roa-submissions/list.js')).default;
 const pdfHandler = (await import('../api/roa-submissions/pdf.js')).default;
 const attachCrmHandler = (await import('../api/roa-submissions/attach-crm.js')).default;
 const { _resetServerSupabaseForTests } = await import('../api/_lib/supabaseServer.js');
@@ -268,6 +269,27 @@ describe('/api/roa-submissions/get — ownership + safe 404', () => {
   });
 });
 
+describe('/api/roa-submissions/list — broker-scoped register', () => {
+  it('rejects unauthenticated callers', async () => {
+    const res = mockRes();
+    await listHandler({ method: 'GET', headers: {} }, res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('returns only the authenticated broker submissions without snapshot_json', async () => {
+    const andrew = await createFor('token-andrew');
+    const werner = await createFor('token-werner');
+    const res = mockRes();
+    await listHandler({ method: 'GET', headers: { authorization: 'Bearer token-andrew' } }, res);
+    expect(res.statusCode).toBe(200);
+    const ids = res.body.submissions.map((item) => item.submissionId);
+    expect(ids).toContain(andrew.submissionId);
+    expect(ids).not.toContain(werner.submissionId);
+    expect(res.body.submissions.every((item) => !Object.hasOwn(item, 'snapshot_json'))).toBe(true);
+    expect(res.body.submissions.find((item) => item.submissionId === andrew.submissionId)?.clientReference).toBe('Personal – Jane Doe');
+  });
+});
+
 describe('/api/roa-submissions/pdf — evidence hash verification', () => {
   it('serves canonical bytes to the owner with the persisted hash', async () => {
     const { submissionId, bytes } = await createFor('token-andrew');
@@ -330,6 +352,64 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
     );
     expect(res.statusCode).toBe(500);
     expect(res.body.error).toBe('evidence_hash_mismatch');
+  });
+
+  it('audit-log download requires authentication', async () => {
+    const { submissionId } = await createFor('token-andrew');
+    const res = mockRes();
+    await pdfHandler({ method: 'GET', headers: {}, query: { id: submissionId, kind: 'audit-log' } }, res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('audit-log download is broker-owned and unavailable evidence returns 409', async () => {
+    const { submissionId } = await createFor('token-andrew');
+    const unavailable = mockRes();
+    await pdfHandler({
+      method: 'GET',
+      headers: { authorization: 'Bearer token-andrew' },
+      query: { id: submissionId, kind: 'audit-log' },
+    }, unavailable);
+    expect(unavailable.statusCode).toBe(409);
+    expect(unavailable.body.error).toBe('audit_log_not_available');
+
+    const otherBroker = mockRes();
+    await pdfHandler({
+      method: 'GET',
+      headers: { authorization: 'Bearer token-werner' },
+      query: { id: submissionId, kind: 'audit-log' },
+    }, otherBroker);
+    expect(otherBroker.statusCode).toBe(404);
+  });
+
+  it('serves a verified audit log and fails closed on hash mismatch', async () => {
+    const { submissionId } = await createFor('token-andrew');
+    const path = `${submissionId}/audit-log.pdf`;
+    const bytes = fakePdfBytes('audit-log');
+    mock.fixtures.putStorage(path, bytes);
+    mock.fixtures.putRow(submissionId, {
+      audit_log_storage_path: path,
+      audit_log_sha256: sha256HexOfBytes(bytes),
+    });
+
+    const ok = mockRes();
+    await pdfHandler({
+      method: 'GET',
+      headers: { authorization: 'Bearer token-andrew' },
+      query: { id: submissionId, kind: 'audit-log' },
+    }, ok);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['cache-control']).toBe('private, no-store');
+    expect(ok._bytes.equals(bytes)).toBe(true);
+
+    mock.fixtures.putRow(submissionId, { audit_log_sha256: sha256HexOfBytes(fakePdfBytes('different')) });
+    const corrupt = mockRes();
+    await pdfHandler({
+      method: 'GET',
+      headers: { authorization: 'Bearer token-andrew' },
+      query: { id: submissionId, kind: 'audit-log' },
+    }, corrupt);
+    expect(corrupt.statusCode).toBe(500);
+    expect(corrupt.body.error).toBe('evidence_hash_mismatch');
   });
 });
 

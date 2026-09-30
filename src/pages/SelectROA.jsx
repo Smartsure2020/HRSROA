@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Building2, User, LogOut } from 'lucide-react';
+import { Building2, User, LogOut, Files } from 'lucide-react';
 import logoUrl from '../assets/hrs-logo.png';
 import { useAuth } from '@/lib/AuthContext';
 
@@ -23,7 +23,7 @@ export default function SelectROA() {
       </div>
 
       {/* Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 w-full max-w-2xl">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 w-full max-w-4xl">
         <button
           onClick={() => navigate('/personal')}
           className="group bg-white/10 hover:bg-white/20 border border-white/20 hover:border-hrs-orange rounded-2xl p-7 text-left transition-all duration-200 hover:shadow-2xl hover:-translate-y-1"
@@ -41,6 +41,22 @@ export default function SelectROA() {
             Start Personal ROA
             <span className="group-hover:translate-x-1 transition-transform inline-block">→</span>
           </div>
+        </button>
+
+        <button
+          onClick={() => navigate('/roas')}
+          className="group bg-white/10 hover:bg-white/20 border border-white/20 hover:border-hrs-orange rounded-2xl p-7 text-left transition-all duration-200 hover:shadow-2xl hover:-translate-y-1"
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-11 h-11 rounded-xl bg-hrs-orange/20 flex items-center justify-center group-hover:bg-hrs-orange/30 transition-colors">
+              <Files className="w-5 h-5 text-hrs-orange" />
+            </div>
+            <span className="font-heading text-white text-[1.05rem]">My ROAs</span>
+          </div>
+          <p className="text-white/60 text-[0.8rem] leading-relaxed">
+            Find earlier submissions, check signature progress and download retained evidence.
+          </p>
+          <div className="mt-5 flex items-center gap-1.5 text-hrs-orange text-[0.78rem] font-semibold">Open ROA Register <span>→</span></div>
         </button>
 
         <button

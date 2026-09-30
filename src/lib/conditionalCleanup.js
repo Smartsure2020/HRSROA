@@ -60,12 +60,12 @@ function clearStaleCancelReasonText(formData) {
   return formData;
 }
 
-function clearStalePerilsOther(formData) {
-  const selectsOther = Array.isArray(formData.perilsSelected) && formData.perilsSelected.includes('Other');
-  if (!selectsOther && formData.perilsOther) {
-    return { ...formData, perilsOther: '' };
-  }
-  return formData;
+function removeDeprecatedLocalEvidenceFields(formData) {
+  const deprecated = ['perilsSelected', 'perilsOther', 'clientSig', 'advisorSig', 'sigDate'];
+  if (!deprecated.some((key) => Object.hasOwn(formData, key))) return formData;
+  const next = { ...formData };
+  deprecated.forEach((key) => delete next[key]);
+  return next;
 }
 
 /** Invariants shared by both the Personal and Commercial flows. */
@@ -77,7 +77,7 @@ export function applySharedConditionalCleanup(formData) {
   next = clearStalePolicyTypeFields(next);
   next = clearStaleElectionInitials(next);
   next = clearStaleCancelReasonText(next);
-  next = clearStalePerilsOther(next);
+  next = removeDeprecatedLocalEvidenceFields(next);
   return next;
 }
 

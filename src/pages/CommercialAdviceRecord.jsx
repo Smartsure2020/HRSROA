@@ -26,8 +26,7 @@ import CommercialStepRiskCategories from '../components/hrs/commercial/steps/Com
 import CommercialStepSignatures from '../components/hrs/commercial/steps/CommercialStepSignatures';
 import CommercialStepReview from '../components/hrs/commercial/steps/CommercialStepReview';
 import CommercialStepChecklist from '../components/hrs/commercial/steps/CommercialStepChecklist';
-import { COMMERCIAL_STEPS, getActiveSteps, getNextButtonText, getStepIndex, getStepId } from '../lib/flowSteps';
-import SignatureIncompleteDialog from '../components/hrs/SignatureIncompleteDialog';
+import { COMMERCIAL_STEPS, getActiveSteps, getNextButtonText, getStepId } from '../lib/flowSteps';
 
 function CommercialStepProgress({ currentStep, onGoTo }) {
   const visibleSteps = COMMERCIAL_STEPS;
@@ -79,7 +78,6 @@ export default function CommercialAdviceRecord() {
   const [stepErrors, setStepErrors] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
-  const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
   const [submission, setSubmission] = useState(null);
   const pendingDraftRef = useRef(null);
 
@@ -161,26 +159,14 @@ export default function CommercialAdviceRecord() {
   const isChecklist = step === CHECKLIST_STEP;
 
   const tryNext = () => {
-    // Signatures step (6) — optional if sending via DocuSign
     const errors = getCommercialStepErrors(step, formData);
-    if (errors.length && step !== 6) {
+    if (errors.length) {
       setStepErrors(errors);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
-    // For signatures step, warn but allow proceeding
-    if (step === getStepIndex(COMMERCIAL_STEPS, 'signatures', formData) && errors.length) {
-      setSignatureDialogOpen(true);
-      return;
-    }
     setStepErrors([]);
     setStep(s => Math.min(s + 1, COMMERCIAL_STEPS.length - 1));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const goToSignatures = () => {
-    setSignatureDialogOpen(false);
-    setStep(getStepIndex(COMMERCIAL_STEPS, 'signatures', formData));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -199,7 +185,7 @@ export default function CommercialAdviceRecord() {
   };
 
   const handleSubmit = async () => {
-    // Validate all steps except signatures (6) which is optional
+    // Validate every pre-review step, including declaration initials where applicable.
     const allErrors = [0, 1, 2, 3, 4, 5].flatMap((s) =>
       getCommercialStepErrors(s, formData).map((e) => `Step ${s + 1}: ${e}`)
     );
@@ -318,7 +304,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
 
       {showRestoreBanner && (
         <div className="bg-hrs-blue text-white text-[0.82rem] px-4 py-2.5 flex items-center justify-between gap-4">
-          <span>You have an unsaved Commercial ROA in progress — continue? (Signatures will need to be recaptured.)</span>
+          <span>You have an unsaved Commercial ROA in progress — continue?</span>
           <div className="flex gap-3 flex-shrink-0">
             <button onClick={handleRestoreDraft} className="underline font-semibold">Continue</button>
             <button onClick={handleDismissDraft} className="opacity-70 hover:opacity-100">Discard</button>
@@ -381,12 +367,6 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         )}
         {step === 8 && <CommercialStepChecklist data={formData} submission={submission} onSubmissionUpdate={setSubmission} onRestart={restart} />}
       </main>
-      <SignatureIncompleteDialog
-        open={signatureDialogOpen}
-        onOpenChange={setSignatureDialogOpen}
-        onGoToSignatures={goToSignatures}
-        signingRoute="docusign"
-      />
     </div>
   );
 }

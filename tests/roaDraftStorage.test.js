@@ -129,7 +129,7 @@ describe('draft normalisation on restore', () => {
     const { draft } = getDraftStatus('personal');
     expect(draft.formData.someDeprecatedField).toBeUndefined();
     expect(draft.formData.ackPrinciples).toBe(true);
-    expect(Array.isArray(draft.formData.perilsSelected)).toBe(true);
+    expect(draft.formData.perilsSelected).toBeUndefined();
   });
 
   it('never restores signatures even if present in stored data', () => {
@@ -138,6 +138,6 @@ describe('draft normalisation on restore', () => {
       formData: { firstName: 'Jane', clientSig: 'data:image/png;base64,AAA' },
     }));
     const { draft } = getDraftStatus('personal');
-    expect(draft.formData.clientSig).toBeNull();
+    expect(draft.formData.clientSig).toBeUndefined();
   });
 });

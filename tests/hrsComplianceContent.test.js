@@ -47,9 +47,9 @@ describe('getStatutoryDisclosureEvidence', () => {
     expect(e.signatureStatus).toBe('pending');
   });
 
-  it('reports "yes" only when acknowledged AND the general ROA signature is present', () => {
+  it('ignores legacy local signature data because e-signature is authoritative', () => {
     const e = getStatutoryDisclosureEvidence({ ackStatutoryDisclosure: true, clientSig: 'data:image/png;base64,AAA' });
-    expect(e.signatureStatus).toBe('yes');
+    expect(e.signatureStatus).toBe('pending');
   });
 
   it('always carries the current controlled version', () => {
