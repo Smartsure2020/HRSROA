@@ -6,4 +6,4 @@
 // submission's stored template_version tells auditors which renderer produced
 // its bytes, regardless of what the current code prints.
 
-export const HRS_TEMPLATE_VERSION = 'HRS-TEMPLATE-2026-01';
+export const HRS_TEMPLATE_VERSION = 'HRS-TEMPLATE-2026-02';

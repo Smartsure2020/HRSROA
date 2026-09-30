@@ -459,18 +459,9 @@ function buildROA(pdf, formData) {
   pdf.multiLineDataRow('Client Decision', formData.basisDecision);
   pdf.gap();
 
-  // 4. NEEDS ANALYSIS
-  pdf.sectionHeading('4.  NEEDS ANALYSIS', 22);
-  sh = false;
-  pdf.dataRow('Value to be Insured', formData.valueToBeInsured, sh = !sh);
-  pdf.twoColRow({ label: 'Compulsory Excess', value: yn(formData.compulsoryExcess) }, { label: 'Voluntary Excess', value: formData.voluntaryExcess }, sh = !sh);
-  pdf.dataRow('No Claims Bonus', yn(formData.noClaimsBonus), sh = !sh);
-  if (formData.riskProfileNotes) pdf.multiLineDataRow('Risks / Items to be Included or Excluded', formData.riskProfileNotes);
-  pdf.gap();
-
-  // 5. RISK CATEGORIES
+  // 4. RISK CATEGORIES
   // heading(11) + column-header row(8) + first risk row(~9) = ~28mm minimum
-  pdf.sectionHeading('5.  RISK CATEGORIES', 22);
+  pdf.sectionHeading('4.  RISK CATEGORIES', 22);
   pdf._needSpace(8);
   const d = pdf.doc;
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
@@ -484,15 +475,19 @@ function buildROA(pdf, formData) {
     const s = formData.riskState?.[i];
     pdf.riskRow(cat.name, cat.note, s?.cover, isSasriaConfirmed(cat, s, formData.sasriaIncludedClasses), sh = !sh, !!s?.flagged);
   });
+  if (formData.riskProfileNotes) {
+    pdf.gap(2);
+    pdf.multiLineDataRow('Additional Risk / Cover Notes', formData.riskProfileNotes);
+  }
   if (formData.additionalComments) {
     pdf.gap(2);
     pdf.multiLineDataRow('Additional Comments', formData.additionalComments);
   }
   pdf.gap();
 
-  // 6. BANKING & DEBIT ORDER
+  // 5. BANKING & DEBIT ORDER
   // heading(11) + first dataRow(7) = 18mm; use 22 for comfortable buffer
-  pdf.sectionHeading('6.  BANKING & DEBIT ORDER', 22);
+  pdf.sectionHeading('5.  BANKING & DEBIT ORDER', 22);
   sh = false;
   pdf.dataRow('Bank Name', formData.bankName, sh = !sh);
   pdf.twoColRow({ label: 'Account Holder', value: formData.bankHolder }, { label: 'Account Type', value: formData.accountType }, sh = !sh);
@@ -509,9 +504,9 @@ function buildROA(pdf, formData) {
   }
   pdf.gap();
 
-  // 7. COMPLIANCE ACKNOWLEDGEMENTS
+  // 6. COMPLIANCE ACKNOWLEDGEMENTS
   // heading(11) + column-header row(8) + first principle row(~10) = ~29mm minimum
-  pdf.sectionHeading('7.  COMPLIANCE ACKNOWLEDGEMENTS', 22);
+  pdf.sectionHeading('6.  COMPLIANCE ACKNOWLEDGEMENTS', 22);
   pdf._needSpace(8);
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
@@ -613,8 +608,8 @@ function buildROA(pdf, formData) {
   }
   pdf.gap();
 
-  // 8. CLIENT DECLARATION
-  pdf.sectionHeading('8.  CLIENT DECLARATION', 25);
+  // 7. CLIENT DECLARATION
+  pdf.sectionHeading('7.  CLIENT DECLARATION', 25);
   sh = false;
   pdf.dataRow('Elects to conclude transaction differing from recommendation', formData.electionDiffers ? 'Yes' : 'No', sh = !sh);
   pdf.dataRow('Elects not to follow the advice furnished', formData.electionNotFollow ? 'Yes' : 'No', sh = !sh);
@@ -633,8 +628,8 @@ function buildROA(pdf, formData) {
   );
   pdf.gap();
 
-  // 9. SIGNATURES — heading(11) + legal text start(~20mm) = 31mm minimum
-  pdf.sectionHeading('9.  SIGNATURES', 25);
+  // 8. SIGNATURES — heading(11) + legal text start(~20mm) = 31mm minimum
+  pdf.sectionHeading('8.  SIGNATURES', 25);
   pdf.gap(3);
   d.setFont('helvetica', 'italic'); d.setFontSize(7); d.setTextColor(...C.grey);
   const legal = 'By signing below, the client confirms that all information provided is true and accurate, and that they have read and accepted all terms and disclosures contained in this Record of Advice, including the Client Declaration above. Holistic Risk Services (Pty) Ltd - Authorised FSP No. 28582.';

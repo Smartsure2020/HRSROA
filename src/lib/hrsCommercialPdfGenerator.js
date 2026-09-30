@@ -448,9 +448,12 @@ function buildCommercialROA(pdf, formData) {
   if (formData.agreedFees) pdf.dataRow('Agreed Fees', formData.agreedFees, sh = !sh);
   pdf.gap();
 
-  // 4. REPLACEMENT POLICY
+  let sectionNumber = 4;
+
+  // Optional replacement section. Later section numbers remain contiguous.
   if (formData.replacingExisting === 'yes') {
-    pdf.sectionHeading('4.  REPLACEMENT OF AN EXISTING POLICY', 22);
+    pdf.sectionHeading(`${sectionNumber}.  REPLACEMENT OF AN EXISTING POLICY`, 22);
+    sectionNumber += 1;
     sh = false;
     pdf.dataRow('Replacing Existing Policy', yn(formData.replacingExisting), sh = !sh);
     pdf.dataRow('Like for Like Basis', yn(formData.likeForLike), sh = !sh);
@@ -463,8 +466,9 @@ function buildCommercialROA(pdf, formData) {
     pdf.gap();
   }
 
-  // 5. PRINCIPLES & DISCLOSURES — heading(11) + col-header(8) + first row(~10) = ~29mm
-  pdf.sectionHeading('5.  PRINCIPLES & LEGAL DISCLOSURES', 22);
+  // PRINCIPLES & DISCLOSURES — heading(11) + col-header(8) + first row(~10) = ~29mm
+  pdf.sectionHeading(`${sectionNumber}.  PRINCIPLES & LEGAL DISCLOSURES`, 22);
+  sectionNumber += 1;
   pdf._needSpace(8);
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
@@ -572,17 +576,9 @@ function buildCommercialROA(pdf, formData) {
   }
   pdf.gap();
 
-  // 6. NEEDS ANALYSIS
-  pdf.sectionHeading('6.  NEEDS ANALYSIS', 22);
-  sh = false;
-  pdf.dataRow('Value to be Insured', formData.valueToBeInsured, sh = !sh);
-  pdf.twoColRow({ label: 'Compulsory Excess', value: yn(formData.compulsoryExcess) }, { label: 'Voluntary Excess', value: formData.voluntaryExcess }, sh = !sh);
-  pdf.dataRow('No Claims Bonus', yn(formData.noClaimsBonus), sh = !sh);
-  if (formData.riskProfileNotes) pdf.multiLineDataRow('Risks / Items to be Included or Excluded', formData.riskProfileNotes);
-  pdf.gap();
-
-  // 7. CLIENT DECLARATION
-  pdf.sectionHeading('7.  CLIENT DECLARATION', 25);
+  // CLIENT DECLARATION
+  pdf.sectionHeading(`${sectionNumber}.  CLIENT DECLARATION`, 25);
+  sectionNumber += 1;
   sh = false;
   pdf.dataRow('Elects to conclude transaction differing from recommendation', formData.electionDiffers ? 'Yes' : 'No', sh = !sh);
   pdf.dataRow('Elects not to follow the advice furnished', formData.electionNotFollow ? 'Yes' : 'No', sh = !sh);
@@ -601,8 +597,9 @@ function buildCommercialROA(pdf, formData) {
   );
   pdf.gap();
 
-  // 8. SIGNATURES — heading(11) + declaration text start(~20mm) = 31mm minimum
-  pdf.sectionHeading('8.  SIGNATURES — DECLARATION', 25);
+  // SIGNATURES — heading(11) + declaration text start(~20mm) = 31mm minimum
+  pdf.sectionHeading(`${sectionNumber}.  SIGNATURES — DECLARATION`, 25);
+  sectionNumber += 1;
   pdf.gap(3);
   d.setFont('helvetica', 'italic'); d.setFontSize(7); d.setTextColor(...C.grey);
   const decl1 = 'Declaration by the Adviser: I declare that the advice record is an accurate and complete record of the recommendations and advice that I provided the client with, based upon the information provided by the client.';
@@ -633,9 +630,9 @@ function buildCommercialROA(pdf, formData) {
   d.setFont('helvetica', 'normal'); d.setFontSize(6.5); d.setTextColor(...C.grey);
   d.text('An authorised FSP No 28582', ML + CW / 2, pdf.cy, { align: 'center' });
 
-  // 9. RISK CATEGORIES — force new page to avoid orphaned header
+  // RISK CATEGORIES — force new page to avoid orphaned header
   pdf._newPage();
-  pdf.sectionHeading('9.  INSURED RISKS AND / OR RISKS EXCLUDED FROM INSURANCE POLICY');
+  pdf.sectionHeading(`${sectionNumber}.  INSURED RISKS AND / OR RISKS EXCLUDED FROM INSURANCE POLICY`);
   pdf._needSpace(8);
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
@@ -648,6 +645,10 @@ function buildCommercialROA(pdf, formData) {
     const s = formData.riskState?.[i];
     pdf.riskRow(cat.name, cat.note, s?.cover, isSasriaConfirmed(cat, s, formData.sasriaIncludedClasses), sh = !sh, !!s?.flagged);
   });
+  if (formData.riskProfileNotes) {
+    pdf.gap(2);
+    pdf.multiLineDataRow('Additional Risk / Cover Notes', formData.riskProfileNotes);
+  }
   if (formData.additionalComments) {
     pdf.gap(2);
     pdf.multiLineDataRow('Additional Comments', formData.additionalComments);

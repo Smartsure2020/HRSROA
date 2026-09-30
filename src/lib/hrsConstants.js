@@ -58,8 +58,6 @@ export const POLICY_TYPES = ["New placement", "Renewal", "Replacement"];
 // authoritative definition lives in flowSteps.js.
 export const STEPS = PERSONAL_STEPS;
 
-export const VALUE_TYPES = ["Market Value", "Replacement Value", "Other"];
-
 export const PRINCIPLES = [
   'A short-term insurance policy is based on GOOD FAITH between all parties involved.',
   'A short-term insurance policy is issued as a POLICY OF INDEMNITY.',
@@ -114,7 +112,6 @@ export function getStepErrors(step, formData) {
       const errors = [];
       const assessed = formData.riskState?.some(r => r.cover === 'yes' || r.cover === 'no');
       if (!assessed) errors.push('At least one risk category must be assessed (Yes or No)');
-      if (!formData.valueToBeInsured) errors.push('Value to be Insured');
       return errors;
     }
     case 4: {
@@ -206,11 +203,7 @@ export function getInitialFormData() {
     sasriaIncludedClasses: [],
     additionalComments: "",
 
-    // Needs analysis
-    valueToBeInsured: "",
-    compulsoryExcess: null,
-    voluntaryExcess: "",
-    noClaimsBonus: null,
+    // Additional context for the detailed risk-category assessment
     riskProfileNotes: "",
 
     // Acknowledgements

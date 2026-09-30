@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { CheckCircle, FileDown, FilePlus, Send, RefreshCw } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import FormCard from "../FormCard";
 import WorkflowStatusPanel from "../WorkflowStatusPanel";
 import { generateCombinedPDF } from "../../../lib/hrsPdfGenerator";
@@ -79,6 +80,7 @@ const ADDITIONAL_DOCS = [
 const COMMISSION_ROWS = ["Brokerage (HRS)", "Broker", "Referror", "Other"];
 
 export default function StepChecklist({ data, submission, onSubmissionUpdate, onRestart }) {
+  const navigate = useNavigate();
   const fullName = [data.title, data.firstName, data.surname].filter(Boolean).join(' ') || '-';
   const address = [data.streetNumber, data.streetName, data.complexName, data.suburb, data.city, data.province, data.postalCode].filter(Boolean).join(', ') || '-';
 
@@ -261,11 +263,19 @@ export default function StepChecklist({ data, submission, onSubmissionUpdate, on
     <div>
       <div className="bg-gradient-to-br from-hrs-blue to-hrs-blue2 text-white rounded-xl p-5 mb-6 flex items-start gap-4">
         <CheckCircle className="w-9 h-9 text-hrs-orange flex-shrink-0 mt-0.5" />
-        <div>
+        <div className="flex-1">
           <h2 className="font-heading text-[1.2rem] text-hrs-orange mb-1">Advice Record Submitted</h2>
           <p className="text-[0.82rem] opacity-80 leading-relaxed">
             Record for <strong>{fullName}</strong> submitted. Complete the checklist and download or send for signature below.
           </p>
+          <div className="flex flex-wrap gap-2 mt-4">
+            <button type="button" onClick={() => navigate('/')} className="px-3 py-2 rounded-md border border-white/30 bg-white/10 text-[0.76rem] font-semibold hover:bg-white/20">
+              Back to Home
+            </button>
+            <button type="button" onClick={() => navigate('/roas')} className="px-3 py-2 rounded-md bg-hrs-orange text-white text-[0.76rem] font-semibold hover:bg-hrs-orange-light">
+              View My ROAs
+            </button>
+          </div>
         </div>
       </div>
 

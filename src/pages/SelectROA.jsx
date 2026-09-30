@@ -44,22 +44,6 @@ export default function SelectROA() {
         </button>
 
         <button
-          onClick={() => navigate('/roas')}
-          className="group bg-white/10 hover:bg-white/20 border border-white/20 hover:border-hrs-orange rounded-2xl p-7 text-left transition-all duration-200 hover:shadow-2xl hover:-translate-y-1"
-        >
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-11 h-11 rounded-xl bg-hrs-orange/20 flex items-center justify-center group-hover:bg-hrs-orange/30 transition-colors">
-              <Files className="w-5 h-5 text-hrs-orange" />
-            </div>
-            <span className="font-heading text-white text-[1.05rem]">My ROAs</span>
-          </div>
-          <p className="text-white/60 text-[0.8rem] leading-relaxed">
-            Find earlier submissions, check signature progress and download retained evidence.
-          </p>
-          <div className="mt-5 flex items-center gap-1.5 text-hrs-orange text-[0.78rem] font-semibold">Open ROA Register <span>→</span></div>
-        </button>
-
-        <button
           onClick={() => navigate('/commercial')}
           className="group bg-white/10 hover:bg-white/20 border border-white/20 hover:border-hrs-orange rounded-2xl p-7 text-left transition-all duration-200 hover:shadow-2xl hover:-translate-y-1"
         >
@@ -76,6 +60,22 @@ export default function SelectROA() {
             Start Commercial ROA
             <span className="group-hover:translate-x-1 transition-transform inline-block">→</span>
           </div>
+        </button>
+
+        <button
+          onClick={() => navigate('/roas')}
+          className="group bg-white/10 hover:bg-white/20 border border-white/20 hover:border-hrs-orange rounded-2xl p-7 text-left transition-all duration-200 hover:shadow-2xl hover:-translate-y-1"
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-11 h-11 rounded-xl bg-hrs-orange/20 flex items-center justify-center group-hover:bg-hrs-orange/30 transition-colors">
+              <Files className="w-5 h-5 text-hrs-orange" />
+            </div>
+            <span className="font-heading text-white text-[1.05rem]">My ROAs</span>
+          </div>
+          <p className="text-white/60 text-[0.8rem] leading-relaxed">
+            Find earlier submissions, check signature progress and download retained evidence.
+          </p>
+          <div className="mt-5 flex items-center gap-1.5 text-hrs-orange text-[0.78rem] font-semibold">Open ROA Register <span>→</span></div>
         </button>
       </div>
 

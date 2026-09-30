@@ -101,14 +101,6 @@ export default function StepReview({ data, onPrev, onSubmit, isSubmitting }) {
           <ReviewRow label="Broker Fee" value={feeSummary.consentRequired ? feeSummary.displayValue : "No broker fee applicable"} />
         </ReviewSection>
 
-        <ReviewSection title="Needs Analysis">
-          <ReviewRow label="Value to be Insured" value={data.valueToBeInsured} />
-          <ReviewRow label="Compulsory Excess" value={yn(data.compulsoryExcess)} />
-          <ReviewRow label="Voluntary Excess" value={data.voluntaryExcess} />
-          <ReviewRow label="No Claims Bonus" value={yn(data.noClaimsBonus)} />
-          {data.riskProfileNotes ? <ReviewRow label="Risk Profile Notes" value={data.riskProfileNotes} /> : null}
-        </ReviewSection>
-
         <ReviewSection title="Risk Categories">
           {RISK_CATEGORIES.map((cat, i) => {
             const s = data.riskState[i];
@@ -118,6 +110,7 @@ export default function StepReview({ data, onPrev, onSubmit, isSubmitting }) {
             if (isSasriaConfirmed(cat, s, data.sasriaIncludedClasses)) cv += " · SASRIA confirmed ✓";
             return <ReviewRow key={i} label={cat.name} value={cv} />;
           })}
+          {data.riskProfileNotes ? <ReviewRow label="Additional Risk / Cover Notes" value={data.riskProfileNotes} /> : null}
         </ReviewSection>
 
         <ReviewSection title="Banking & Debit">

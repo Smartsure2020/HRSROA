@@ -30,7 +30,10 @@ const KEYS = {
 };
 
 // Never persisted, regardless of what the caller passes in.
-const EXCLUDED_FIELDS = ['clientSig', 'advisorSig', 'sigDate', 'perilsSelected', 'perilsOther'];
+const EXCLUDED_FIELDS = [
+  'clientSig', 'advisorSig', 'sigDate', 'perilsSelected', 'perilsOther',
+  'valueToBeInsured', 'compulsoryExcess', 'voluntaryExcess', 'noClaimsBonus',
+];
 
 // Curated "did the user actually start entering something" fields, used only to decide
 // whether a beforeunload warning is warranted (the initial form shape already carries

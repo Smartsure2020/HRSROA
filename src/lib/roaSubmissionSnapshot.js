@@ -76,7 +76,10 @@ function deepFreeze(obj) {
  */
 export function sanitiseSnapshotForPersistence(snapshot) {
   const copy = { ...snapshot };
-  ['clientSig', 'advisorSig', 'sigDate', 'perilsSelected', 'perilsOther'].forEach((key) => delete copy[key]);
+  [
+    'clientSig', 'advisorSig', 'sigDate', 'perilsSelected', 'perilsOther',
+    'valueToBeInsured', 'compulsoryExcess', 'voluntaryExcess', 'noClaimsBonus',
+  ].forEach((key) => delete copy[key]);
   return copy;
 }
 

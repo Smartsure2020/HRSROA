@@ -186,6 +186,12 @@ export function makeMockSupabase() {
       deleteStorage: (path) => storage.delete(path),
       putRow: (id, patch) => Object.assign(rows.get(id) || {}, patch),
       failNextInsert: (message = 'injected insert failure') => { nextInsertError = message; },
+      reset() {
+        rows.clear();
+        storage.clear();
+        authUsers.clear();
+        nextInsertError = null;
+      },
     },
   };
 }

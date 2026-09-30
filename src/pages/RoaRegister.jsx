@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Download, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AppHeader from '../components/hrs/AppHeader';
-import { downloadEvidencePdf, listSubmissions } from '../lib/roaSubmissionClient';
+import {
+  downloadEvidencePdf,
+  isPendingSubmission,
+  loadSubmissionRegister,
+  refreshSubmissionRegister,
+} from '../lib/roaSubmissionClient';
 
 const FILTERS = [
   ['all', 'All'],
@@ -52,16 +57,42 @@ export default function RoaRegister() {
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const refreshInFlight = useRef(false);
 
-  const load = async () => {
+  const applyItems = useCallback((nextItems) => {
+    setItems(nextItems);
+    setSelected((current) => (
+      current
+        ? nextItems.find((item) => item.submissionId === current.submissionId) || null
+        : null
+    ));
+  }, []);
+
+  const load = useCallback(async ({ initial = false } = {}) => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     setLoading(true);
     setError('');
-    try { setItems(await listSubmissions()); }
+    try {
+      const nextItems = initial
+        ? await loadSubmissionRegister()
+        : await refreshSubmissionRegister();
+      applyItems(nextItems);
+    }
     catch (err) { setError(err.message || 'Could not load the ROA register.'); }
-    finally { setLoading(false); }
-  };
+    finally {
+      refreshInFlight.current = false;
+      setLoading(false);
+    }
+  }, [applyItems]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load({ initial: true }); }, [load]);
+  const hasPending = useMemo(() => items.some(isPendingSubmission), [items]);
+  useEffect(() => {
+    if (!hasPending) return undefined;
+    const interval = setInterval(() => { load(); }, 30000);
+    return () => clearInterval(interval);
+  }, [hasPending, load]);
   const visible = useMemo(() => items.filter((item) => matchesFilter(item, filter)), [items, filter]);
 
   return (
@@ -76,7 +107,7 @@ export default function RoaRegister() {
             <h1 className="font-heading text-2xl text-hrs-blue">My ROAs</h1>
             <p className="text-[0.82rem] text-hrs-muted mt-1">Your durable submission and signature evidence register.</p>
           </div>
-          <button onClick={load} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-hrs-border text-[0.78rem] font-semibold text-hrs-blue disabled:opacity-50">
+          <button onClick={() => load()} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-hrs-border text-[0.78rem] font-semibold text-hrs-blue disabled:opacity-50">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
         </div>

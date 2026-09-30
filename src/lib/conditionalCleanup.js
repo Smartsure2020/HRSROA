@@ -61,7 +61,10 @@ function clearStaleCancelReasonText(formData) {
 }
 
 function removeDeprecatedLocalEvidenceFields(formData) {
-  const deprecated = ['perilsSelected', 'perilsOther', 'clientSig', 'advisorSig', 'sigDate'];
+  const deprecated = [
+    'perilsSelected', 'perilsOther', 'clientSig', 'advisorSig', 'sigDate',
+    'valueToBeInsured', 'compulsoryExcess', 'voluntaryExcess', 'noClaimsBonus',
+  ];
   if (!deprecated.some((key) => Object.hasOwn(formData, key))) return formData;
   const next = { ...formData };
   deprecated.forEach((key) => delete next[key]);

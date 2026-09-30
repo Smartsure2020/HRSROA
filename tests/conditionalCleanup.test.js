@@ -79,7 +79,7 @@ describe('applySharedConditionalCleanup — cancelReasonText (Phase ROA-0)', () 
 });
 
 describe('applySharedConditionalCleanup — removed local evidence fields', () => {
-  it('drops stale perils and local-signature fields safely', () => {
+  it('drops stale perils, local-signature, and removed generic needs-analysis fields safely', () => {
     const data = {
       perilsSelected: ['Fire', 'Other'],
       perilsOther: 'Cyber incident',
@@ -87,6 +87,10 @@ describe('applySharedConditionalCleanup — removed local evidence fields', () =
       advisorSig: 'data:image/png;base64,BBB',
       sigDate: '2026-09-30',
       valueToBeInsured: 'Replacement Value',
+      compulsoryExcess: 'yes',
+      voluntaryExcess: 'High',
+      noClaimsBonus: 'yes',
+      riskProfileNotes: 'Keep this detailed risk note',
     };
     const next = applySharedConditionalCleanup(data);
     expect(next).not.toHaveProperty('perilsSelected');
@@ -94,7 +98,11 @@ describe('applySharedConditionalCleanup — removed local evidence fields', () =
     expect(next).not.toHaveProperty('clientSig');
     expect(next).not.toHaveProperty('advisorSig');
     expect(next).not.toHaveProperty('sigDate');
-    expect(next.valueToBeInsured).toBe('Replacement Value');
+    expect(next).not.toHaveProperty('valueToBeInsured');
+    expect(next).not.toHaveProperty('compulsoryExcess');
+    expect(next).not.toHaveProperty('voluntaryExcess');
+    expect(next).not.toHaveProperty('noClaimsBonus');
+    expect(next.riskProfileNotes).toBe('Keep this detailed risk note');
   });
 });
 

@@ -140,4 +140,24 @@ describe('draft normalisation on restore', () => {
     const { draft } = getDraftStatus('personal');
     expect(draft.formData.clientSig).toBeUndefined();
   });
+
+  it('restores older drafts safely while dropping removed generic needs-analysis fields', () => {
+    sessionStorage.setItem(PERSONAL_KEY, JSON.stringify({
+      schemaVersion: 1, flowType: 'personal', savedAt: new Date().toISOString(), currentStep: 3,
+      formData: {
+        firstName: 'Jane',
+        valueToBeInsured: 'Replacement Value',
+        compulsoryExcess: 'yes',
+        voluntaryExcess: 'High',
+        noClaimsBonus: 'yes',
+        riskProfileNotes: 'Retain this note',
+      },
+    }));
+    const { draft } = getDraftStatus('personal');
+    expect(draft.formData).not.toHaveProperty('valueToBeInsured');
+    expect(draft.formData).not.toHaveProperty('compulsoryExcess');
+    expect(draft.formData).not.toHaveProperty('voluntaryExcess');
+    expect(draft.formData).not.toHaveProperty('noClaimsBonus');
+    expect(draft.formData.riskProfileNotes).toBe('Retain this note');
+  });
 });

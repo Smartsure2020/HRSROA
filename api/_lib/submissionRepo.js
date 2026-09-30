@@ -8,6 +8,7 @@
 
 import { StoragePaths, ROA_STORAGE_BUCKET, getServerSupabase } from './supabaseServer.js';
 import { sha256HexOfBytes } from './sha256.js';
+import { shouldReconcileSigningRecord } from './signingLifecycle.js';
 
 /**
  * Loads a submission row (any advisor).
@@ -40,7 +41,7 @@ export async function listSubmissionsForBroker(brokerUserId) {
   const supabase = getServerSupabase();
   const columns = [
     'id', 'roa_type', 'client_reference', 'advisor_email', 'status',
-    'signing_provider', 'signing_status', 'docusign_envelope_id', 'docusign_status',
+    'signing_provider', 'signing_envelope_id', 'signing_status', 'docusign_envelope_id', 'docusign_status',
     'submitted_at', 'sent_for_signature_at', 'completed_at', 'evidence_retrieved_at',
     'pdf_storage_path', 'signed_pdf_storage_path', 'certificate_storage_path',
     'audit_log_storage_path', 'crm_client_id', 'crm_deal_id',
@@ -53,6 +54,29 @@ export async function listSubmissionsForBroker(brokerUserId) {
   return (data || [])
     .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')))
     .slice(0, 250);
+}
+
+export async function listPendingSigningForBroker(brokerUserId, { limit = 25 } = {}) {
+  const boundedLimit = Math.min(Math.max(Number(limit) || 25, 1), 25);
+  const supabase = getServerSupabase();
+  const columns = [
+    'id', 'advisor_user_id', 'status', 'submitted_at',
+    'signing_provider', 'signing_envelope_id', 'signing_item_id', 'signing_status',
+    'docusign_envelope_id', 'docusign_status',
+    'completed_at', 'evidence_retrieved_at',
+    'signed_pdf_storage_path', 'signed_pdf_sha256',
+    'certificate_storage_path', 'certificate_sha256',
+    'audit_log_storage_path', 'audit_log_sha256',
+  ].join(',');
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .select(columns)
+    .eq('advisor_user_id', brokerUserId);
+  if (error) throw new Error(`List pending submissions failed: ${error.message}`);
+  return (data || [])
+    .filter(shouldReconcileSigningRecord)
+    .sort((a, b) => String(a.submitted_at || '').localeCompare(String(b.submitted_at || '')))
+    .slice(0, boundedLimit);
 }
 
 export async function insertSubmission(row) {

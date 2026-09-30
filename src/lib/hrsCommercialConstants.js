@@ -1,10 +1,10 @@
-import { POLICY_TYPES, VALUE_TYPES } from './hrsConstants';
+import { POLICY_TYPES } from './hrsConstants';
 import { getBrokerFeeSummary } from './brokerFee';
 import { applySharedConditionalCleanup, clearStaleReplacementFields } from './conditionalCleanup';
 import { COMMERCIAL_STEPS as AUTHORITATIVE_COMMERCIAL_STEPS } from './flowSteps';
 import { normaliseSasriaSelection } from './sasriaApplicability';
 
-export { POLICY_TYPES, VALUE_TYPES };
+export { POLICY_TYPES };
 
 /** Enforces the Phase 3 conditional-cleanup invariants for the Commercial flow. */
 export function applyConditionalCleanup(formData) {
@@ -130,7 +130,6 @@ export function getCommercialStepErrors(step, formData) {
       const errors = [];
       const assessed = formData.riskState?.some(r => r.cover === 'yes' || r.cover === 'no');
       if (!assessed) errors.push('At least one risk category must be assessed (Yes or No)');
-      if (!formData.valueToBeInsured) errors.push('Value to be Insured');
       return errors;
     }
     case 6: {
@@ -215,11 +214,7 @@ export function getCommercialInitialFormData() {
     sasriaIncludedClasses: [],
     additionalComments: '',
 
-    // Needs analysis
-    valueToBeInsured: '',
-    compulsoryExcess: null,
-    voluntaryExcess: '',
-    noClaimsBonus: null,
+    // Additional context for the detailed risk-category assessment
     riskProfileNotes: '',
 
     // Acknowledgements

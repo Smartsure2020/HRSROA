@@ -2,11 +2,9 @@ import FormCard from "../FormCard";
 import SectionTitle from "../SectionTitle";
 import FormField from "../FormField";
 import TextInput from "../TextInput";
-import SelectInput from "../SelectInput";
-import YesNoToggle from "../YesNoToggle";
 import NavBar from "../NavBar";
 import SasriaSelection from "../SasriaSelection";
-import { RISK_CATEGORIES, VALUE_TYPES } from "../../../lib/hrsConstants";
+import { RISK_CATEGORIES } from "../../../lib/hrsConstants";
 import { SASRIA_CLASS_LABELS } from "../../../lib/sasriaApplicability";
 import { Flag } from "lucide-react";
 
@@ -80,37 +78,6 @@ export default function StepRiskCategories({ data, onChange, onNext, onPrev, nex
   return (
     <div>
       <FormCard>
-        <SectionTitle>Needs Analysis</SectionTitle>
-        <p className="text-hrs-muted text-[0.82rem] mb-5">Value, excess and risk-profile basis on which this advice is based</p>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-          <FormField label="Value to be Insured" required>
-            <SelectInput value={data.valueToBeInsured} onChange={set("valueToBeInsured")} options={VALUE_TYPES} placeholder="-- Select --" />
-          </FormField>
-          <FormField label="Voluntary Excess">
-            <SelectInput value={data.voluntaryExcess} onChange={set("voluntaryExcess")} options={["High", "Low", "n/a"]} placeholder="-- Select --" />
-          </FormField>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mt-5">
-          <div>
-            <p className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2">Compulsory Excess</p>
-            <YesNoToggle value={data.compulsoryExcess} onChange={set("compulsoryExcess")} />
-          </div>
-          <div>
-            <p className="text-[0.8rem] font-semibold text-hrs-blue2 tracking-[0.03em] uppercase mb-2">No Claims Bonus</p>
-            <YesNoToggle value={data.noClaimsBonus} onChange={set("noClaimsBonus")} />
-          </div>
-        </div>
-
-        <div className="h-px bg-hrs-border my-5" />
-
-        <FormField label="Risks / Items to be Included or Excluded (Risk Profile)">
-          <TextInput type="textarea" value={data.riskProfileNotes} onChange={set("riskProfileNotes")} placeholder="Any specific risks or items to include or exclude..." rows={3} />
-        </FormField>
-      </FormCard>
-
-      <FormCard>
         <div className="flex items-center justify-between mb-4">
           <SectionTitle>Insured Risks & Risks Excluded from Policy</SectionTitle>
           <div className="flex gap-2 text-[0.72rem]">
@@ -143,6 +110,12 @@ export default function StepRiskCategories({ data, onChange, onNext, onPrev, nex
         </div>
 
         <SasriaSelection categories={RISK_CATEGORIES} data={data} onChange={onChange} />
+
+        <div className="mt-5">
+          <FormField label="Additional Risk / Cover Notes" required={false}>
+            <TextInput type="textarea" value={data.riskProfileNotes} onChange={set("riskProfileNotes")} placeholder="Any additional context about the selected risks or cover..." rows={3} />
+          </FormField>
+        </div>
 
         {flaggedCount > 0 && (
           <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
