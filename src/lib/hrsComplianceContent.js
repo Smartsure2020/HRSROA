@@ -13,7 +13,7 @@
 //
 // Do not paraphrase or shorten this wording when reusing it — import and render as-is.
 
-import { HRS_INFO } from './hrsOrganisation';
+import { HRS_INFO } from './hrsOrganisation.js';
 
 export const HRS_COMPLIANCE_CONTENT = {
   brokerAppointment: {
