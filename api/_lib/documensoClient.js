@@ -27,7 +27,7 @@ async function parseError(response) {
 async function jsonRequest(path, options = {}) {
   const { apiBase, apiToken } = getConfig();
   const headers = new Headers(options.headers || {});
-  headers.set('Authorization', `Bearer ${apiToken}`);
+  headers.set('Authorization', apiToken);
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
@@ -46,7 +46,7 @@ async function pdfRequest(path) {
   const response = await fetch(`${apiBase}${path}`, {
     method: 'GET',
     headers: {
-      Authorization: `Bearer ${apiToken}`,
+      Authorization: apiToken,
       Accept: 'application/pdf',
     },
   });
@@ -111,7 +111,7 @@ export async function createDocumensoEnvelope({
   const response = await fetch(`${apiBase}/envelope/create`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiToken}`,
+      Authorization: apiToken,
       Accept: 'application/json',
     },
     body: form,
