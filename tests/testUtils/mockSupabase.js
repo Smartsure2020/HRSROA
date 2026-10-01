@@ -50,13 +50,20 @@ export function makeMockSupabase() {
     const filters = [];
     const chain = {
       select(_columns) {
-        return {
+        const selectBuilder = {
           eq(col, val) { filters.push(['eq', col, val]); return this; },
           in(col, val) { filters.push(['in', col, val]); return this; },
           is(col, val) { filters.push(['is', col, val]); return this; },
           maybeSingle: () => selectQuery(filters).maybeSingle(),
           single: () => selectQuery(filters).single(),
+          then(onFulfilled, onRejected) {
+            const data = Array.from(rows.values())
+              .filter((r) => whereMatches(r, filters))
+              .map((r) => ({ ...r }));
+            return Promise.resolve({ data, error: null }).then(onFulfilled, onRejected);
+          },
         };
+        return selectBuilder;
       },
       insert(row) {
         return {
@@ -179,6 +186,12 @@ export function makeMockSupabase() {
       deleteStorage: (path) => storage.delete(path),
       putRow: (id, patch) => Object.assign(rows.get(id) || {}, patch),
       failNextInsert: (message = 'injected insert failure') => { nextInsertError = message; },
+      reset() {
+        rows.clear();
+        storage.clear();
+        authUsers.clear();
+        nextInsertError = null;
+      },
     },
   };
 }

@@ -13,9 +13,8 @@
 //   • the compliance-content versions active at submit time
 //   • the PDF template version active at submit time
 //
-// The snapshot itself does NOT include the signature dataURLs — those live in
-// the canonical PDF bytes. Keeping them out of snapshot_json keeps DB rows
-// modest and avoids duplicating the same visual signature into two places.
+// The snapshot contains declarations and advice data only. Signature evidence
+// is created later by the configured signing provider and never captured here.
 
 import { HRS_COMPLIANCE_CONTENT } from './hrsComplianceContent.js';
 import { HRS_TEMPLATE_VERSION } from './pdf/templateVersion.js';
@@ -77,8 +76,10 @@ function deepFreeze(obj) {
  */
 export function sanitiseSnapshotForPersistence(snapshot) {
   const copy = { ...snapshot };
-  delete copy.clientSig;
-  delete copy.advisorSig;
+  [
+    'clientSig', 'advisorSig', 'sigDate', 'perilsSelected', 'perilsOther',
+    'valueToBeInsured', 'compulsoryExcess', 'voluntaryExcess', 'noClaimsBonus',
+  ].forEach((key) => delete copy[key]);
   return copy;
 }
 
@@ -113,9 +114,9 @@ export function createSubmissionSnapshot(roaType, formData, options = {}) {
     ? options.applyCleanup(formData)
     : formData;
 
-  const cloned = deepClonePlain(cleaned);
+  const cloned = sanitiseSnapshotForPersistence(deepClonePlain(cleaned));
   const snapshot = deepFreeze(cloned);
-  const snapshotForDb = deepFreeze(sanitiseSnapshotForPersistence(deepClonePlain(cleaned)));
+  const snapshotForDb = deepFreeze(deepClonePlain(cloned));
   const versions = currentComplianceVersions();
   const submissionId = options.submissionId ?? generateSubmissionId();
 

@@ -8,6 +8,7 @@
 
 import { StoragePaths, ROA_STORAGE_BUCKET, getServerSupabase } from './supabaseServer.js';
 import { sha256HexOfBytes } from './sha256.js';
+import { shouldReconcileSigningRecord } from './signingLifecycle.js';
 
 /**
  * Loads a submission row (any advisor).
@@ -36,6 +37,50 @@ export async function loadSubmissionForBroker(submissionId, brokerUserId) {
   return row;
 }
 
+export async function listSubmissionsForBroker(brokerUserId) {
+  const supabase = getServerSupabase();
+  const columns = [
+    'id', 'roa_type', 'client_reference', 'advisor_email', 'status',
+    'signing_provider', 'signing_envelope_id', 'signing_status', 'docusign_envelope_id', 'docusign_status',
+    'submitted_at', 'sent_for_signature_at', 'completed_at', 'evidence_retrieved_at',
+    'pdf_storage_path', 'signed_pdf_storage_path', 'certificate_storage_path',
+    'audit_log_storage_path', 'crm_client_id', 'crm_deal_id',
+    'crm_sync_status', 'crm_sync_error', 'crm_sync_attempted_at', 'crm_synced_at',
+    'crm_signed_roa_document_id', 'crm_certificate_document_id',
+  ].join(',');
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .select(columns)
+    .eq('advisor_user_id', brokerUserId);
+  if (error) throw new Error(`List submissions failed: ${error.message}`);
+  return (data || [])
+    .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')))
+    .slice(0, 250);
+}
+
+export async function listPendingSigningForBroker(brokerUserId, { limit = 25 } = {}) {
+  const boundedLimit = Math.min(Math.max(Number(limit) || 25, 1), 25);
+  const supabase = getServerSupabase();
+  const columns = [
+    'id', 'advisor_user_id', 'status', 'submitted_at',
+    'signing_provider', 'signing_envelope_id', 'signing_item_id', 'signing_status',
+    'docusign_envelope_id', 'docusign_status',
+    'completed_at', 'evidence_retrieved_at',
+    'signed_pdf_storage_path', 'signed_pdf_sha256',
+    'certificate_storage_path', 'certificate_sha256',
+    'audit_log_storage_path', 'audit_log_sha256',
+  ].join(',');
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .select(columns)
+    .eq('advisor_user_id', brokerUserId);
+  if (error) throw new Error(`List pending submissions failed: ${error.message}`);
+  return (data || [])
+    .filter(shouldReconcileSigningRecord)
+    .sort((a, b) => String(a.submitted_at || '').localeCompare(String(b.submitted_at || '')))
+    .slice(0, boundedLimit);
+}
+
 export async function insertSubmission(row) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
@@ -59,7 +104,7 @@ export async function updateSubmission(submissionId, patch) {
   return data;
 }
 
-/** Records the first observed DocuSign completion time without overwriting it. */
+/** Records the first observed provider completion time without overwriting it. */
 export async function setCompletionIfMissing(submissionId, brokerUserId, completedAt) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
@@ -114,6 +159,48 @@ export async function releaseEnvelopeReservation(submissionId, brokerUserId, { r
     .eq('status', 'awaiting_signature')
     .is('docusign_envelope_id', null);
   if (error) throw new Error(`Release envelope reservation failed: ${error.message}`);
+}
+
+
+/**
+ * Provider-neutral signing reservation used by new signing integrations.
+ */
+export async function reserveSigningSlot(submissionId, brokerUserId, provider) {
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .update({
+      status: 'awaiting_signature',
+      sent_for_signature_at: new Date().toISOString(),
+      signing_provider: provider,
+    })
+    .eq('id', submissionId)
+    .eq('advisor_user_id', brokerUserId)
+    .is('signing_envelope_id', null)
+    .in('status', ['submitted', 'signature_failed'])
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Reserve signing slot failed: ${error.message}`);
+  if (data) return { reserved: true, row: data };
+  const current = await loadSubmissionForBroker(submissionId, brokerUserId);
+  return { reserved: false, row: current };
+}
+
+export async function releaseSigningReservation(submissionId, brokerUserId, provider, { reason } = {}) {
+  const supabase = getServerSupabase();
+  const { error } = await supabase
+    .from('roa_submissions')
+    .update({
+      status: 'signature_failed',
+      sent_for_signature_at: null,
+      signing_status: reason ? `failed: ${reason}`.slice(0, 200) : 'failed',
+    })
+    .eq('id', submissionId)
+    .eq('advisor_user_id', brokerUserId)
+    .eq('signing_provider', provider)
+    .eq('status', 'awaiting_signature')
+    .is('signing_envelope_id', null);
+  if (error) throw new Error(`Release signing reservation failed: ${error.message}`);
 }
 
 // ---------- Storage ---------------------------------------------------------

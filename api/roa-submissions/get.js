@@ -17,6 +17,7 @@ export function toClientView(row) {
     roaType: row.roa_type,
     status: row.status,
     clientReference: row.client_reference,
+    adviser: row.advisor_email,
     advisorEmail: row.advisor_email,
     templateVersion: row.template_version,
     statutoryDisclosureVersion: row.statutory_disclosure_version,
@@ -25,13 +26,23 @@ export function toClientView(row) {
     letterInvestigationVersion: row.letter_investigation_version,
     pdfSha256: row.pdf_sha256,
     pdfByteLength: row.pdf_byte_length,
+    signingProvider: row.signing_provider || (row.docusign_envelope_id ? 'docusign' : null),
+    signingEnvelopeId: row.signing_envelope_id || row.docusign_envelope_id || null,
+    signingStatus: row.signing_status || row.docusign_status || null,
     docusignEnvelopeId: row.docusign_envelope_id,
     docusignStatus: row.docusign_status,
     hasCanonicalPdf: Boolean(row.pdf_storage_path),
     hasSignedPdf: Boolean(row.signed_pdf_storage_path),
     hasCertificate: Boolean(row.certificate_storage_path),
+    hasAuditLog: Boolean(row.audit_log_storage_path),
     crmClientId: row.crm_client_id,
     crmDealId: row.crm_deal_id,
+    crmSyncStatus: row.crm_sync_status || (row.crm_client_id && row.crm_deal_id ? 'partial' : null),
+    crmSyncError: row.crm_sync_error,
+    crmSyncAttemptedAt: row.crm_sync_attempted_at,
+    crmSyncedAt: row.crm_synced_at,
+    crmSignedRoaDocumentId: row.crm_signed_roa_document_id,
+    crmCertificateDocumentId: row.crm_certificate_document_id,
     submittedAt: row.submitted_at,
     sentForSignatureAt: row.sent_for_signature_at,
     completedAt: row.completed_at,
@@ -40,6 +51,7 @@ export function toClientView(row) {
 }
 
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'private, no-store');
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const user = await requireAuthenticatedBroker(req, res);
   if (!user) return;

@@ -114,7 +114,7 @@ describe('createSubmissionSnapshot — freeze semantics', () => {
     // Snapshot is unchanged.
     expect(frozen.snapshot.firstName).toBe('Jane');
     expect(frozen.snapshot.brokerFeePercent).toBe('5');
-    expect(frozen.snapshot.clientSig).toBe('data:image/png;base64,SIG-CLIENT');
+    expect(frozen.snapshot).not.toHaveProperty('clientSig');
   });
 
   it('attempting to mutate the frozen snapshot itself is silent-fail in loose mode / throws in strict', () => {
@@ -133,14 +133,15 @@ describe('createSubmissionSnapshot — freeze semantics', () => {
     expect(frozen.snapshot.cancelReasonText).toBe('');
   });
 
-  it('snapshotForDb strips signature dataURLs but keeps everything else', () => {
+  it('strips legacy local-signature data from both canonical and persistence snapshots', () => {
     const fd = makePersonalFixture();
     const frozen = createSubmissionSnapshot('Personal', fd);
-    expect(frozen.snapshot.clientSig).toBe('data:image/png;base64,SIG-CLIENT');
-    expect(frozen.snapshot.advisorSig).toBe('data:image/png;base64,SIG-ADVISOR');
-    // For DB persistence signatures are removed — they live in the canonical PDF.
+    expect(frozen.snapshot).not.toHaveProperty('clientSig');
+    expect(frozen.snapshot).not.toHaveProperty('advisorSig');
     expect(frozen.snapshotForDb).not.toHaveProperty('clientSig');
     expect(frozen.snapshotForDb).not.toHaveProperty('advisorSig');
+    expect(frozen.snapshot).not.toHaveProperty('clientSig');
+    expect(frozen.snapshot).not.toHaveProperty('advisorSig');
     expect(frozen.snapshotForDb.firstName).toBe('Jane');
     expect(frozen.snapshotForDb.recInsurer).toBe('Stratsys');
   });

@@ -1,4 +1,4 @@
-// GET /api/roa-submissions/pdf?id=ROA-<uuid>&kind=canonical|signed|certificate
+// GET /api/roa-submissions/pdf?id=ROA-<uuid>&kind=canonical|signed|certificate|audit-log
 //
 // Downloads one of the stored evidence artefacts for the submission. Broker-
 // scoped (404 for non-owner, same as get.js). Never streams from a browser-
@@ -17,7 +17,7 @@ import { downloadPdf, loadSubmissionForBroker, StoragePaths } from '../_lib/subm
 import { sha256HexOfBytes } from '../_lib/sha256.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
 
-const KINDS = ['canonical', 'signed', 'certificate'];
+const KINDS = ['canonical', 'signed', 'certificate', 'audit-log'];
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -41,10 +41,14 @@ export default async function handler(req, res) {
     storagePath = row.signed_pdf_storage_path;
     expectedHash = row.signed_pdf_sha256;
     if (!storagePath) return res.status(409).json({ error: 'signed_not_available' });
-  } else {
+  } else if (kind === 'certificate') {
     storagePath = row.certificate_storage_path;
     expectedHash = row.certificate_sha256;
     if (!storagePath) return res.status(409).json({ error: 'certificate_not_available' });
+  } else {
+    storagePath = row.audit_log_storage_path;
+    expectedHash = row.audit_log_sha256;
+    if (!storagePath) return res.status(409).json({ error: 'audit_log_not_available' });
   }
 
   let bytes;

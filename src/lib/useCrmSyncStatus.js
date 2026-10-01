@@ -1,14 +1,13 @@
 // Shared CRM synchronisation status + retry hook (Phase 3, section 9).
 //
 // Replaces the old fire-and-forget `.then(r => console.log/console.warn(...))` pattern in
-// both AdviceRecord.jsx and CommercialAdviceRecord.jsx with an explicit, visible state
+// both checklist flows with an explicit, visible state
 // machine: idle -> syncing -> synced | failed, plus a Retry action that reuses the same
 // prepared payload and never re-sends the ROA email or creates a second submission.
 import { useCallback, useRef, useState } from 'react';
-import { supabase } from './supabaseClient';
 
 /**
- * @param {(formData: object, session: object, existing: {clientId?: string, dealId?: string}) => Promise<object>} syncFn
+ * @param {(submissionId: string) => Promise<object>} syncFn
  */
 export function useCrmSyncStatus(syncFn) {
   // 'idle' | 'syncing' | 'synced' | 'failed'
@@ -17,42 +16,28 @@ export function useCrmSyncStatus(syncFn) {
   const retryCountRef = useRef(0);
   const resultRef = useRef(null);
 
-  const run = useCallback(async (formData) => {
+  const run = useCallback(async (submissionId) => {
     setStatus('syncing');
     const attemptAt = () => new Date().toISOString();
 
-    let session;
-    try {
-      const { data } = await supabase.auth.getSession();
-      session = data?.session;
-    } catch {
-      session = null;
-    }
-
-    if (!session) {
-      retryCountRef.current += 1;
-      const next = { error: 'Not signed in — the CRM record could not be updated.', errorCode: 'no_session', retryCount: retryCountRef.current, lastAttemptAt: attemptAt() };
-      resultRef.current = next;
-      setResult(next);
-      setStatus('failed');
-      return;
-    }
-
-    const existing = resultRef.current?.clientId
-      ? { clientId: resultRef.current.clientId, dealId: resultRef.current.dealId }
-      : {};
-
     let r;
     try {
-      r = await syncFn(formData, session, existing);
+      const submission = await syncFn(submissionId);
+      r = {
+        success: ['partial', 'linked'].includes(submission?.crmSyncStatus),
+        submission,
+        clientId: submission?.crmClientId,
+        dealId: submission?.crmDealId,
+      };
     } catch (err) {
-      r = { success: false, error: 'An unexpected error occurred while syncing to the CRM. Please retry.', errorCode: 'unknown_error' };
+      r = { success: false, error: err?.message || 'CRM sync failed. Please retry.', errorCode: 'crm_sync_failed' };
     }
 
     retryCountRef.current += 1;
     const next = {
-      clientId: r.clientId ?? existing.clientId,
-      dealId: r.dealId ?? existing.dealId,
+      submission: r.submission,
+      clientId: r.clientId ?? resultRef.current?.clientId,
+      dealId: r.dealId ?? resultRef.current?.dealId,
       error: r.error,
       errorCode: r.errorCode,
       retryCount: retryCountRef.current,

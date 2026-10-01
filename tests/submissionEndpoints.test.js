@@ -1,5 +1,5 @@
 // End-to-end tests for the ROA-1 submission endpoints (create, get, pdf,
-// attach-crm) using the in-memory Supabase mock. No external network.
+// sync-crm) using the in-memory Supabase mock. No external network.
 //
 // Covers §11 (canonical submit flow), §12 (email/download hash contract via
 // pdf endpoint), §24 (cross-broker isolation), §29 (authorization tests).
@@ -18,8 +18,9 @@ vi.mock('@supabase/supabase-js', () => ({
 // Load handlers AFTER the mock is registered.
 const createHandler = (await import('../api/roa-submissions/create.js')).default;
 const getHandler = (await import('../api/roa-submissions/get.js')).default;
+const listHandler = (await import('../api/roa-submissions/list.js')).default;
 const pdfHandler = (await import('../api/roa-submissions/pdf.js')).default;
-const attachCrmHandler = (await import('../api/roa-submissions/attach-crm.js')).default;
+const syncCrmHandler = (await import('../api/roa-submissions/sync-crm.js')).default;
 const { _resetServerSupabaseForTests } = await import('../api/_lib/supabaseServer.js');
 const { generateSubmissionId } = await import('../src/lib/roaSubmissionSnapshot.js');
 const { sha256HexOfBytes } = await import('../api/_lib/sha256.js');
@@ -268,6 +269,27 @@ describe('/api/roa-submissions/get — ownership + safe 404', () => {
   });
 });
 
+describe('/api/roa-submissions/list — broker-scoped register', () => {
+  it('rejects unauthenticated callers', async () => {
+    const res = mockRes();
+    await listHandler({ method: 'GET', headers: {} }, res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('returns only the authenticated broker submissions without snapshot_json', async () => {
+    const andrew = await createFor('token-andrew');
+    const werner = await createFor('token-werner');
+    const res = mockRes();
+    await listHandler({ method: 'GET', headers: { authorization: 'Bearer token-andrew' } }, res);
+    expect(res.statusCode).toBe(200);
+    const ids = res.body.submissions.map((item) => item.submissionId);
+    expect(ids).toContain(andrew.submissionId);
+    expect(ids).not.toContain(werner.submissionId);
+    expect(res.body.submissions.every((item) => !Object.hasOwn(item, 'snapshot_json'))).toBe(true);
+    expect(res.body.submissions.find((item) => item.submissionId === andrew.submissionId)?.clientReference).toBe('Personal – Jane Doe');
+  });
+});
+
 describe('/api/roa-submissions/pdf — evidence hash verification', () => {
   it('serves canonical bytes to the owner with the persisted hash', async () => {
     const { submissionId, bytes } = await createFor('token-andrew');
@@ -331,17 +353,85 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
     expect(res.statusCode).toBe(500);
     expect(res.body.error).toBe('evidence_hash_mismatch');
   });
-});
 
-describe('/api/roa-submissions/attach-crm', () => {
-  it('owner attaches crm ids; row is updated', async () => {
+  it('audit-log download requires authentication', async () => {
     const { submissionId } = await createFor('token-andrew');
     const res = mockRes();
-    await attachCrmHandler(
+    await pdfHandler({ method: 'GET', headers: {}, query: { id: submissionId, kind: 'audit-log' } }, res);
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('audit-log download is broker-owned and unavailable evidence returns 409', async () => {
+    const { submissionId } = await createFor('token-andrew');
+    const unavailable = mockRes();
+    await pdfHandler({
+      method: 'GET',
+      headers: { authorization: 'Bearer token-andrew' },
+      query: { id: submissionId, kind: 'audit-log' },
+    }, unavailable);
+    expect(unavailable.statusCode).toBe(409);
+    expect(unavailable.body.error).toBe('audit_log_not_available');
+
+    const otherBroker = mockRes();
+    await pdfHandler({
+      method: 'GET',
+      headers: { authorization: 'Bearer token-werner' },
+      query: { id: submissionId, kind: 'audit-log' },
+    }, otherBroker);
+    expect(otherBroker.statusCode).toBe(404);
+  });
+
+  it('serves a verified audit log and fails closed on hash mismatch', async () => {
+    const { submissionId } = await createFor('token-andrew');
+    const path = `${submissionId}/audit-log.pdf`;
+    const bytes = fakePdfBytes('audit-log');
+    mock.fixtures.putStorage(path, bytes);
+    mock.fixtures.putRow(submissionId, {
+      audit_log_storage_path: path,
+      audit_log_sha256: sha256HexOfBytes(bytes),
+    });
+
+    const ok = mockRes();
+    await pdfHandler({
+      method: 'GET',
+      headers: { authorization: 'Bearer token-andrew' },
+      query: { id: submissionId, kind: 'audit-log' },
+    }, ok);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['cache-control']).toBe('private, no-store');
+    expect(ok._bytes.equals(bytes)).toBe(true);
+
+    mock.fixtures.putRow(submissionId, { audit_log_sha256: sha256HexOfBytes(fakePdfBytes('different')) });
+    const corrupt = mockRes();
+    await pdfHandler({
+      method: 'GET',
+      headers: { authorization: 'Bearer token-andrew' },
+      query: { id: submissionId, kind: 'audit-log' },
+    }, corrupt);
+    expect(corrupt.statusCode).toBe(500);
+    expect(corrupt.body.error).toBe('evidence_hash_mismatch');
+  });
+});
+
+describe('/api/roa-submissions/sync-crm', () => {
+  it('owner triggers a server-to-server sync with only the submission id', async () => {
+    const { submissionId } = await createFor('token-andrew');
+    process.env.CRM_BASE_URL = 'https://crm.example.test';
+    process.env.CRM_INTEGRATION_SECRET = 's'.repeat(32);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'partial', clientId: 'C-42', dealId: 'D-7',
+        signedRoaDocumentId: null, certificateDocumentId: null,
+      }),
+    });
+    const res = mockRes();
+    await syncCrmHandler(
       {
         method: 'POST',
         headers: { authorization: 'Bearer token-andrew' },
-        body: { submissionId, crmClientId: 'C-42', crmDealId: 'D-7' },
+        body: { submissionId },
       },
       res,
     );
@@ -351,35 +441,52 @@ describe('/api/roa-submissions/attach-crm', () => {
     const row = mock.fixtures.getRow(submissionId);
     expect(row.crm_client_id).toBe('C-42');
     expect(row.crm_deal_id).toBe('D-7');
+    const [, options] = fetchSpy.mock.calls[0];
+    expect(options.headers.Authorization).toBe(`Bearer ${'s'.repeat(32)}`);
+    const sent = JSON.parse(options.body);
+    expect(sent.submissionId).toBe(submissionId);
+    expect(sent.client.displayName).toBe('Jane Doe');
+    expect(sent).not.toHaveProperty('crmClientId');
   });
 
-  it('cross-broker attach → 404, no side effect', async () => {
+  it('cross-broker sync → 404 before any outbound call', async () => {
     const { submissionId } = await createFor('token-andrew');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const res = mockRes();
-    await attachCrmHandler(
+    await syncCrmHandler(
       {
         method: 'POST',
         headers: { authorization: 'Bearer token-werner' },
-        body: { submissionId, crmClientId: 'C-42', crmDealId: 'D-7' },
-      },
-      res,
-    );
-    expect(res.statusCode).toBe(404);
-    const row = mock.fixtures.getRow(submissionId);
-    expect(row.crm_client_id).toBeUndefined();
-  });
-
-  it('no ids supplied → 400', async () => {
-    const { submissionId } = await createFor('token-andrew');
-    const res = mockRes();
-    await attachCrmHandler(
-      {
-        method: 'POST',
-        headers: { authorization: 'Bearer token-andrew' },
         body: { submissionId },
       },
       res,
     );
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(404);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('records a soft CRM failure without damaging the authoritative ROA', async () => {
+    const { submissionId, bytes } = await createFor('token-andrew');
+    process.env.CRM_BASE_URL = 'https://crm.example.test';
+    process.env.CRM_INTEGRATION_SECRET = 's'.repeat(32);
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    const res = mockRes();
+    await syncCrmHandler({
+      method: 'POST',
+      headers: { authorization: 'Bearer token-andrew' },
+      body: { submissionId },
+    }, res);
+    expect(res.statusCode).toBe(502);
+    expect(res.body.error).toBe('crm_unreachable');
+    const row = mock.fixtures.getRow(submissionId);
+    expect(row.crm_sync_status).toBe('failed');
+    expect(row.crm_sync_error).toBe('crm_unreachable');
+    expect(mock.fixtures.getStorage(`${submissionId}/canonical.pdf`).equals(bytes)).toBe(true);
+  });
+
+  it('rejects unauthenticated callers', async () => {
+    const res = mockRes();
+    await syncCrmHandler({ method: 'POST', headers: {}, body: {} }, res);
+    expect(res.statusCode).toBe(401);
   });
 });

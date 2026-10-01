@@ -1,14 +1,15 @@
 import { useState, useRef, useEffect } from "react";
-import { CheckCircle, PenLine, Trash2, FileDown, FilePlus, Upload, Send, RefreshCw } from "lucide-react";
+import { CheckCircle, FileDown, FilePlus, Send, RefreshCw } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import FormCard from "../../FormCard";
-import SignatureCanvas from "../../SignatureCanvas";
 import WorkflowStatusPanel from "../../WorkflowStatusPanel";
 import { generateCommercialCombinedPDF } from "../../../../lib/hrsCommercialPdfGenerator";
 import { MANAGER_NAME } from "../../../../lib/hrsConstants";
-import { syncCommercialROAToCRM } from "../../../../lib/crmSync";
+import { syncRoaSubmissionToCRM } from "../../../../lib/crmAdapter";
 import { useCrmSyncStatus } from "../../../../lib/useCrmSyncStatus";
+import { toast } from "@/components/ui/use-toast";
+import { buildSignatureSendFeedback } from "../../../../lib/signatureSendFeedback";
 import {
-  attachCrmIds,
   downloadEvidencePdf,
   refreshSubmission,
   sendForSignature as sendForSignatureApi,
@@ -59,63 +60,6 @@ function CheckItem({ label, checked, onChange }) {
   );
 }
 
-function SigBox({ label, sigKey, sigs, onChange }) {
-  const drawRef = useRef(null);
-  const [mode, setMode] = useState("draw");
-
-  const handleDraw = (b64) => onChange({ ...sigs, [sigKey]: b64 || null });
-  const handleUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => onChange({ ...sigs, [sigKey]: ev.target.result });
-    reader.readAsDataURL(file);
-  };
-  const handleClear = () => {
-    onChange({ ...sigs, [sigKey]: null });
-    if (drawRef.current)
-      drawRef.current.getContext('2d').clearRect(0, 0, drawRef.current.width, drawRef.current.height);
-  };
-
-  return (
-    <div className="border border-hrs-border rounded-lg p-3">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[0.75rem] font-semibold text-hrs-blue2 uppercase tracking-wider">{label}</span>
-        <div className="flex gap-2">
-          <button type="button" onClick={() => setMode("draw")}
-            className={`flex items-center gap-1 text-[0.72rem] px-2 py-0.5 rounded border transition-colors ${mode === "draw" ? "bg-hrs-blue text-white border-hrs-blue" : "border-hrs-border text-hrs-blue2 hover:border-hrs-orange"}`}>
-            <PenLine className="w-3 h-3" /> Draw
-          </button>
-          <button type="button" onClick={() => setMode("upload")}
-            className={`flex items-center gap-1 text-[0.72rem] px-2 py-0.5 rounded border transition-colors ${mode === "upload" ? "bg-hrs-blue text-white border-hrs-blue" : "border-hrs-border text-hrs-blue2 hover:border-hrs-orange"}`}>
-            <Upload className="w-3 h-3" /> Upload
-          </button>
-          {sigs[sigKey] && (
-            <button type="button" onClick={handleClear}
-              className="text-[0.72rem] text-hrs-red border border-red-200 px-2 py-0.5 rounded hover:bg-red-50 transition-colors">
-              <Trash2 className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-      </div>
-      {mode === "draw" && <SignatureCanvas canvasRef={drawRef} label="" onSave={handleDraw} />}
-      {mode === "upload" && (
-        <div>
-          <label className="flex flex-col items-center justify-center w-full h-[80px] border-2 border-dashed border-hrs-border rounded-lg bg-secondary cursor-pointer hover:border-hrs-orange transition-colors">
-            <Upload className="w-4 h-4 text-hrs-muted mb-1" />
-            <span className="text-[0.72rem] text-hrs-muted">Click to upload (PNG or JPG)</span>
-            <input type="file" accept="image/png,image/jpeg" onChange={handleUpload} className="hidden" />
-          </label>
-          {sigs[sigKey] && (
-            <img src={sigs[sigKey]} alt={label} className="mt-2 h-14 border border-hrs-border rounded bg-white p-1 w-full object-contain" />
-          )}
-        </div>
-      )}
-      {!sigs[sigKey] && mode === "draw" && <div className="h-10 border-b border-dotted border-hrs-border" />}
-    </div>
-  );
-}
-
 const COMPLIANCE_DOCS = [
   "PROPOSAL", "BROKER APPOINTMENT", "DEBIT ORDER AUTHORITY",
   "ROA | RECORD OF ADVICE", "CURRENT POLICY SCHEDULE",
@@ -138,13 +82,13 @@ const ADDITIONAL_DOCS = [
 const COMMISSION_ROWS = ["Brokerage (HRS)", "Broker", "Referror", "Other"];
 
 export default function CommercialStepChecklist({ data, submission, onSubmissionUpdate, onRestart }) {
+  const navigate = useNavigate();
   const [smartsure, setSmartsure] = useState(null);
   const [directInsurer, setDirectInsurer] = useState(null);
   const [complianceDocs, setComplianceDocs] = useState({});
   const [additionalDocs, setAdditionalDocs] = useState({});
   const [comments, setComments] = useState('');
   const [trackDates, setTrackDates] = useState({ docs: '', submitted: '', email: '' });
-  const [sigs, setSigs] = useState({ broker: null, manager: null });
   const [businessType, setBusinessType] = useState('Commercial');
   const [acctExec, setAcctExec] = useState(data.brokerName || MANAGER_NAME);
   const [downloading, setDownloading] = useState(null);
@@ -157,43 +101,33 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
     "Other": "",
   });
 
-  // DocuSign e-signature state — derived from `submission` so it survives refreshes.
+  // Provider-neutral e-signature state — derived from `submission` so it survives refreshes.
   const [sigSending, setSigSending] = useState(false);
   const [sigError, setSigError] = useState(null);
-  const sigSent = Boolean(submission?.docusignEnvelopeId);
-  const sigEnvelopeId = submission?.docusignEnvelopeId || null;
+  const sigSent = Boolean(submission?.signingEnvelopeId || submission?.docusignEnvelopeId);
+  const sigEnvelopeId = submission?.signingEnvelopeId || submission?.docusignEnvelopeId || null;
   const sigSentAt = submission?.sentForSignatureAt || null;
 
   // CRM sync + retry — same pattern and shared hook as the Personal checklist.
-  const crm = useCrmSyncStatus(syncCommercialROAToCRM);
+  const crm = useCrmSyncStatus(syncRoaSubmissionToCRM);
   const crmTriggered = useRef(false);
-  const crmAttachedIdsRef = useRef(false);
   useEffect(() => {
-    if (crmTriggered.current) return;
+    if (crmTriggered.current || !submission?.submissionId) return;
     crmTriggered.current = true;
-    crm.sync(data);
+    crm.sync(submission.submissionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [submission?.submissionId]);
 
   useEffect(() => {
-    if (crmAttachedIdsRef.current) return;
-    if (!submission?.submissionId) return;
-    if (crm.status !== 'synced') return;
-    if (!crm.result?.clientId && !crm.result?.dealId) return;
-    crmAttachedIdsRef.current = true;
-    attachCrmIds(submission.submissionId, {
-      crmClientId: crm.result.clientId,
-      crmDealId: crm.result.dealId,
-    })
-      .then((updated) => { if (updated && onSubmissionUpdate) onSubmissionUpdate(updated); })
-      .catch(() => { /* silent */ });
-  }, [crm.status, crm.result, submission?.submissionId, onSubmissionUpdate]);
+    if (crm.result?.submission && onSubmissionUpdate) onSubmissionUpdate(crm.result.submission);
+  }, [crm.result?.submission, onSubmissionUpdate]);
 
   useEffect(() => {
     if (!submission?.submissionId) return;
     const isTerminal = submission.status === 'completed'
       && submission.hasSignedPdf
-      && submission.hasCertificate;
+      && submission.hasCertificate
+      && (submission.signingProvider !== 'documenso' || submission.hasAuditLog);
     if (isTerminal) return;
     let cancelled = false;
     async function tick() {
@@ -205,7 +139,7 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
     tick();
     const interval = setInterval(tick, 30000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [submission?.submissionId, submission?.status, submission?.hasSignedPdf, submission?.hasCertificate, onSubmissionUpdate]);
+  }, [submission?.submissionId, submission?.status, submission?.signingProvider, submission?.hasSignedPdf, submission?.hasCertificate, submission?.hasAuditLog, onSubmissionUpdate]);
 
   const netPrem = parseFloat(data.prem2) || 0;
   const feeVal = parseFloat(data.brokerFeePercent) || 0;
@@ -251,6 +185,14 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
     } finally { setDownloading(null); }
   };
 
+  const handleDownloadAuditLog = async () => {
+    if (!submission?.submissionId || !submission.hasAuditLog) return;
+    setDownloading('audit-log');
+    try {
+      await downloadEvidencePdf(submission.submissionId, 'audit-log', `HRS_Commercial_ROA_${submission.submissionId}_audit-log.pdf`);
+    } finally { setDownloading(null); }
+  };
+
   const handleSendForSignature = async () => {
     if (!submission?.submissionId) return;
     if (!signerEmail) {
@@ -269,6 +211,7 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
         message: `Dear ${signerName},\n\nPlease review and sign the Commercial Lines Record of Advice for ${data.companyName} from Holistic Risk Services (Pty) Ltd. This document is required under the Financial Advisory and Intermediary Services (FAIS) Act.\n\nKind regards,\n${data.brokerName}\nHolistic Risk Services (Pty) Ltd\nFSP No. 28582`,
       });
       if (result.submission && onSubmissionUpdate) onSubmissionUpdate(result.submission);
+      toast(buildSignatureSendFeedback(result, signerEmail));
     } catch (err) {
       setSigError(err.message || 'Could not send signature request. Please try again.');
     } finally {
@@ -280,11 +223,19 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
     <div>
       <div className="bg-gradient-to-br from-hrs-blue to-hrs-blue2 text-white rounded-xl p-5 mb-6 flex items-start gap-4">
         <CheckCircle className="w-9 h-9 text-hrs-orange flex-shrink-0 mt-0.5" />
-        <div>
+        <div className="flex-1">
           <h2 className="font-heading text-[1.2rem] text-hrs-orange mb-1">Commercial Advice Record Submitted</h2>
           <p className="text-[0.82rem] opacity-80 leading-relaxed">
             Record for <strong>{data.companyName || 'Client'}</strong> submitted. Complete the checklist and download or send for signature below.
           </p>
+          <div className="flex flex-wrap gap-2 mt-4">
+            <button type="button" onClick={() => navigate('/')} className="px-3 py-2 rounded-md border border-white/30 bg-white/10 text-[0.76rem] font-semibold hover:bg-white/20">
+              Back to Home
+            </button>
+            <button type="button" onClick={() => navigate('/roas')} className="px-3 py-2 rounded-md bg-hrs-orange text-white text-[0.76rem] font-semibold hover:bg-hrs-orange-light">
+              View My ROAs
+            </button>
+          </div>
         </div>
       </div>
 
@@ -315,7 +266,7 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
           {crm.result?.error && <p className="text-[0.76rem] text-amber-700 mt-0.5">{crm.result.error}</p>}
           <button
             type="button"
-            onClick={() => crm.retry(data)}
+            onClick={() => crm.retry(submission.submissionId)}
             className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-amber-400 text-amber-800 text-[0.76rem] font-semibold hover:bg-amber-100 transition-colors disabled:opacity-50"
           >
             <RefreshCw className="w-3.5 h-3.5" /> Retry CRM Sync
@@ -458,14 +409,6 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
           ))}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5 pt-4 border-t-2 border-hrs-border">
-          <SigBox label="HRS Broker" sigKey="broker" sigs={sigs} onChange={setSigs} />
-          <SigBox label="Manager" sigKey="manager" sigs={sigs} onChange={setSigs} />
-        </div>
-        <div className="grid grid-cols-2 gap-4 mt-2 text-[0.73rem]">
-          <div className="text-center text-hrs-blue font-medium">{data.brokerName || ""}</div>
-          <div className="text-center text-hrs-blue font-medium">{MANAGER_NAME}</div>
-        </div>
       </FormCard>
 
       {/* Actions */}
@@ -499,6 +442,13 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
                 {downloading === 'certificate' ? 'Downloading...' : 'Download Certificate of Completion'}
               </button>
             )}
+            {submission?.hasAuditLog && (
+              <button onClick={handleDownloadAuditLog} disabled={!!downloading}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-body font-semibold text-[0.82rem] bg-white/10 text-white border border-white/30 transition-all hover:bg-white/20 disabled:opacity-60">
+                <FileDown className="w-4 h-4" />
+                {downloading === 'audit-log' ? 'Downloading...' : 'Download Audit Log'}
+              </button>
+            )}
           </div>
         )}
         {submission?.submissionId && (
@@ -507,10 +457,10 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
           </p>
         )}
 
-        {/* DocuSign e-signature */}
+        {/* Provider-neutral e-signature */}
         <div className="mt-1 pt-3 border-t border-white/20">
           <p className="text-[0.72rem] text-white/60 mb-2 font-semibold uppercase tracking-wider">
-            Send for Remote E-Signature via DocuSign
+            E-signature
           </p>
           {sigSent ? (
             <div className="bg-hrs-green/20 border border-hrs-green/40 rounded-lg px-4 py-3">
@@ -518,7 +468,7 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
                 ✓ Signature request sent to {signerEmail}
               </p>
               <p className="text-[0.75rem] text-white/60 mt-0.5">
-                {data.brokerName} will be notified to countersign once {signerName} completes. Envelope ID: {sigEnvelopeId}
+                This ROA will update automatically as signing progresses. Signing provider: {submission?.signingProvider || 'configured provider'}. Reference: {sigEnvelopeId}
               </p>
             </div>
           ) : (
@@ -528,7 +478,7 @@ export default function CommercialStepChecklist({ data, submission, onSubmission
               className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-body font-semibold text-[0.85rem] bg-white/10 text-white border border-white/30 transition-all hover:bg-white/20 hover:border-white/60 disabled:opacity-60"
             >
               <Send className="w-4 h-4" />
-              {sigSending ? 'Sending to DocuSign...' : `Send to ${signerEmail || 'client'} for e-signature`}
+              {sigSending ? 'Sending signature request...' : `Send to ${signerEmail || 'client'} for e-signature`}
             </button>
           )}
           {sigError && (

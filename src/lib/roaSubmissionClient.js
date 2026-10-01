@@ -11,6 +11,7 @@ import { isSubmissionId } from './roaSubmissionSnapshot';
 async function postJson(url, body) {
   const res = await fetch(url, {
     method: 'POST',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify(body),
   });
@@ -22,6 +23,7 @@ async function postJson(url, body) {
 async function getJson(url) {
   const res = await fetch(url, {
     method: 'GET',
+    cache: 'no-store',
     headers: { ...(await authHeader()) },
   });
   const data = await res.json().catch(() => ({}));
@@ -56,13 +58,46 @@ export async function getSubmission(submissionId) {
   return data.submission;
 }
 
+export async function listSubmissions() {
+  const data = await getJson('/api/roa-submissions/list');
+  return data.submissions || [];
+}
+
+export function isPendingSubmission(item) {
+  if (!item?.signingEnvelopeId && !item?.docusignEnvelopeId) return false;
+  if (['declined', 'voided', 'expired'].includes(item.status)) return false;
+  const evidenceComplete = item.hasSignedPdf
+    && item.hasCertificate
+    && (item.signingProvider !== 'documenso' || item.hasAuditLog);
+  return item.status !== 'completed' || !evidenceComplete;
+}
+
+export async function reconcilePendingSubmissions() {
+  return postJson('/api/roa-submissions/reconcile-pending', {});
+}
+
+/** Initial load: discover pending rows, reconcile if needed, then return fresh state. */
+export async function loadSubmissionRegister() {
+  const initial = await listSubmissions();
+  if (!initial.some(isPendingSubmission)) return initial;
+  await reconcilePendingSubmissions();
+  return listSubmissions();
+}
+
+/** Manual/poll refresh: reconcile first so stale stored state is never displayed as fresh. */
+export async function refreshSubmissionRegister() {
+  await reconcilePendingSubmissions();
+  return listSubmissions();
+}
+
 export async function refreshSubmission(submissionId) {
   const data = await postJson('/api/roa-submissions/refresh', { submissionId });
   return data.submission;
 }
 
-export async function attachCrmIds(submissionId, { crmClientId, crmDealId }) {
-  const data = await postJson('/api/roa-submissions/attach-crm', { submissionId, crmClientId, crmDealId });
+export async function syncCrmSubmission(submissionId) {
+  if (!isSubmissionId(submissionId)) throw new Error('syncCrmSubmission: invalid submissionId');
+  const data = await postJson('/api/roa-submissions/sync-crm', { submissionId });
   return data.submission;
 }
 
@@ -80,7 +115,7 @@ export async function sendNotificationEmail({ submissionId, to, subject, body })
   return postJson('/api/roa-submissions/notify-email', { submissionId, to, subject, body });
 }
 
-/** Triggers a browser download of the given canonical / signed / certificate PDF. */
+/** Triggers a browser download of canonical, signed, certificate, or audit-log evidence. */
 export async function downloadEvidencePdf(submissionId, kind = 'canonical', suggestedFilename) {
   const url = `/api/roa-submissions/pdf?id=${encodeURIComponent(submissionId)}&kind=${encodeURIComponent(kind)}`;
   const res = await fetch(url, { headers: { ...(await authHeader()) } });

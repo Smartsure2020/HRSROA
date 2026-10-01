@@ -17,8 +17,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { generateCanonicalPersonalROA } from "../lib/hrsPdfGenerator";
 import { toast } from "@/components/ui/use-toast";
 import { getDraftStatus, saveRoaDraft, clearRoaDraft, hasMeaningfulDraftData } from '@/lib/roaDraftStorage';
-import { PERSONAL_STEPS, getActiveSteps, getNextButtonText, getStepIndex, getStepId } from '@/lib/flowSteps';
-import SignatureIncompleteDialog from '../components/hrs/SignatureIncompleteDialog';
+import { PERSONAL_STEPS, getActiveSteps, getNextButtonText, getStepId } from '@/lib/flowSteps';
 import { buildPersonalNotificationEmail } from '@/lib/personalEmail';
 import { createSubmissionSnapshot } from '@/lib/roaSubmissionSnapshot';
 import { createSubmission, sendNotificationEmail, getSubmission } from '@/lib/roaSubmissionClient';
@@ -35,7 +34,6 @@ export default function AdviceRecord() {
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
-  const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
   const [submission, setSubmission] = useState(null);
   const pendingDraftRef = useRef(null);
 
@@ -132,10 +130,6 @@ export default function AdviceRecord() {
   const handleNext = useCallback(() => {
     const errors = getStepErrors(currentStep, formData);
     if (errors.length > 0) {
-      if (currentStep === getStepIndex(PERSONAL_STEPS, 'signatures', formData)) {
-        setSignatureDialogOpen(true);
-        return;
-      }
       toast({
         variant: "destructive",
         title: "Please complete required fields",
@@ -148,12 +142,6 @@ export default function AdviceRecord() {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }, [currentStep, formData]);
-
-  const goToSignatures = useCallback(() => {
-    setSignatureDialogOpen(false);
-    setCurrentStep(getStepIndex(PERSONAL_STEPS, 'signatures', formData));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [formData]);
 
   const prevStep = useCallback(() => {
     if (currentStep > 0) {
@@ -303,7 +291,7 @@ export default function AdviceRecord() {
 
       {showRestoreBanner && (
         <div className="bg-hrs-blue text-white text-[0.82rem] px-4 py-2.5 flex items-center justify-between gap-4">
-          <span>You have an unsaved ROA in progress — continue? (Signatures will need to be recaptured.)</span>
+          <span>You have an unsaved ROA in progress — continue?</span>
           <div className="flex gap-3 flex-shrink-0">
             <button onClick={handleRestore} className="underline font-semibold">Continue</button>
             <button onClick={handleDismissRestore} className="opacity-70 hover:opacity-100">Discard</button>
@@ -315,12 +303,6 @@ export default function AdviceRecord() {
       <main className="max-w-[860px] mx-auto px-3 sm:px-5 py-9 pb-20">
         {renderStep()}
       </main>
-      <SignatureIncompleteDialog
-        open={signatureDialogOpen}
-        onOpenChange={setSignatureDialogOpen}
-        onGoToSignatures={goToSignatures}
-        signingRoute="docusign"
-      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import SectionTitle from "../../SectionTitle";
 import NavBar from "../../NavBar";
 import { COMMERCIAL_RISK_CATEGORIES } from "../../../../lib/hrsCommercialConstants";
 import { getBrokerFeeSummary } from "../../../../lib/brokerFee";
+import { isSasriaConfirmed } from "../../../../lib/sasriaApplicability";
 import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from "../../../../lib/hrsComplianceContent";
 
 const DISCLOSURE = HRS_COMPLIANCE_CONTENT.statutoryDisclosure;
@@ -93,15 +94,6 @@ export default function CommercialStepReview({ data, onPrev, onSubmit, isSubmitt
           <ReviewRow label="Client Declined to Provide Info" value={yn(data.clientDeclinedInfo)} />
         </ReviewSection>
 
-        <ReviewSection title="Needs Analysis">
-          <ReviewRow label="Perils to be Insured" value={(data.perilsSelected || []).join(', ')} />
-          <ReviewRow label="Value to be Insured" value={data.valueToBeInsured} />
-          <ReviewRow label="Compulsory Excess" value={yn(data.compulsoryExcess)} />
-          <ReviewRow label="Voluntary Excess" value={data.voluntaryExcess} />
-          <ReviewRow label="No Claims Bonus" value={yn(data.noClaimsBonus)} />
-          {data.riskProfileNotes ? <ReviewRow label="Risk Profile Notes" value={data.riskProfileNotes} /> : null}
-        </ReviewSection>
-
         <ReviewSection title="Recommended Product">
           <ReviewRow label="Option 1" value={`${data.ins0 || '—'} — R${data.prem0 || '—'}`} />
           <ReviewRow label="Option 2" value={`${data.ins1 || '—'} — R${data.prem1 || '—'}`} />
@@ -126,9 +118,10 @@ export default function CommercialStepReview({ data, onPrev, onSubmit, isSubmitt
             let cv = "—";
             if (s?.cover === "yes") cv = "✓ YES";
             if (s?.cover === "no") cv = "✗ NO";
-            if (s?.sasria && s?.cover === "yes") cv += " · SASRIA ✓";
+            if (isSasriaConfirmed(cat, s, data.sasriaIncludedClasses)) cv += " · SASRIA confirmed ✓";
             return <ReviewRow key={i} label={cat.name} value={cv} />;
           })}
+          {data.riskProfileNotes ? <ReviewRow label="Additional Risk / Cover Notes" value={data.riskProfileNotes} /> : null}
         </ReviewSection>
 
         <ReviewSection title="Acknowledgements">
@@ -153,7 +146,7 @@ export default function CommercialStepReview({ data, onPrev, onSubmit, isSubmitt
           <ReviewRow label="Disclosure Version" value={disclosureEvidence.version} />
           <ReviewRow label="Reviewed & Acknowledged" value={disclosureEvidence.acknowledged ? "Yes" : "No"} />
           <ReviewRow
-            label="Signed Under General ROA Declaration"
+            label="E-signature Status"
             value={disclosureEvidence.signatureStatus === 'yes' ? "Yes" : disclosureEvidence.signatureStatus === 'pending' ? "Pending signature" : "No"}
           />
         </ReviewSection>
@@ -168,10 +161,8 @@ export default function CommercialStepReview({ data, onPrev, onSubmit, isSubmitt
           <ReviewRow label="Final Declaration" value={data.declarationChoice === "decline" ? "Elects NOT to follow advice" : "Accepts advice & recommendations"} />
         </ReviewSection>
 
-        <ReviewSection title="Signatures">
-          <ReviewRow label="Signature Date" value={data.sigDate} />
-          <ReviewRow label="Client Signature" value={data.clientSig ? "✓ Signed" : "Not signed (optional if sending via DocuSign)"} />
-          <ReviewRow label="Advisor Signature" value={data.advisorSig ? "✓ Signed" : "Not signed (optional if sending via DocuSign)"} />
+        <ReviewSection title="E-signature">
+          <ReviewRow label="Signing" value="Client then adviser after submission" />
         </ReviewSection>
       </FormCard>
 

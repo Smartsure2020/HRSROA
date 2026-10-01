@@ -70,9 +70,9 @@ describe('PDF generators use the shared labels (not inlined literals)', () => {
     expect(occurrences.length).toBe(1);
   });
 
-  it('Personal generator references SIGNATURE_LABELS.advisor exactly once', () => {
+  it('Personal generator uses SIGNATURE_LABELS.advisor for the box and provider-neutral marker', () => {
     const occurrences = PERSONAL_GENERATOR.match(/SIGNATURE_LABELS\.advisor/g) || [];
-    expect(occurrences.length).toBe(1);
+    expect(occurrences.length).toBe(2);
   });
 
   it('Personal generator does not inline the Commercial client label', () => {
@@ -84,9 +84,9 @@ describe('PDF generators use the shared labels (not inlined literals)', () => {
     expect(occurrences.length).toBe(1);
   });
 
-  it('Commercial generator references SIGNATURE_LABELS.advisor exactly once', () => {
+  it('Commercial generator uses SIGNATURE_LABELS.advisor for the box and provider-neutral marker', () => {
     const occurrences = COMMERCIAL_GENERATOR.match(/SIGNATURE_LABELS\.advisor/g) || [];
-    expect(occurrences.length).toBe(1);
+    expect(occurrences.length).toBe(2);
   });
 
   it('neither generator inlines the raw literal anchor strings for signature boxes', () => {

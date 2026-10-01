@@ -6,6 +6,10 @@ const sql = readFileSync(
   path.join(process.cwd(), 'supabase/migrations/20260914_roa_submissions.sql'),
   'utf8',
 );
+const providerSql = readFileSync(
+  path.join(process.cwd(), 'supabase/migrations/20260923_roa_signing_provider.sql'),
+  'utf8',
+);
 
 describe('ROA evidence migration — server-only boundary', () => {
   it('revokes direct anon/authenticated table privileges', () => {
@@ -33,5 +37,12 @@ describe('ROA evidence migration — server-only boundary', () => {
   it('describes client_reference as a display reference, not non-PII', () => {
     expect(sql).toMatch(/client_reference text,[^\n]*display reference/i);
     expect(sql).not.toMatch(/client_reference text,[^\n]*non-PII/i);
+  });
+
+  it('extends service-role updates only to provider lifecycle and evidence columns', () => {
+    expect(providerSql).toMatch(
+      /grant update \([\s\S]*signing_provider[\s\S]*audit_log_sha256[\s\S]*\) on public\.roa_submissions to service_role;/i,
+    );
+    expect(providerSql).not.toMatch(/grant\s+delete\b[^;]*to\s+service_role/i);
   });
 });

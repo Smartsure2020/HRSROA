@@ -5,6 +5,7 @@ import SelectROA from './pages/SelectROA';
 import AdviceRecord from './pages/AdviceRecord';
 import CommercialAdviceRecord from './pages/CommercialAdviceRecord';
 import Login from './pages/Login';
+import RoaRegister from './pages/RoaRegister';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 
 function AuthGate({ children }) {
@@ -34,6 +35,7 @@ function App() {
               <Route path="/" element={<SelectROA />} />
               <Route path="/personal" element={<AdviceRecord />} />
               <Route path="/commercial" element={<CommercialAdviceRecord />} />
+              <Route path="/roas" element={<RoaRegister />} />
               <Route path="*" element={<PageNotFound />} />
             </Routes>
           </AuthGate>

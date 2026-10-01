@@ -5,7 +5,9 @@ import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from './hrsCom
 import { getBrokerFeeSummary } from './brokerFee';
 import { HRS_PDF_THEME, drawDocumentHeader, drawPageFooter, drawSectionHeader, drawClientSummary, ensurePageSpace } from './pdf/hrsPdfTheme';
 import { SIGNATURE_LABELS } from './pdf/signatureLabels';
+import { SIGNING_MARKERS } from './pdf/signingMarkers';
 import { HRS_TEMPLATE_VERSION } from './pdf/templateVersion';
+import { isSasriaConfirmed } from './sasriaApplicability';
 
 const APPOINTMENT = HRS_COMPLIANCE_CONTENT.brokerAppointment.personal;
 const FEE_CONTENT = HRS_COMPLIANCE_CONTENT.brokerFeeConsent;
@@ -64,7 +66,7 @@ function getPdfMetadata(formData, extras = {}) {
     clientName: [formData.title, formData.firstName, formData.surname].filter(Boolean).join(' ') || 'Client',
     advisorName: formData.brokerName,
     policyType: formData.policyType,
-    documentDate: formData.sigDate || formData.inceptionDate,
+    documentDate: formData.inceptionDate,
     disclosureVersion: disclosure.version,
     documentType: 'Personal Lines ROA',
     submissionId: extras.submissionId ?? null,
@@ -302,17 +304,11 @@ class PDFBuilder {
       d.setFont('helvetica', 'normal'); d.setFontSize(6.3); d.setTextColor(...C.grey);
       d.text('Not specified', bx + 2.5, this.cy + 5.2);
     }
-    if (cover === 'yes') {
+    if (cover === 'yes' && sasria) {
       const sx = bx + 27;
-      if (sasria) {
-        d.setFillColor(...C.blue); d.roundedRect(sx, this.cy + 1.5, 16, 5, 1, 1, 'F');
-        d.setFont('helvetica', 'bold'); d.setFontSize(6); d.setTextColor(...C.white);
-        d.text('SASRIA', sx + 2.2, this.cy + 5.2);
-      } else {
-        d.setDrawColor(...C.border); d.roundedRect(sx, this.cy + 1.5, 16, 5, 1, 1, 'S');
-        d.setFont('helvetica', 'normal'); d.setFontSize(6); d.setTextColor(...C.grey);
-        d.text('SASRIA', sx + 2.2, this.cy + 5.2);
-      }
+      d.setFillColor(...C.blue); d.roundedRect(sx, this.cy + 1.5, 16, 5, 1, 1, 'F');
+      d.setFont('helvetica', 'bold'); d.setFontSize(6); d.setTextColor(...C.white);
+      d.text('SASRIA', sx + 2.2, this.cy + 5.2);
     }
     this.cy += rh;
   }
@@ -361,7 +357,7 @@ class PDFBuilder {
     this.cy = topY + ch + 5;
   }
 
-  sigBox(label, sigDataURL, x, y, w, h) {
+  sigBox(label, x, y, w, h) {
     const d = this.doc;
     d.setFillColor(...C.lightBg); d.roundedRect(x, y, w, h, 1.5, 1.5, 'F');
     d.setDrawColor(...C.border); d.setLineWidth(0.4); d.roundedRect(x, y, w, h, 1.5, 1.5, 'S');
@@ -369,24 +365,27 @@ class PDFBuilder {
     d.rect(x, y + 3.5, w, 3, 'F');
     d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
     d.text(label.toUpperCase(), x + w / 2, y + 5, { align: 'center' });
-    if (sigDataURL) {
-      try {
-        const props = d.getImageProperties(sigDataURL);
-        const scale = Math.min((w - 10) / props.width, (h - 18) / props.height);
-        const imageW = props.width * scale;
-        const imageH = props.height * scale;
-        d.addImage(sigDataURL, 'PNG', x + (w - imageW) / 2, y + 9 + ((h - 18) - imageH) / 2, imageW, imageH, undefined, 'MEDIUM');
-      } catch {
-        d.setFont('helvetica', 'italic'); d.setFontSize(6.5); d.setTextColor(...C.grey);
-        d.text('Signature image unavailable', x + w / 2, y + 20, { align: 'center' });
-      }
-    } else {
-      d.setDrawColor(...C.border); d.setLineWidth(0.3); d.setLineDash([1.5, 1.5]);
-      d.line(x + 8, y + h - 9, x + w - 8, y + h - 9);
-      d.setLineDash([]);
-      d.setFont('helvetica', 'italic'); d.setFontSize(6.5); d.setTextColor(...C.grey);
-      d.text('Sign here', x + w / 2, y + h - 5, { align: 'center' });
-    }
+
+    // Invisible provider-neutral anchor. It remains part of the exact canonical
+    // PDF bytes and lets a signing provider locate the signature area without
+    // regenerating the ROA or hard-coding page coordinates.
+    const isAdvisor = label === SIGNATURE_LABELS.advisor;
+    const signingMarker = isAdvisor
+      ? SIGNING_MARKERS.advisorSignature
+      : SIGNING_MARKERS.clientSignature;
+    const dateMarker = isAdvisor
+      ? SIGNING_MARKERS.advisorDate
+      : SIGNING_MARKERS.clientDate;
+    d.setFont('helvetica', 'normal');
+    d.setFontSize(2);
+    d.setTextColor(...C.lightBg);
+    d.text(signingMarker, x + 5, y + 11);
+    d.text(dateMarker, x + 5, y + h - 5);
+    d.setDrawColor(...C.border); d.setLineWidth(0.3); d.setLineDash([1.5, 1.5]);
+    d.line(x + 8, y + h - 9, x + w - 8, y + h - 9);
+    d.setLineDash([]);
+    d.setFont('helvetica', 'italic'); d.setFontSize(6.5); d.setTextColor(...C.grey);
+    d.text('Completed through e-signature', x + w / 2, y + h - 5, { align: 'center' });
     d.setFont('helvetica', 'normal'); d.setFontSize(6.5); d.setTextColor(...C.grey);
     d.text('Date: ________________________', x + 4, y + h - 1.5);
   }
@@ -395,7 +394,7 @@ class PDFBuilder {
   save(filename) { this.doc.save(filename); }
 }
 
-function buildROA(pdf, formData, clientSig, advisorSig) {
+function buildROA(pdf, formData) {
   const fullName = [formData.title, formData.firstName, formData.surname].filter(Boolean).join(' ').trim() || 'Client';
   const address = [formData.streetNumber, formData.streetName, formData.complexName, formData.suburb, formData.city, formData.province, formData.postalCode]
     .filter(Boolean).join(', ') || '-';
@@ -460,41 +459,35 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   pdf.multiLineDataRow('Client Decision', formData.basisDecision);
   pdf.gap();
 
-  // 4. NEEDS ANALYSIS
-  pdf.sectionHeading('4.  NEEDS ANALYSIS', 22);
-  sh = false;
-  pdf.dataRow('Perils to be Insured', (formData.perilsSelected || []).join(', ') || (formData.perilsSelected?.includes('Other') ? formData.perilsOther : ''), sh = !sh);
-  pdf.dataRow('Value to be Insured', formData.valueToBeInsured, sh = !sh);
-  pdf.twoColRow({ label: 'Compulsory Excess', value: yn(formData.compulsoryExcess) }, { label: 'Voluntary Excess', value: formData.voluntaryExcess }, sh = !sh);
-  pdf.dataRow('No Claims Bonus', yn(formData.noClaimsBonus), sh = !sh);
-  if (formData.riskProfileNotes) pdf.multiLineDataRow('Risks / Items to be Included or Excluded', formData.riskProfileNotes);
-  pdf.gap();
-
-  // 5. RISK CATEGORIES
+  // 4. RISK CATEGORIES
   // heading(11) + column-header row(8) + first risk row(~9) = ~28mm minimum
-  pdf.sectionHeading('5.  RISK CATEGORIES', 22);
+  pdf.sectionHeading('4.  RISK CATEGORIES', 22);
   pdf._needSpace(8);
   const d = pdf.doc;
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
   d.text('RISK CATEGORY', ML + 3, pdf.cy + 5);
   d.text('COVER', ML + CW - 42, pdf.cy + 5);
-  d.text('SASRIA', ML + CW - 14, pdf.cy + 5);
+  d.text('SASRIA CONFIRMED', ML + CW - 24, pdf.cy + 5);
   pdf.cy += 8;
   sh = false;
   RISK_CATEGORIES.forEach((cat, i) => {
     const s = formData.riskState?.[i];
-    pdf.riskRow(cat.name, cat.note, s?.cover, s?.cover === 'yes' && s?.sasria, sh = !sh, !!s?.flagged);
+    pdf.riskRow(cat.name, cat.note, s?.cover, isSasriaConfirmed(cat, s, formData.sasriaIncludedClasses), sh = !sh, !!s?.flagged);
   });
+  if (formData.riskProfileNotes) {
+    pdf.gap(2);
+    pdf.multiLineDataRow('Additional Risk / Cover Notes', formData.riskProfileNotes);
+  }
   if (formData.additionalComments) {
     pdf.gap(2);
     pdf.multiLineDataRow('Additional Comments', formData.additionalComments);
   }
   pdf.gap();
 
-  // 6. BANKING & DEBIT ORDER
+  // 5. BANKING & DEBIT ORDER
   // heading(11) + first dataRow(7) = 18mm; use 22 for comfortable buffer
-  pdf.sectionHeading('6.  BANKING & DEBIT ORDER', 22);
+  pdf.sectionHeading('5.  BANKING & DEBIT ORDER', 22);
   sh = false;
   pdf.dataRow('Bank Name', formData.bankName, sh = !sh);
   pdf.twoColRow({ label: 'Account Holder', value: formData.bankHolder }, { label: 'Account Type', value: formData.accountType }, sh = !sh);
@@ -511,9 +504,9 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   }
   pdf.gap();
 
-  // 7. COMPLIANCE ACKNOWLEDGEMENTS
+  // 6. COMPLIANCE ACKNOWLEDGEMENTS
   // heading(11) + column-header row(8) + first principle row(~10) = ~29mm minimum
-  pdf.sectionHeading('7.  COMPLIANCE ACKNOWLEDGEMENTS', 22);
+  pdf.sectionHeading('6.  COMPLIANCE ACKNOWLEDGEMENTS', 22);
   pdf._needSpace(8);
   d.setFillColor(...C.blue); d.rect(ML, pdf.cy, CW, 7, 'F');
   d.setFont('helvetica', 'bold'); d.setFontSize(7); d.setTextColor(...C.white);
@@ -615,8 +608,8 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   }
   pdf.gap();
 
-  // 8. CLIENT DECLARATION
-  pdf.sectionHeading('8.  CLIENT DECLARATION', 25);
+  // 7. CLIENT DECLARATION
+  pdf.sectionHeading('7.  CLIENT DECLARATION', 25);
   sh = false;
   pdf.dataRow('Elects to conclude transaction differing from recommendation', formData.electionDiffers ? 'Yes' : 'No', sh = !sh);
   pdf.dataRow('Elects not to follow the advice furnished', formData.electionNotFollow ? 'Yes' : 'No', sh = !sh);
@@ -635,8 +628,8 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
   );
   pdf.gap();
 
-  // 9. SIGNATURES — heading(11) + legal text start(~20mm) = 31mm minimum
-  pdf.sectionHeading('9.  SIGNATURES', 25);
+  // 8. SIGNATURES — heading(11) + legal text start(~20mm) = 31mm minimum
+  pdf.sectionHeading('8.  SIGNATURES', 25);
   pdf.gap(3);
   d.setFont('helvetica', 'italic'); d.setFontSize(7); d.setTextColor(...C.grey);
   const legal = 'By signing below, the client confirms that all information provided is true and accurate, and that they have read and accepted all terms and disclosures contained in this Record of Advice, including the Client Declaration above. Holistic Risk Services (Pty) Ltd - Authorised FSP No. 28582.';
@@ -646,12 +639,11 @@ function buildROA(pdf, formData, clientSig, advisorSig) {
     pdf.cy += 4.5;
   });
   pdf.gap(4);
-  pdf.dataRow('Signature Date', formData.sigDate);
-  pdf.gap(6);
+  pdf.gap(2);
   pdf._needSpace(42);
   const hw = (CW - 8) / 2;
-  pdf.sigBox(SIGNATURE_LABELS.personalClient, clientSig, ML, pdf.cy, hw, 38);
-  pdf.sigBox(SIGNATURE_LABELS.advisor, advisorSig, ML + hw + 8, pdf.cy, hw, 38);
+  pdf.sigBox(SIGNATURE_LABELS.personalClient, ML, pdf.cy, hw, 38);
+  pdf.sigBox(SIGNATURE_LABELS.advisor, ML + hw + 8, pdf.cy, hw, 38);
   pdf.cy += 42;
   d.setFont('helvetica', 'bold'); d.setFontSize(7.5); d.setTextColor(...C.blue);
   d.text(fullName, ML + hw / 2, pdf.cy, { align: 'center' });
@@ -734,26 +726,18 @@ function buildChecklist(pdf, formData, checklistState) {
 }
 
 export async function generatePDF(formData) {
-  const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(logoUrl),
-    loadImgAsDataURL(formData.clientSig),
-    loadImgAsDataURL(formData.advisorSig),
-  ]);
+  const logo = await loadImgAsDataURL(logoUrl);
   const pdf = new PDFBuilder(logo, getPdfMetadata(formData));
-  buildROA(pdf, formData, clientSig, advisorSig);
+  buildROA(pdf, formData);
   pdf._finalizeFooters();
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   pdf.save(`HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
 export async function generateROABase64(formData, extras = {}) {
-  const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(logoUrl),
-    loadImgAsDataURL(formData.clientSig),
-    loadImgAsDataURL(formData.advisorSig),
-  ]);
+  const logo = await loadImgAsDataURL(logoUrl);
   const pdf = new PDFBuilder(logo, getPdfMetadata(formData, extras));
-  buildROA(pdf, formData, clientSig, advisorSig);
+  buildROA(pdf, formData);
   pdf._finalizeFooters();
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   const filename = `HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
@@ -767,13 +751,9 @@ export async function generateROABase64(formData, extras = {}) {
  * later downloaded / emailed / sent to DocuSign.
  */
 export async function generateCanonicalPersonalROA(formData, { submissionId, templateVersion }) {
-  const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(logoUrl),
-    loadImgAsDataURL(formData.clientSig),
-    loadImgAsDataURL(formData.advisorSig),
-  ]);
+  const logo = await loadImgAsDataURL(logoUrl);
   const pdf = new PDFBuilder(logo, getPdfMetadata(formData, { submissionId, templateVersion }));
-  buildROA(pdf, formData, clientSig, advisorSig);
+  buildROA(pdf, formData);
   pdf._finalizeFooters();
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   const filename = `HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
@@ -783,13 +763,9 @@ export async function generateCanonicalPersonalROA(formData, { submissionId, tem
 }
 
 export async function generateCombinedPDF(formData, checklistState) {
-  const [logo, clientSig, advisorSig] = await Promise.all([
-    loadImgAsDataURL(logoUrl),
-    loadImgAsDataURL(formData.clientSig),
-    loadImgAsDataURL(formData.advisorSig),
-  ]);
+  const logo = await loadImgAsDataURL(logoUrl);
   const pdf = new PDFBuilder(logo, getPdfMetadata(formData));
-  buildROA(pdf, formData, clientSig, advisorSig);
+  buildROA(pdf, formData);
   buildChecklist(pdf, formData, checklistState);
   pdf._finalizeFooters();
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';

@@ -10,7 +10,7 @@ export const PERSONAL_STEPS = [
   { id: 'risk-categories', label: 'Risk Categories', action: 'next' },
   { id: 'principles-disclosures', label: 'Principles & Disclosures', action: 'next' },
   { id: 'banking', label: 'Banking & Debit Order', action: 'next' },
-  { id: 'signatures', label: 'Signatures', action: 'next' },
+  { id: 'declarations', label: 'Declarations', action: 'next' },
   { id: 'review', label: 'Review', action: 'review' },
 ];
 
@@ -21,7 +21,7 @@ export const COMMERCIAL_STEPS = [
   { id: 'replacement-policy', label: 'Replacement Policy', action: 'next' },
   { id: 'principles-disclosures', label: 'Principles & Disclosures', action: 'next' },
   { id: 'risk-categories', label: 'Risk Categories', action: 'next' },
-  { id: 'signatures', label: 'Signatures', action: 'next' },
+  { id: 'declarations', label: 'Declarations', action: 'next' },
   { id: 'review', label: 'Review', action: 'submit' },
 ];
 

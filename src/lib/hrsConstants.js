@@ -1,20 +1,20 @@
 export const RISK_CATEGORIES = [
-  { name: "Buildings / Houses", note: "Solar systems to be listed", sasria: true },
-  { name: "Contents – Fire & Perils", note: "", sasria: true },
-  { name: "Contents – Full Theft", note: "Forcible entry and/or exit applicable", sasria: false },
-  { name: "Contents – Specified Theft Only", note: "Forcible entry and/or exit applicable", sasria: false },
-  { name: "Clothing & Personal Effects", note: "Unused jewellery kept in safe", sasria: false },
-  { name: "All Risk – Other Items", note: "Limit to item, set or pair applicable", sasria: false },
-  { name: "All Risk – Bicycles", note: "Professional use excluded", sasria: false },
-  { name: "All Risk – Electronic Handheld Devices", note: "Make, model, serial & IMEI required. Unattended vehicle restriction.", sasria: false },
-  { name: "All Risk – Firearms", note: "Unused firearms kept in safe", sasria: false },
-  { name: "All Risk – Jewellery", note: "Valuation certificates required (not older than 2 years)", sasria: false },
-  { name: "Vehicles (incl. Bikes, Caravans & Trailers)", note: "Comprehensive / TPF&T / Third Party Only", sasria: true },
-  { name: "Vehicles – Drivers under 25", note: "Must list all drivers under 25 who may occasionally drive", sasria: false },
-  { name: "Pleasure Craft", note: "", sasria: true },
-  { name: "Personal Accident", note: "", sasria: false },
-  { name: "Personal Liability", note: "", sasria: false },
-  { name: "Value Added Products (VAPs)", note: "Roadside Assistance", sasria: false },
+  { name: "Buildings / Houses", note: "Solar systems to be listed", sasriaClass: "material_damage" },
+  { name: "Contents – Fire & Perils", note: "", sasriaClass: "material_damage" },
+  { name: "Contents – Full Theft", note: "Forcible entry and/or exit applicable", sasriaClass: null },
+  { name: "Contents – Specified Theft Only", note: "Forcible entry and/or exit applicable", sasriaClass: null },
+  { name: "Clothing & Personal Effects", note: "Unused jewellery kept in safe", sasriaClass: null },
+  { name: "All Risk – Other Items", note: "Limit to item, set or pair applicable", sasriaClass: null },
+  { name: "All Risk – Bicycles", note: "Professional use excluded", sasriaClass: null },
+  { name: "All Risk – Electronic Handheld Devices", note: "Make, model, serial & IMEI required. Unattended vehicle restriction.", sasriaClass: null },
+  { name: "All Risk – Firearms", note: "Unused firearms kept in safe", sasriaClass: null },
+  { name: "All Risk – Jewellery", note: "Valuation certificates required (not older than 2 years)", sasriaClass: null },
+  { name: "Vehicles (incl. Bikes, Caravans & Trailers)", note: "Comprehensive / TPF&T / Third Party Only", sasriaClass: "motor" },
+  { name: "Vehicles – Drivers under 25", note: "Must list all drivers under 25 who may occasionally drive", sasriaClass: null },
+  { name: "Pleasure Craft", note: "Applicability requires adviser review", sasriaClass: "conditional" },
+  { name: "Personal Accident", note: "", sasriaClass: null },
+  { name: "Personal Liability", note: "", sasriaClass: null },
+  { name: "Value Added Products (VAPs)", note: "Roadside Assistance", sasriaClass: null },
 ];
 
 // The broker → email directory lives in a dedicated pure-data module so the
@@ -50,16 +50,13 @@ export const INSURERS = [
 import { getBrokerFeeSummary } from './brokerFee';
 import { applySharedConditionalCleanup } from './conditionalCleanup';
 import { PERSONAL_STEPS } from './flowSteps';
+import { normaliseSasriaSelection } from './sasriaApplicability';
 
 export const POLICY_TYPES = ["New placement", "Renewal", "Replacement"];
 
 // Kept as a compatibility export for existing progress components. The
 // authoritative definition lives in flowSteps.js.
 export const STEPS = PERSONAL_STEPS;
-
-export const PERILS = ["Theft", "Fire", "Destruction", "Consequential Loss", "3rd Party Liability", "SASRIA", "Other"];
-
-export const VALUE_TYPES = ["Market Value", "Replacement Value", "Other"];
 
 export const PRINCIPLES = [
   'A short-term insurance policy is based on GOOD FAITH between all parties involved.',
@@ -115,7 +112,6 @@ export function getStepErrors(step, formData) {
       const errors = [];
       const assessed = formData.riskState?.some(r => r.cover === 'yes' || r.cover === 'no');
       if (!assessed) errors.push('At least one risk category must be assessed (Yes or No)');
-      if (!formData.valueToBeInsured) errors.push('Value to be Insured');
       return errors;
     }
     case 4: {
@@ -151,7 +147,7 @@ export function getStepErrors(step, formData) {
 
 /** Enforces the Phase 3 conditional-cleanup invariants for the Personal flow. */
 export function applyConditionalCleanup(formData) {
-  return applySharedConditionalCleanup(formData);
+  return normaliseSasriaSelection(applySharedConditionalCleanup(formData), RISK_CATEGORIES);
 }
 
 export function getInitialFormData() {
@@ -203,16 +199,11 @@ export function getInitialFormData() {
     basisDecision: "To take out the proposed and quoted insurance with Holistic Risk Services (Pty) Ltd.",
 
     // Risk categories
-    riskState: RISK_CATEGORIES.map(() => ({ cover: null, sasria: false, flagged: false })),
+    riskState: RISK_CATEGORIES.map(() => ({ cover: null, flagged: false })),
+    sasriaIncludedClasses: [],
     additionalComments: "",
 
-    // Needs analysis
-    perilsSelected: [],
-    perilsOther: "",
-    valueToBeInsured: "",
-    compulsoryExcess: null,
-    voluntaryExcess: "",
-    noClaimsBonus: null,
+    // Additional context for the detailed risk-category assessment
     riskProfileNotes: "",
 
     // Acknowledgements
@@ -250,9 +241,5 @@ export function getInitialFormData() {
     apptInsurer: "",
     apptPolicyNo: "",
 
-    // Signatures
-    sigDate: today,
-    clientSig: null,
-    advisorSig: null,
   };
 }
