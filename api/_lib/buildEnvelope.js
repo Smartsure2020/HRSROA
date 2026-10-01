@@ -33,6 +33,7 @@ const DEFAULT_EMAIL_BLURB = (signerName, roaType) =>
  * @param {string} args.brokerEmail
  * @param {string} args.pdfBase64
  * @param {string} args.pdfFilename
+ * @param {string} args.transactionId Stable sender-generated id for DocuSign reconciliation
  * @param {string} [args.subject]
  * @param {string} [args.message]
  * @returns {object} DocuSign envelope definition
@@ -45,16 +46,21 @@ export function buildEnvelope({
   brokerEmail,
   pdfBase64,
   pdfFilename,
+  transactionId,
   subject,
   message,
 }) {
   const clientAnchor = getClientSignatureLabel(roaType); // throws for unknown roaType
   const advisorAnchor = getAdvisorSignatureLabel();
+  if (typeof transactionId !== 'string' || !transactionId.trim()) {
+    throw new Error('buildEnvelope: transactionId is required');
+  }
 
   return {
     emailSubject: subject || DEFAULT_EMAIL_SUBJECT(signerName),
     emailBlurb: message || DEFAULT_EMAIL_BLURB(signerName, roaType),
     status: 'sent',
+    transactionId,
     documents: [
       {
         documentBase64: pdfBase64,

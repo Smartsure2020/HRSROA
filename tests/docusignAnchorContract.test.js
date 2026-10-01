@@ -105,9 +105,15 @@ const BASELINE = Object.freeze({
   brokerEmail: 'andrew@hrsinsurance.co.za',
   pdfBase64: 'YmFzZTY0LWJvZHk=', // not a real PDF; buildEnvelope never decodes it
   pdfFilename: 'HRS_ROA_Test_2026-09-14.pdf',
+  transactionId: 'ROA-11111111-2222-3333-4444-555555555555',
 });
 
 describe('buildEnvelope — anchor contract', () => {
+  it('includes the stable DocuSign transactionId unchanged', () => {
+    const env = buildEnvelope({ ...BASELINE, roaType: 'Personal' });
+    expect(env.transactionId).toBe(BASELINE.transactionId);
+  });
+
   it('anchors the Personal client tab to "Client Signature"', () => {
     const env = buildEnvelope({ ...BASELINE, roaType: 'Personal' });
     const clientSigner = env.recipients.signers.find((s) => s.recipientId === '1');

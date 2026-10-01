@@ -2,7 +2,10 @@
 import { useState, useEffect } from "react";
 
 const TOAST_LIMIT = 20;
-const TOAST_REMOVE_DELAY = 1000000;
+// The Toast component here is a plain div — it does not run Radix's exit
+// animation, so removal is what actually hides the toast. Keep this short so
+// clicking the close button appears instant to the user.
+const TOAST_REMOVE_DELAY = 200;
 
 const actionTypes = {
   ADD_TOAST: "ADD_TOAST",

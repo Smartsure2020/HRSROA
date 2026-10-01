@@ -3,11 +3,16 @@ import { CheckCircle, PenLine, Trash2, FileDown, FilePlus, Upload, Send, Refresh
 import FormCard from "../../FormCard";
 import SignatureCanvas from "../../SignatureCanvas";
 import WorkflowStatusPanel from "../../WorkflowStatusPanel";
-import { generateCommercialPDF, generateCommercialCombinedPDF, generateCommercialROABase64 } from "../../../../lib/hrsCommercialPdfGenerator";
-import { MANAGER_NAME, BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL } from "../../../../lib/hrsConstants";
+import { generateCommercialCombinedPDF } from "../../../../lib/hrsCommercialPdfGenerator";
+import { MANAGER_NAME } from "../../../../lib/hrsConstants";
 import { syncCommercialROAToCRM } from "../../../../lib/crmSync";
 import { useCrmSyncStatus } from "../../../../lib/useCrmSyncStatus";
-import { authHeader } from "../../../../lib/apiAuth";
+import {
+  attachCrmIds,
+  downloadEvidencePdf,
+  refreshSubmission,
+  sendForSignature as sendForSignatureApi,
+} from "../../../../lib/roaSubmissionClient";
 
 function InfoRow({ label, value }) {
   return (
@@ -132,7 +137,7 @@ const ADDITIONAL_DOCS = [
 
 const COMMISSION_ROWS = ["Brokerage (HRS)", "Broker", "Referror", "Other"];
 
-export default function CommercialStepChecklist({ data, onRestart }) {
+export default function CommercialStepChecklist({ data, submission, onSubmissionUpdate, onRestart }) {
   const [smartsure, setSmartsure] = useState(null);
   const [directInsurer, setDirectInsurer] = useState(null);
   const [complianceDocs, setComplianceDocs] = useState({});
@@ -152,23 +157,55 @@ export default function CommercialStepChecklist({ data, onRestart }) {
     "Other": "",
   });
 
-  // DocuSign e-signature state
+  // DocuSign e-signature state — derived from `submission` so it survives refreshes.
   const [sigSending, setSigSending] = useState(false);
-  const [sigSent, setSigSent] = useState(false);
   const [sigError, setSigError] = useState(null);
-  const [sigEnvelopeId, setSigEnvelopeId] = useState(null);
-  const [sigSentAt, setSigSentAt] = useState(null);
+  const sigSent = Boolean(submission?.docusignEnvelopeId);
+  const sigEnvelopeId = submission?.docusignEnvelopeId || null;
+  const sigSentAt = submission?.sentForSignatureAt || null;
 
-  // CRM sync status + retry (Phase 3, section 9) — triggered once on mount, same pattern
-  // and shared hook as the Personal flow's checklist screen.
+  // CRM sync + retry — same pattern and shared hook as the Personal checklist.
   const crm = useCrmSyncStatus(syncCommercialROAToCRM);
   const crmTriggered = useRef(false);
+  const crmAttachedIdsRef = useRef(false);
   useEffect(() => {
     if (crmTriggered.current) return;
     crmTriggered.current = true;
     crm.sync(data);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (crmAttachedIdsRef.current) return;
+    if (!submission?.submissionId) return;
+    if (crm.status !== 'synced') return;
+    if (!crm.result?.clientId && !crm.result?.dealId) return;
+    crmAttachedIdsRef.current = true;
+    attachCrmIds(submission.submissionId, {
+      crmClientId: crm.result.clientId,
+      crmDealId: crm.result.dealId,
+    })
+      .then((updated) => { if (updated && onSubmissionUpdate) onSubmissionUpdate(updated); })
+      .catch(() => { /* silent */ });
+  }, [crm.status, crm.result, submission?.submissionId, onSubmissionUpdate]);
+
+  useEffect(() => {
+    if (!submission?.submissionId) return;
+    const isTerminal = submission.status === 'completed'
+      && submission.hasSignedPdf
+      && submission.hasCertificate;
+    if (isTerminal) return;
+    let cancelled = false;
+    async function tick() {
+      try {
+        const updated = await refreshSubmission(submission.submissionId);
+        if (!cancelled && updated && onSubmissionUpdate) onSubmissionUpdate(updated);
+      } catch { /* transient */ }
+    }
+    tick();
+    const interval = setInterval(tick, 30000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [submission?.submissionId, submission?.status, submission?.hasSignedPdf, submission?.hasCertificate, onSubmissionUpdate]);
 
   const netPrem = parseFloat(data.prem2) || 0;
   const feeVal = parseFloat(data.brokerFeePercent) || 0;
@@ -179,57 +216,59 @@ export default function CommercialStepChecklist({ data, onRestart }) {
   const signerEmail = data.email;
 
   const handleDownload = async () => {
+    if (!submission?.submissionId) return;
     setDownloading('roa');
-    await generateCommercialPDF(data);
-    setDownloading(null);
-    setDownloaded(true);
+    try {
+      await downloadEvidencePdf(submission.submissionId, 'canonical', `HRS_Commercial_ROA_${submission.submissionId}.pdf`);
+      setDownloaded(true);
+    } finally { setDownloading(null); }
   };
 
   const handleDownloadCombined = async () => {
     setDownloading('combined');
-    await generateCommercialCombinedPDF(data, {
-      smartsure, directInsurer, complianceDocs, additionalDocs,
-      comments, trackDates, businessType, acctExec, commissions,
-    });
-    setDownloading(null);
-    setDownloaded(true);
+    try {
+      await generateCommercialCombinedPDF(data, {
+        smartsure, directInsurer, complianceDocs, additionalDocs,
+        comments, trackDates, businessType, acctExec, commissions,
+      });
+      setDownloaded(true);
+    } finally { setDownloading(null); }
+  };
+
+  const handleDownloadSigned = async () => {
+    if (!submission?.submissionId || !submission.hasSignedPdf) return;
+    setDownloading('signed');
+    try {
+      await downloadEvidencePdf(submission.submissionId, 'signed', `HRS_Commercial_ROA_${submission.submissionId}_signed.pdf`);
+    } finally { setDownloading(null); }
+  };
+
+  const handleDownloadCertificate = async () => {
+    if (!submission?.submissionId || !submission.hasCertificate) return;
+    setDownloading('certificate');
+    try {
+      await downloadEvidencePdf(submission.submissionId, 'certificate', `HRS_Commercial_ROA_${submission.submissionId}_certificate.pdf`);
+    } finally { setDownloading(null); }
   };
 
   const handleSendForSignature = async () => {
+    if (!submission?.submissionId) return;
     if (!signerEmail) {
       setSigError('No client email address found. Please ensure the email was entered in Step 1.');
       return;
     }
 
-    const brokerEmail = BROKER_EMAIL_MAP[data.brokerName] || DEFAULT_BROKER_EMAIL;
-
     setSigSending(true);
     setSigError(null);
     try {
-      const { base64, filename } = await generateCommercialROABase64(data);
-
-      const res = await fetch('/api/send-for-signature', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-        body: JSON.stringify({
-          signerName,
-          signerEmail,
-          brokerName: data.brokerName,
-          brokerEmail,
-          pdfBase64: base64,
-          pdfFilename: filename,
-          roaType: 'Commercial',
-          subject: `Please sign your Record of Advice – ${data.companyName} | HRS Insurance`,
-          message: `Dear ${signerName},\n\nPlease review and sign the Commercial Lines Record of Advice for ${data.companyName} from Holistic Risk Services (Pty) Ltd. This document is required under the Financial Advisory and Intermediary Services (FAIS) Act.\n\nKind regards,\n${data.brokerName}\nHolistic Risk Services (Pty) Ltd\nFSP No. 28582`,
-        }),
+      const result = await sendForSignatureApi({
+        submissionId: submission.submissionId,
+        signerName,
+        signerEmail,
+        subject: `Please sign your Record of Advice – ${data.companyName} | HRS Insurance`,
+        message: `Dear ${signerName},\n\nPlease review and sign the Commercial Lines Record of Advice for ${data.companyName} from Holistic Risk Services (Pty) Ltd. This document is required under the Financial Advisory and Intermediary Services (FAIS) Act.\n\nKind regards,\n${data.brokerName}\nHolistic Risk Services (Pty) Ltd\nFSP No. 28582`,
       });
-
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Failed to send signature request');
-
-      setSigSent(true);
-      setSigEnvelopeId(result.envelopeId);
-      setSigSentAt(new Date().toISOString());
+      if (result.submission && onSubmissionUpdate) onSubmissionUpdate(result.submission);
     } catch (err) {
       setSigError(err.message || 'Could not send signature request. Please try again.');
     } finally {
@@ -257,6 +296,7 @@ export default function CommercialStepChecklist({ data, onRestart }) {
         checklistComplete={downloaded}
         docusignStatus={sigSent ? 'envelope_created' : 'not_sent'}
         docusignSentAt={sigSentAt}
+        submission={submission}
       />
 
       {crm.status === 'syncing' && (
@@ -433,17 +473,39 @@ export default function CommercialStepChecklist({ data, onRestart }) {
         <div className="font-heading text-[1.05rem] text-hrs-orange mb-3">Documents</div>
 
         <div className="flex gap-3 flex-wrap mb-3">
-          <button onClick={handleDownload} disabled={!!downloading}
+          <button onClick={handleDownload} disabled={!!downloading || !submission?.submissionId}
             className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-body font-semibold text-[0.88rem] bg-hrs-orange text-white border-none transition-all hover:bg-hrs-orange-light disabled:opacity-60">
             <FileDown className="w-4 h-4" />
-            {downloading === 'roa' ? 'Generating...' : 'Download Commercial ROA PDF'}
+            {downloading === 'roa' ? 'Downloading...' : 'Download Commercial ROA PDF (canonical)'}
           </button>
           <button onClick={handleDownloadCombined} disabled={!!downloading}
-            className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-body font-semibold text-[0.88rem] bg-transparent text-white border-[1.5px] border-white/50 transition-all hover:border-white disabled:opacity-60">
+            className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-body font-semibold text-[0.88rem] bg-transparent text-white border-[1.5px] border-white/50 transition-all hover:border-white disabled:opacity-60"
+            title="Working copy including the internal checklist. The canonical ROA above is the authoritative signed document.">
             <FilePlus className="w-4 h-4" />
-            {downloading === 'combined' ? 'Generating...' : 'Download ROA + Checklist'}
+            {downloading === 'combined' ? 'Generating...' : 'ROA + Checklist (working copy)'}
           </button>
         </div>
+        {submission?.hasSignedPdf && (
+          <div className="flex gap-3 flex-wrap mb-3">
+            <button onClick={handleDownloadSigned} disabled={!!downloading}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-body font-semibold text-[0.82rem] bg-white/10 text-white border border-white/30 transition-all hover:bg-white/20 disabled:opacity-60">
+              <FileDown className="w-4 h-4" />
+              {downloading === 'signed' ? 'Downloading...' : 'Download signed ROA'}
+            </button>
+            {submission?.hasCertificate && (
+              <button onClick={handleDownloadCertificate} disabled={!!downloading}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-body font-semibold text-[0.82rem] bg-white/10 text-white border border-white/30 transition-all hover:bg-white/20 disabled:opacity-60">
+                <FileDown className="w-4 h-4" />
+                {downloading === 'certificate' ? 'Downloading...' : 'Download Certificate of Completion'}
+              </button>
+            )}
+          </div>
+        )}
+        {submission?.submissionId && (
+          <p className="text-[0.7rem] text-white/60 -mt-1 mb-2 uppercase tracking-wider">
+            Submission {submission.submissionId} · SHA-256 {String(submission.pdfSha256 || '').slice(0, 12)}…
+          </p>
+        )}
 
         {/* DocuSign e-signature */}
         <div className="mt-1 pt-3 border-t border-white/20">

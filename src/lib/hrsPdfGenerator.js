@@ -5,6 +5,7 @@ import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from './hrsCom
 import { getBrokerFeeSummary } from './brokerFee';
 import { HRS_PDF_THEME, drawDocumentHeader, drawPageFooter, drawSectionHeader, drawClientSummary, ensurePageSpace } from './pdf/hrsPdfTheme';
 import { SIGNATURE_LABELS } from './pdf/signatureLabels';
+import { HRS_TEMPLATE_VERSION } from './pdf/templateVersion';
 
 const APPOINTMENT = HRS_COMPLIANCE_CONTENT.brokerAppointment.personal;
 const FEE_CONTENT = HRS_COMPLIANCE_CONTENT.brokerFeeConsent;
@@ -56,7 +57,7 @@ const ML = HRS_PDF_THEME.margin.left, MR = HRS_PDF_THEME.margin.right;
 const CW = PAGE_W - ML - MR;
 const LW = 60;
 
-function getPdfMetadata(formData) {
+function getPdfMetadata(formData, extras = {}) {
   const disclosure = getStatutoryDisclosureEvidence(formData);
   return {
     productLine: 'Short-term Insurance: Personal Lines',
@@ -66,6 +67,8 @@ function getPdfMetadata(formData) {
     documentDate: formData.sigDate || formData.inceptionDate,
     disclosureVersion: disclosure.version,
     documentType: 'Personal Lines ROA',
+    submissionId: extras.submissionId ?? null,
+    templateVersion: extras.templateVersion ?? HRS_TEMPLATE_VERSION,
   };
 }
 
@@ -105,14 +108,25 @@ class PDFBuilder {
   }
 
   _drawFooter() {
-    drawPageFooter(this.doc, { pageNumber: this.pageNum, documentType: this.metadata.documentType });
+    drawPageFooter(this.doc, {
+      pageNumber: this.pageNum,
+      documentType: this.metadata.documentType,
+      submissionId: this.metadata.submissionId,
+      templateVersion: this.metadata.templateVersion,
+    });
   }
 
   _finalizeFooters() {
     const totalPages = this.doc.getNumberOfPages();
     for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
       this.doc.setPage(pageNumber);
-      drawPageFooter(this.doc, { pageNumber, totalPages, documentType: this.metadata.documentType });
+      drawPageFooter(this.doc, {
+        pageNumber,
+        totalPages,
+        documentType: this.metadata.documentType,
+        submissionId: this.metadata.submissionId,
+        templateVersion: this.metadata.templateVersion,
+      });
     }
   }
 
@@ -732,19 +746,40 @@ export async function generatePDF(formData) {
   pdf.save(`HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
-export async function generateROABase64(formData) {
+export async function generateROABase64(formData, extras = {}) {
   const [logo, clientSig, advisorSig] = await Promise.all([
     loadImgAsDataURL(logoUrl),
     loadImgAsDataURL(formData.clientSig),
     loadImgAsDataURL(formData.advisorSig),
   ]);
-  const pdf = new PDFBuilder(logo, getPdfMetadata(formData));
+  const pdf = new PDFBuilder(logo, getPdfMetadata(formData, extras));
   buildROA(pdf, formData, clientSig, advisorSig);
   pdf._finalizeFooters();
   const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
   const filename = `HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
   const base64 = pdf.doc.output('datauristring').split(',')[1];
   return { base64, filename };
+}
+
+/**
+ * Canonical Personal ROA PDF (Phase ROA-1). Stamps submissionId + template
+ * version into the footer and returns the exact bytes that get persisted and
+ * later downloaded / emailed / sent to DocuSign.
+ */
+export async function generateCanonicalPersonalROA(formData, { submissionId, templateVersion }) {
+  const [logo, clientSig, advisorSig] = await Promise.all([
+    loadImgAsDataURL(logoUrl),
+    loadImgAsDataURL(formData.clientSig),
+    loadImgAsDataURL(formData.advisorSig),
+  ]);
+  const pdf = new PDFBuilder(logo, getPdfMetadata(formData, { submissionId, templateVersion }));
+  buildROA(pdf, formData, clientSig, advisorSig);
+  pdf._finalizeFooters();
+  const name = [formData.firstName, formData.surname].filter(Boolean).join('_').replace(/[^a-zA-Z0-9_]/g, '') || 'Client';
+  const filename = `HRS_ROA_${name}_${new Date().toISOString().slice(0, 10)}.pdf`;
+  const arrayBuffer = pdf.doc.output('arraybuffer');
+  const bytes = new Uint8Array(arrayBuffer);
+  return { bytes, filename };
 }
 
 export async function generateCombinedPDF(formData, checklistState) {

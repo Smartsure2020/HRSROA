@@ -18,6 +18,10 @@ export const BROKER_EMAIL_MAP = {
   'Werner Joubert':       'werner@hrsinsurance.co.za',
   'Brian Hodges':         'brian@hrsinsurance.co.za',
   'Faizel Patel':         'faizel@hrsinsurance.co.za',
+  'Timothy Simpson':      'timothy@hrsinsurance.co.za',
+  'Steve Pickstock':      'steve@hrsinsurance.co.za',
+  'Penny Ambrose':        'penny@hrsinsurance.co.za',
+  'Lincoln Collins':      'lincoln@hrsinsurance.co.za',
 };
 
 // Preserved original casing to stay behaviour-compatible with existing client

@@ -96,7 +96,13 @@ function drawTextLogo(doc, x, y, color) {
   doc.text('HRS', x, y, { align: 'center' });
 }
 
-export function drawPageFooter(doc, { pageNumber = 1, totalPages = null, documentType = 'Record of Advice' } = {}) {
+export function drawPageFooter(doc, {
+  pageNumber = 1,
+  totalPages = null,
+  documentType = 'Record of Advice',
+  submissionId = null,
+  templateVersion = null,
+} = {}) {
   const T = HRS_PDF_THEME;
   const { width: pageW, height: pageH } = T.page;
   const { left: ml, right: mr } = T.margin;
@@ -106,7 +112,12 @@ export function drawPageFooter(doc, { pageNumber = 1, totalPages = null, documen
   doc.setDrawColor(...C.border); doc.setLineWidth(0.3); doc.line(ml, fy + 0.8, pageW - mr, fy + 0.8);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(T.type.footer); doc.setTextColor(...C.muted);
   doc.text(`${HRS_INFO.legalName}  |  FSP ${HRS_INFO.fspNumber}  |  ${HRS_INFO.phone}`, ml, fy + 5);
-  doc.text(`${documentType}  |  Confidential`, ml, fy + 9.5);
+  const evidenceLine = [
+    `${documentType}  |  Confidential`,
+    submissionId ? `Submission ${submissionId}` : null,
+    templateVersion ? `Template ${templateVersion}` : null,
+  ].filter(Boolean).join('  |  ');
+  doc.text(evidenceLine, ml, fy + 9.5);
   doc.setFont('helvetica', 'bold'); doc.setTextColor(...C.accent);
   doc.text(`Page ${pageNumber}${totalPages ? ` of ${totalPages}` : ''}`, pageW - mr, fy + 7, { align: 'right' });
 }
