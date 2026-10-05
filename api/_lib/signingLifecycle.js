@@ -13,6 +13,16 @@ export function hasRequiredSigningEvidence(row) {
   return signingProviderFor(row) !== 'documenso' || Boolean(row.audit_log_storage_path);
 }
 
+/**
+ * CRM sync is final only when the CRM reported `linked` AND, for Documenso (which always
+ * produces an audit log), the audit-log document has been filed too. Rows linked before
+ * audit logs were synced therefore remain eligible for a one-off, idempotent backfill.
+ */
+export function isCrmEvidenceComplete(row) {
+  if (row?.crm_sync_status !== 'linked') return false;
+  return signingProviderFor(row) !== 'documenso' || Boolean(row.crm_audit_log_document_id);
+}
+
 export function isTerminalSigningRecord(row) {
   if (!row) return true;
   if (TERMINAL_STATUSES.has(row.status)) return true;

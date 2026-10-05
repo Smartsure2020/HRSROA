@@ -7,6 +7,8 @@ import { defineConfig } from 'vitest/config';
 // themselves (see tests/testUtils/memorySessionStorage.js) rather than pulling in a DOM
 // dependency for the whole suite.
 export default defineConfig({
+  // Lets tests import .jsx step components (automatic JSX runtime, as in the Vite build).
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       '@': path.resolve(process.cwd(), './src'),

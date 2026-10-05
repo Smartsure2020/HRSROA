@@ -9,6 +9,7 @@ import {
   getDocumensoEnvelope,
   getDocumensoEnvelopeStatus,
   isDocumensoConfigured,
+  redistributeDocumensoEnvelope,
 } from './documensoClient.js';
 import {
   downloadPdf,
@@ -21,6 +22,8 @@ import {
 } from './submissionRepo.js';
 import { sha256HexOfBytes } from './sha256.js';
 import { BROKER_EMAIL_MAP, EMAIL_TO_BROKER } from '../../src/lib/brokerDirectory.js';
+import { buildSigningInviteCopy } from '../../src/lib/signingInviteCopy.js';
+import { reminderBlockReason, reminderCooldownSeconds } from '../../src/lib/signatureReminder.js';
 
 const PROVIDER = 'documenso';
 const SEND_IN_FLIGHT_GRACE_MS = 60 * 1000;
@@ -90,8 +93,6 @@ export async function sendViaDocumenso({
   user,
   signerName,
   signerEmail,
-  subject,
-  message,
 }) {
   if (!isDocumensoConfigured()) {
     const err = new Error('documenso_environment_misconfigured');
@@ -109,6 +110,8 @@ export async function sendViaDocumenso({
   }
 
   const broker = brokerIdentity(user);
+  // Server-built copy that names the inviting broker; browser-supplied text is never used.
+  const { subject, message } = buildSigningInviteCopy({ signerName, brokerName: broker.name });
 
   if (row.status === 'awaiting_signature' && !row.signing_envelope_id) {
     if (reservationMayStillBeInFlight(row.sent_for_signature_at)) {
@@ -326,4 +329,84 @@ export async function refreshViaDocumenso({ submissionId, row, brokerUserId }) {
     evidenceErrors,
     row: updated,
   };
+}
+
+function reminderError(code, status, extra = {}) {
+  const err = new Error(code);
+  err.status = status;
+  Object.assign(err, extra);
+  return err;
+}
+
+/**
+ * Re-sends the signing email to the client on the EXISTING Documenso envelope.
+ * Never creates an envelope and never touches the send-for-signature idempotency path.
+ * Eligibility is checked against the stored row first, then against the live provider state.
+ */
+export async function sendReminderViaDocumenso({ submissionId, row }) {
+  const blocked = reminderBlockReason({
+    provider: row.signing_provider,
+    hasEnvelope: Boolean(row.signing_envelope_id),
+    status: row.status,
+    signingStatus: row.signing_status,
+  });
+  if (blocked) throw reminderError(blocked, 409);
+
+  if (!isDocumensoConfigured()) throw reminderError('documenso_environment_misconfigured', 500);
+
+  const retryAfterSeconds = reminderCooldownSeconds(row.signing_meta?.lastReminderAt);
+  if (retryAfterSeconds > 0) throw reminderError('reminder_too_soon', 429, { retryAfterSeconds });
+
+  let envelope;
+  try {
+    envelope = await getDocumensoEnvelope(row.signing_envelope_id);
+  } catch (providerErr) {
+    console.error('send-reminder: envelope lookup failed', providerErr?.message);
+    throw reminderError('reminder_failed', 502);
+  }
+
+  const observed = String(envelope?.status || '').toUpperCase();
+  if (observed !== 'PENDING') {
+    const byProviderStatus = {
+      COMPLETED: 'signature_completed',
+      REJECTED: 'signature_declined',
+      CANCELLED: 'signature_voided',
+    };
+    throw reminderError(byProviderStatus[observed] || 'signature_request_not_active', 409);
+  }
+
+  // Remind only the client (first signer). Signing is sequential, so the broker countersigns
+  // after the client; once the client has signed there is nothing to remind them about.
+  const recipients = Array.isArray(envelope?.recipients) ? envelope.recipients : [];
+  const client = recipients.find((r) => Number(r.signingOrder) === 1) || recipients[0];
+  if (!client?.id) throw reminderError('signature_request_not_active', 409);
+  const clientState = String(client.signingStatus || '').toUpperCase();
+  if (clientState === 'SIGNED') throw reminderError('client_already_signed', 409);
+  if (clientState === 'REJECTED') throw reminderError('signature_declined', 409);
+
+  try {
+    await redistributeDocumensoEnvelope({
+      envelopeId: row.signing_envelope_id,
+      recipientIds: [client.id],
+    });
+  } catch (providerErr) {
+    console.error('send-reminder: Documenso redistribute failed', providerErr?.status, providerErr?.message);
+    throw reminderError('reminder_failed', 502);
+  }
+
+  const now = new Date().toISOString();
+  const meta = {
+    ...(row.signing_meta || {}),
+    lastReminderAt: now,
+    reminderCount: Number(row.signing_meta?.reminderCount || 0) + 1,
+  };
+  let updated = row;
+  try {
+    updated = await updateSubmission(submissionId, { signing_meta: meta });
+  } catch (dbErr) {
+    // The reminder was delivered; only the cooldown bookkeeping failed.
+    console.error('send-reminder: could not record reminder', dbErr?.message);
+    updated = { ...row, signing_meta: meta };
+  }
+  return { row: updated, reminderSentAt: now, recipientEmail: client.email || null };
 }

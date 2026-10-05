@@ -1,6 +1,10 @@
 import { downloadPdf, updateSubmission } from './submissionRepo.js';
 import { sha256HexOfBytes } from './sha256.js';
-import { hasRequiredSigningEvidence } from './signingLifecycle.js';
+import {
+  hasRequiredSigningEvidence,
+  isCrmEvidenceComplete,
+  signingProviderFor,
+} from './signingLifecycle.js';
 
 const REQUEST_TIMEOUT_MS = 12_000;
 
@@ -77,10 +81,16 @@ async function evidenceItem(path, expectedHash) {
 export async function buildCrmRequest(row) {
   const payload = buildCrmSyncPayload(row);
   if (!hasRequiredSigningEvidence(row)) return payload;
+  const provider = signingProviderFor(row);
+  payload.signingProvider = provider === 'documenso' || provider === 'docusign' ? provider : null;
   payload.evidence = {
     signedRoa: await evidenceItem(row.signed_pdf_storage_path, row.signed_pdf_sha256),
     certificate: await evidenceItem(row.certificate_storage_path, row.certificate_sha256),
   };
+  // Documenso always produces an audit log (hasRequiredSigningEvidence guarantees it is stored).
+  if (provider === 'documenso') {
+    payload.evidence.auditLog = await evidenceItem(row.audit_log_storage_path, row.audit_log_sha256);
+  }
   return payload;
 }
 
@@ -124,6 +134,9 @@ export async function syncSubmissionToCrm(row) {
     if (!data?.clientId || !data?.dealId || !['partial', 'linked'].includes(data?.status)) {
       throw new CrmSyncError('crm_response_invalid');
     }
+    if (payload.evidence?.auditLog && data.status === 'linked' && !data.auditLogDocumentId) {
+      throw new CrmSyncError('crm_response_invalid');
+    }
     const patch = {
       crm_client_id: data.clientId,
       crm_deal_id: data.dealId,
@@ -131,6 +144,7 @@ export async function syncSubmissionToCrm(row) {
       crm_sync_error: null,
       crm_signed_roa_document_id: data.signedRoaDocumentId || null,
       crm_certificate_document_id: data.certificateDocumentId || null,
+      crm_audit_log_document_id: data.auditLogDocumentId || null,
     };
     if (data.status === 'linked') patch.crm_synced_at = new Date().toISOString();
     return updateSubmission(row.id, patch);
@@ -148,7 +162,7 @@ export async function syncSubmissionToCrm(row) {
 
 export async function maybeSyncCompletedSubmissionToCrm(row) {
   if (row?.status !== 'completed' || !hasRequiredSigningEvidence(row)) return row;
-  if (row.crm_sync_status === 'linked') return row;
+  if (isCrmEvidenceComplete(row)) return row;
   try { return await syncSubmissionToCrm(row); }
   catch (error) {
     console.warn('CRM sync after evidence reconciliation failed:', error?.code || 'crm_sync_failed');

@@ -11,6 +11,21 @@ const providerSql = readFileSync(
   'utf8',
 );
 
+const crmAuditSql = readFileSync(
+  path.join(process.cwd(), 'supabase/migrations/20261005_crm_audit_log_document.sql'),
+  'utf8',
+);
+
+describe('CRM audit-log migration', () => {
+  it('is additive and extends the service-role update grant for the one new column only', () => {
+    expect(crmAuditSql).toMatch(/add column if not exists crm_audit_log_document_id text/i);
+    expect(crmAuditSql).toMatch(
+      /grant update \(crm_audit_log_document_id\) on public\.roa_submissions to service_role;/i,
+    );
+    expect(crmAuditSql).not.toMatch(/drop|delete|truncate|anon|authenticated/i);
+  });
+});
+
 describe('ROA evidence migration — server-only boundary', () => {
   it('revokes direct anon/authenticated table privileges', () => {
     expect(sql).toMatch(
