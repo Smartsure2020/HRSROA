@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Download, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Download, RefreshCw, Send } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AppHeader from '../components/hrs/AppHeader';
 import SignatureReminderButton from '../components/hrs/SignatureReminderButton';
@@ -8,6 +8,7 @@ import {
   isPendingSubmission,
   loadSubmissionRegister,
   refreshSubmissionRegister,
+  sendForSignature,
   syncCrmSubmission,
 } from '../lib/roaSubmissionClient';
 
@@ -87,6 +88,7 @@ export default function RoaRegister() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [crmRetrying, setCrmRetrying] = useState(false);
+  const [signatureSending, setSignatureSending] = useState(false);
   const refreshInFlight = useRef(false);
 
   const applyItems = useCallback((nextItems) => {
@@ -137,6 +139,24 @@ export default function RoaRegister() {
       await load();
     } finally { setCrmRetrying(false); }
   }, [selected?.submissionId, crmRetrying, applyItems, items, load]);
+
+  const sendSelectedForSignature = useCallback(async () => {
+    if (!selected?.submissionId || signatureSending || selected.signingEnvelopeId || selected.docusignEnvelopeId) return;
+    setSignatureSending(true);
+    setError('');
+    try {
+      const result = await sendForSignature({ submissionId: selected.submissionId });
+      const updated = result?.submission;
+      if (updated) {
+        applyItems(items.map((item) => item.submissionId === updated.submissionId ? updated : item));
+      } else {
+        await load();
+      }
+    } catch (err) {
+      setError(err.message || 'Could not send this ROA for signature. Please try again.');
+      await load();
+    } finally { setSignatureSending(false); }
+  }, [selected, signatureSending, applyItems, items, load]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -210,6 +230,29 @@ export default function RoaRegister() {
               <EvidenceButton item={selected} kind="signed" label="Signed ROA" available={selected.hasSignedPdf} />
               <EvidenceButton item={selected} kind="certificate" label="Certificate of Completion" available={selected.hasCertificate} />
               <EvidenceButton item={selected} kind="audit-log" label="Audit Log" available={selected.hasAuditLog} />
+              <EvidenceButton
+                item={selected}
+                kind="broker-appointment"
+                label="Broker Appointment"
+                available={selected.hasBrokerAppointmentDownload}
+              />
+              <EvidenceButton
+                item={selected}
+                kind="letter-investigation"
+                label="Letter of Investigation"
+                available={selected.hasLetterInvestigationDownload}
+              />
+              {!selected.signingEnvelopeId && !selected.docusignEnvelopeId && ['submitted', 'signature_failed'].includes(selected.status) && (
+                <button
+                  type="button"
+                  onClick={sendSelectedForSignature}
+                  disabled={signatureSending}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hrs-orange text-[0.75rem] font-semibold text-hrs-blue disabled:opacity-40"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {signatureSending ? 'Sending…' : 'Send for signature'}
+                </button>
+              )}
               <SignatureReminderButton
                 variant="light"
                 submission={selected}

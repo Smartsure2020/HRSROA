@@ -9,9 +9,11 @@
 import { requireAuthenticatedBroker } from '../_lib/auth.js';
 import { loadSubmissionForBroker } from '../_lib/submissionRepo.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
+import { derivedComplianceAvailability } from '../_lib/derivedCompliancePdf.js';
 
 export function toClientView(row) {
   if (!row) return null;
+  const compliance = derivedComplianceAvailability(row);
   return {
     submissionId: row.id,
     roaType: row.roa_type,
@@ -35,6 +37,8 @@ export function toClientView(row) {
     hasSignedPdf: Boolean(row.signed_pdf_storage_path),
     hasCertificate: Boolean(row.certificate_storage_path),
     hasAuditLog: Boolean(row.audit_log_storage_path),
+    hasBrokerAppointmentDownload: compliance.brokerAppointment,
+    hasLetterInvestigationDownload: compliance.letterInvestigation,
     crmClientId: row.crm_client_id,
     crmDealId: row.crm_deal_id,
     crmSyncStatus: row.crm_sync_status || (row.crm_client_id && row.crm_deal_id ? 'partial' : null),

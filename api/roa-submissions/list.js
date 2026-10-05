@@ -1,6 +1,7 @@
 // GET /api/roa-submissions/list — broker-owned submission register.
-// Returns metadata only. snapshot_json is deliberately absent from both the
-// query and response so a register view cannot expose frozen client data.
+// Returns metadata only. The repository may read snapshot_json server-side to derive
+// boolean availability flags, but snapshot_json is never returned to the browser.
+// Branch previews use the same isolated staging services as the accepted polish preview.
 
 import { requireAuthenticatedBroker } from '../_lib/auth.js';
 import { listSubmissionsForBroker } from '../_lib/submissionRepo.js';
