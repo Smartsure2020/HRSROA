@@ -16,8 +16,9 @@ import { requireAuthenticatedBroker } from '../_lib/auth.js';
 import { downloadPdf, loadSubmissionForBroker, StoragePaths } from '../_lib/submissionRepo.js';
 import { sha256HexOfBytes } from '../_lib/sha256.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
+import { buildDerivedCompliancePdf, DERIVED_COMPLIANCE_KINDS } from '../_lib/derivedCompliancePdf.js';
 
-const KINDS = ['canonical', 'signed', 'certificate', 'audit-log'];
+const KINDS = ['canonical', 'signed', 'certificate', 'audit-log', ...DERIVED_COMPLIANCE_KINDS];
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -31,6 +32,23 @@ export default async function handler(req, res) {
 
   const row = await loadSubmissionForBroker(id, user.id);
   if (!row) return res.status(404).json({ error: 'not_found' });
+
+  if (DERIVED_COMPLIANCE_KINDS.includes(kind)) {
+    try {
+      const derived = buildDerivedCompliancePdf(row, kind);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Length', String(derived.bytes.length));
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(derived.filename)}`);
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.status(200).send(derived.bytes);
+    } catch (err) {
+      if (['broker_appointment_not_available', 'letter_investigation_not_available'].includes(err?.code)) {
+        return res.status(409).json({ error: err.code });
+      }
+      console.error('roa-submissions/pdf: derived compliance generation failed', err?.message);
+      return res.status(500).json({ error: 'derived_compliance_generation_failed' });
+    }
+  }
 
   let storagePath;
   let expectedHash = null;
