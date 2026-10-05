@@ -107,6 +107,16 @@ function configuredEndpoint() {
   return { endpoint, secret };
 }
 
+function crmHeaders(secret) {
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${secret}`,
+  };
+  const bypassSecret = process.env.CRM_VERCEL_AUTOMATION_BYPASS_SECRET;
+  if (bypassSecret) headers['x-vercel-protection-bypass'] = bypassSecret;
+  return headers;
+}
+
 export async function syncSubmissionToCrm(row) {
   const attemptedAt = new Date().toISOString();
   let current = await updateSubmission(row.id, {
@@ -122,7 +132,7 @@ export async function syncSubmissionToCrm(row) {
     try {
       response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` },
+        headers: crmHeaders(secret),
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
