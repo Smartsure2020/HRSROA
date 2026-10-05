@@ -130,10 +130,20 @@ export async function downloadEvidencePdf(submissionId, kind = 'canonical', sugg
     throw new Error(data?.error || `Download ${kind} failed (${res.status})`);
   }
   const blob = await res.blob();
+  const contentDisposition = res.headers.get('content-disposition') || '';
+  const encodedFilename = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const quotedFilename = contentDisposition.match(/filename="([^"]+)"/i)?.[1];
+  let serverFilename = '';
+  try {
+    serverFilename = encodedFilename ? decodeURIComponent(encodedFilename) : (quotedFilename || '');
+  } catch {
+    serverFilename = quotedFilename || '';
+  }
+
   const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = objectUrl;
-  a.download = suggestedFilename || `${submissionId}-${kind}.pdf`;
+  a.download = suggestedFilename || serverFilename || `${submissionId}-${kind}.pdf`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
