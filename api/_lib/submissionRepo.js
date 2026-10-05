@@ -40,7 +40,7 @@ export async function loadSubmissionForBroker(submissionId, brokerUserId) {
 export async function listSubmissionsForBroker(brokerUserId) {
   const supabase = getServerSupabase();
   const columns = [
-    'id', 'roa_type', 'client_reference', 'advisor_email', 'status',
+    'id', 'roa_type', 'client_reference', 'advisor_email', 'status', 'snapshot_json',
     'signing_provider', 'signing_envelope_id', 'signing_status', 'docusign_envelope_id', 'docusign_status',
     'submitted_at', 'sent_for_signature_at', 'completed_at', 'evidence_retrieved_at',
     'pdf_storage_path', 'signed_pdf_storage_path', 'certificate_storage_path',
