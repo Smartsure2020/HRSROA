@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Download, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AppHeader from '../components/hrs/AppHeader';
+import SignatureReminderButton from '../components/hrs/SignatureReminderButton';
 import {
   downloadEvidencePdf,
   isPendingSubmission,
@@ -38,6 +39,26 @@ export function crmStatusLabel(item) {
   if (item?.crmSyncStatus === 'failed') return 'Sync failed';
   if (item?.crmSyncStatus === 'partial' || item?.crmClientId || item?.crmDealId) return 'Partial';
   return 'Not linked';
+}
+
+/** Which signing evidence is filed in the CRM. Documenso also files its audit log. */
+export function crmEvidenceLabel(item) {
+  const needsAuditLog = item?.signingProvider === 'documenso';
+  const filed = [
+    item?.crmSignedRoaDocumentId && 'Signed ROA',
+    item?.crmCertificateDocumentId && 'certificate',
+    needsAuditLog && item?.crmAuditLogDocumentId && 'audit log',
+  ].filter(Boolean);
+  const expected = needsAuditLog ? 3 : 2;
+  if (filed.length === 0) return 'Not filed';
+  if (filed.length < expected) return `Partly filed (${filed.join(', ')})`;
+  return needsAuditLog ? 'Signed ROA + certificate + audit log filed' : 'Signed ROA + certificate filed';
+}
+
+/** CRM sync is final when linked and, for Documenso, the audit log is filed too. */
+export function isCrmSyncFinal(item) {
+  if (item?.crmSyncStatus !== 'linked') return false;
+  return item.signingProvider !== 'documenso' || Boolean(item.crmAuditLogDocumentId);
 }
 
 function EvidenceButton({ item, kind, label, available = true }) {
@@ -182,14 +203,19 @@ export default function RoaRegister() {
               <div><span className="text-hrs-muted">CRM deal</span><p className="text-hrs-blue">{selected.crmDealId || '—'}</p></div>
               <div><span className="text-hrs-muted">CRM status</span><p className="text-hrs-blue">{crmStatusLabel(selected)}</p></div>
               <div><span className="text-hrs-muted">CRM last attempt</span><p className="text-hrs-blue">{formatDate(selected.crmSyncAttemptedAt)}</p></div>
-              <div><span className="text-hrs-muted">CRM evidence</span><p className="text-hrs-blue">{selected.crmSignedRoaDocumentId && selected.crmCertificateDocumentId ? 'Signed ROA + certificate filed' : 'Not fully filed'}</p></div>
+              <div><span className="text-hrs-muted">CRM evidence</span><p className="text-hrs-blue">{crmEvidenceLabel(selected)}</p></div>
             </div>
             <div className="flex flex-wrap gap-2">
               <EvidenceButton item={selected} kind="canonical" label="Original / Canonical ROA" available={selected.hasCanonicalPdf} />
               <EvidenceButton item={selected} kind="signed" label="Signed ROA" available={selected.hasSignedPdf} />
               <EvidenceButton item={selected} kind="certificate" label="Certificate of Completion" available={selected.hasCertificate} />
               <EvidenceButton item={selected} kind="audit-log" label="Audit Log" available={selected.hasAuditLog} />
-              {selected.crmSyncStatus !== 'linked' && (
+              <SignatureReminderButton
+                variant="light"
+                submission={selected}
+                onSubmissionUpdate={(updated) => applyItems(items.map((item) => item.submissionId === updated.submissionId ? updated : item))}
+              />
+              {!isCrmSyncFinal(selected) && (
                 <button type="button" onClick={retryCrm} disabled={crmRetrying}
                   className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hrs-orange text-[0.75rem] font-semibold text-hrs-blue disabled:opacity-40">
                   <RefreshCw className={`w-3.5 h-3.5 ${crmRetrying ? 'animate-spin' : ''}`} />

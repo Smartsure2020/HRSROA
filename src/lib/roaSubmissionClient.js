@@ -111,6 +111,12 @@ export async function sendForSignature({ submissionId, signerName, signerEmail, 
   });
 }
 
+/** Re-sends the signing email on the existing envelope; never creates a new one. */
+export async function sendSignatureReminder(submissionId) {
+  if (!isSubmissionId(submissionId)) throw new Error('sendSignatureReminder: invalid submissionId');
+  return postJson('/api/roa-submissions/send-reminder', { submissionId });
+}
+
 export async function sendNotificationEmail({ submissionId, to, subject, body }) {
   return postJson('/api/roa-submissions/notify-email', { submissionId, to, subject, body });
 }

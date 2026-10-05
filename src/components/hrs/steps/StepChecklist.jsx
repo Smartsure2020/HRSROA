@@ -3,6 +3,7 @@ import { CheckCircle, FileDown, FilePlus, Send, RefreshCw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import FormCard from "../FormCard";
 import WorkflowStatusPanel from "../WorkflowStatusPanel";
+import SignatureReminderButton from "../SignatureReminderButton";
 import { generateCombinedPDF } from "../../../lib/hrsPdfGenerator";
 import { MANAGER_NAME } from "../../../lib/hrsConstants";
 import { syncRoaSubmissionToCRM } from "../../../lib/crmAdapter";
@@ -498,6 +499,7 @@ export default function StepChecklist({ data, submission, onSubmissionUpdate, on
             E-signature
           </p>
           {sigSent ? (
+            <>
             <div className="bg-hrs-green/20 border border-hrs-green/40 rounded-lg px-4 py-3">
               <p className="text-[0.82rem] font-semibold text-white">
                 ✓ Signature request sent to {data.email}
@@ -506,6 +508,8 @@ export default function StepChecklist({ data, submission, onSubmissionUpdate, on
                 This ROA will update automatically as signing progresses. Signing provider: {submission?.signingProvider || 'configured provider'}. Reference: {sigEnvelopeId}
               </p>
             </div>
+            <SignatureReminderButton submission={submission} onSubmissionUpdate={onSubmissionUpdate} recipientEmail={data.email} className="mt-3" />
+            </>
           ) : (
             <button
               onClick={handleSendForSignature}

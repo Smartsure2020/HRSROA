@@ -218,6 +218,16 @@ export async function distributeDocumensoEnvelope({ envelopeId, subject, message
   });
 }
 
+// Re-sends the signing email for an already-distributed envelope. Documenso v2:
+// POST /envelope/redistribute { envelopeId, recipients: [<numeric recipient ids>] }.
+// Only recipients that have not actioned the envelope are accepted by the provider.
+export async function redistributeDocumensoEnvelope({ envelopeId, recipientIds }) {
+  return jsonRequest('/envelope/redistribute', {
+    method: 'POST',
+    body: JSON.stringify({ envelopeId, recipients: recipientIds }),
+  });
+}
+
 export async function getDocumensoEnvelopeStatus(envelopeId) {
   const envelope = await getDocumensoEnvelope(envelopeId);
   return {

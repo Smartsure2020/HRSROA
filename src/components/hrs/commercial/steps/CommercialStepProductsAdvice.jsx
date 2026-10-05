@@ -4,6 +4,7 @@ import FormField from "../../FormField";
 import TextInput from "../../TextInput";
 import NavBar from "../../NavBar";
 import { getBrokerFeeSummary } from "../../../../lib/brokerFee";
+import { applyOption3Insurer } from "../../../../lib/recommendedInsurer";
 
 function ProductCard({ number, label, insValue, premValue, onInsChange, onPremChange, recommended }) {
   return (
@@ -61,7 +62,7 @@ export default function CommercialStepProductsAdvice({ data, onChange, onNext, o
           <ProductCard number={2} label="Option 2" insValue={data.ins1} premValue={data.prem1}
             onInsChange={set("ins1")} onPremChange={set("prem1")} />
           <ProductCard number={3} label="Option 3 (Recommended)" insValue={data.ins2} premValue={data.prem2}
-            onInsChange={set("ins2")} onPremChange={set("prem2")} recommended />
+            onInsChange={(val) => onChange(applyOption3Insurer(data, val))} onPremChange={set("prem2")} recommended />
         </div>
       </FormCard>
 
@@ -71,6 +72,7 @@ export default function CommercialStepProductsAdvice({ data, onChange, onNext, o
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <FormField label="Recommended Insurer" required>
             <TextInput value={data.recInsurer} onChange={set("recInsurer")} placeholder="e.g. Stratsys / Holistic Risk Services" />
+            <p className="text-[0.75rem] text-hrs-muted">Pre-filled from Option 3 above — edit to override.</p>
           </FormField>
           <FormField label="Broker Fee">
             <div className="flex gap-0">

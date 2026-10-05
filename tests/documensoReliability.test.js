@@ -175,6 +175,35 @@ describe('Documenso reliability after PR #3 reconciliation', () => {
     expect(payload.meta.message).not.toContain('Injected message');
   });
 
+  it('names the inviting broker in the subject/body and routes replies to that broker', async () => {
+    const id = await seedSubmission();
+    let payload;
+    let distribute;
+    fetchQueue.push((_url, options) => {
+      payload = JSON.parse(options.body.get('payload'));
+      return jsonResponse({ id: 'doc-env-copy' });
+    });
+    fetchQueue.push(jsonResponse({ ...preparedEnvelope('doc-env-copy'), status: 'DRAFT' }));
+    fetchQueue.push((_url, options) => {
+      distribute = JSON.parse(options.body);
+      return jsonResponse({});
+    });
+    fetchQueue.push(jsonResponse(preparedEnvelope('doc-env-copy')));
+
+    const response = await send(id);
+
+    expect(response.statusCode).toBe(200);
+    for (const text of [payload.meta.subject, payload.meta.message, distribute.meta.subject, distribute.meta.message]) {
+      expect(text).toContain('Andrew Penney');
+    }
+    expect(payload.meta.message).toContain('Ms Jane Doe');
+    expect(payload.meta.emailReplyTo).toBe('andrew@hrsinsurance.co.za');
+    expect(distribute.meta.emailReplyTo).toBe('andrew@hrsinsurance.co.za');
+    // The visible From name is provider configuration, never set (or spoofed) by this payload.
+    expect(JSON.stringify(payload)).not.toMatch(/"(emailId|from|fromName|senderName)"/i);
+    expect(JSON.stringify(distribute)).not.toMatch(/"(emailId|from|fromName|senderName)"/i);
+  });
+
   it('does not reconcile or release while another Documenso create is in flight', async () => {
     const id = await seedSubmission();
     let startCreate;
