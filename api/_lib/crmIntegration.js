@@ -6,7 +6,7 @@ import {
   signingProviderFor,
 } from './signingLifecycle.js';
 
-const REQUEST_TIMEOUT_MS = 12_000;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export class CrmSyncError extends Error {
   constructor(code, status = 502) {
