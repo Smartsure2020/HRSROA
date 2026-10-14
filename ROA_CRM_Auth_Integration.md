@@ -5,16 +5,17 @@
 
 ---
 
-## 0. What you need to decide / do before this can go live
+## 0. Confirmed decisions and remaining actions
 
-| # | Item | Why it matters |
-|---|---|---|
-| 1 | **Supply an explicitly authorised test identity** for a preview run (or run the acceptance checklist yourself) | The real "existing CRM broker logs into ROA" test (§11 of the brief) has **not** been run. No credentials were available and none were requested. |
-| 2 | **Run `npm run reconcile:brokers`** (needs CRM + ROA service-role keys; read-only) | The 13/9/4 broker counts in the brief are **unverified** — I had no service-role access. Four brokers (Andrew Penney, Charmaine Brogden, Jaryd Browne, Timothy Simpson) reportedly have no CRM account and cannot use ROA until they do. Their history stays intact. |
-| 3 | **Add ROA's reset URL to the CRM Supabase redirect allow-list** (§6) | Without it, "Forgot password?" emails send brokers to the CRM instead of back to ROA. |
-| 4 | **Recommended: disable public sign-up on the CRM Supabase project** (§6) | Verified today: sign-up is **open** (`disable_signup: false`). Confirmation is required (`mailer_autoconfirm: false`), which is what keeps the email-based approval safe — but there is no reason to leave the door open. |
-| 5 | **Decide on the CRM → ROA auto-sign-in link** (§4.4). Shipped **off**. | The CRM's "Open ROA System" button already puts session tokens in the URL. It will start working the moment ROA shares the CRM's auth project. I left it disabled by default for security reasons explained below. |
-| 6 | Explicit approval, then follow §9 | Two-step rollout designed so step 1 changes nothing for users. |
+**Confirmed:** CRM Supabase Auth is the broker authentication source · the existing ROA Supabase stays the data/evidence store · public CRM sign-up is to be disabled operationally · `VITE_ENABLE_CRM_SESSION_HANDOFF` stays **off** and no raw-token handoff is introduced · email-based ownership is not redesigned in this change · no production deployment yet.
+
+| # | Remaining action | Owner | Why it matters |
+|---|---|---|---|
+| 1 | **Run the preview acceptance test** ([runbook](ROA_CRM_Auth_Acceptance_Runbook.md)) with an authorised test broker | you | The real "existing CRM broker logs into ROA" test has **not** been run. No credentials were available and none were requested. |
+| 2 | **Run `npm run reconcile:brokers`** with authorised credentials (read-only; §7) | you | The 13/9/4 broker counts are **unverified**. Four brokers (Andrew Penney, Charmaine Brogden, Jaryd Browne, Timothy Simpson) reportedly have no CRM account and cannot use ROA until they do; their history stays intact. |
+| 3 | **Add ROA's reset URL to the CRM Supabase redirect allow-list** (§6) | you (external) | Without it, "Forgot password?" emails send brokers to the CRM instead of back to ROA. |
+| 4 | **Disable public sign-up on the CRM Supabase project** (§6) | you (external) | Last read **2026-10-14: still open** (`disable_signup: false`). Confirmation is required (`mailer_autoconfirm: false`), which is what keeps email-based approval safe, but there is no reason to leave the door open. |
+| 5 | Explicit approval, then follow §9 | you | Two-step rollout so Step A changes nothing for users. |
 
 ---
 
@@ -106,9 +107,10 @@ ROA /api  ── 1. inspect claims (reject-only): iss=CRM, aud/role=authenticate
 ### 4.3 Password recovery
 Runs entirely on the CRM project (same account and password as the CRM). `redirectTo` = the app's own origin + fixed `/reset-password` (no input, no query). The reset page handles fragment tokens, PKCE `?code=`, and `token_hash` (type pinned to `recovery`), never renders text taken from the URL (anyone can craft a link), and its post-reset destination is fixed. Supabase additionally enforces the CRM redirect allow-list.
 
-### 4.4 CRM → ROA token handoff — **decision needed**
-The CRM's `buildRoaUrl()` appends the broker's `access_token` **and `refresh_token`** to `https://roa.hrsinsurance.co.za/…` ("You'll be signed in automatically"). ROA's old `AuthContext` already accepted them, but they were from a different project so it never worked. Once ROA shares the auth project it would. Risks: refresh token in a URL (history, logs, screenshots) and **both apps sharing one refresh-token family**, so a refresh in one can revoke the other's session (surprise sign-outs, with refresh-token reuse detection on).
-*Shipped behaviour:* tokens are **always scrubbed from the URL immediately**; they are only **used** if `VITE_ENABLE_CRM_SESSION_HANDOFF=true` at build time (tested both ways). Without it, brokers click through from the CRM and sign in with the same credentials. *Recommended follow-up:* a CRM-side one-time-code exchange rather than raw tokens.
+### 4.4 CRM → ROA token handoff — **decided: stays OFF**
+The CRM's `buildRoaUrl()` (in `hrs-crm`, not this repo) appends the broker's `access_token` **and `refresh_token`** to `https://roa.hrsinsurance.co.za/…` ("You'll be signed in automatically"). ROA's old `AuthContext` already accepted them, but they were from a different project so it never worked. Once ROA shares the auth project it would; the risks are a refresh token in a URL (history, logs, screenshots) and **both apps sharing one refresh-token family**, so a refresh in one can revoke the other's session.
+*Shipped behaviour:* ROA never puts tokens in a URL. Tokens arriving on its URL are **always scrubbed immediately** and are only **used** if `VITE_ENABLE_CRM_SESSION_HANDOFF=true` at build time; the code default is off and the variable is not set anywhere. Brokers click through from the CRM and sign in with the same credentials.
+*CRM-side follow-up (outside this change, not made):* with the handoff decided off, the CRM's button still appends live tokens to the ROA URL for no benefit; `buildRoaUrl()` should stop doing so, which removes the tokens from browser history and from the request URL reaching Vercel.
 
 ### 4.5 Residual risks (accepted / to monitor)
 1. **CRM approval isn't consulted.** The CRM gates access on `profiles.status`; ROA (per the brief) keeps the directory. A broker deactivated in the CRM keeps ROA access until removed from `BROKER_EMAIL_MAP` or banned/deleted in Supabase Auth. Offboarding must do both. Future hardening: server-to-server status check.
@@ -144,7 +146,7 @@ Production currently has: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE
 |---|---|
 | Authentication → URL Configuration → **Redirect URLs** | Add exactly `https://roa.hrsinsurance.co.za/reset-password` (and `https://hrsroa.vercel.app/reset-password` if brokers use that host). For preview testing add the exact preview URL, not a wildcard; remove it afterwards. **Leave Site URL alone** (it belongs to the CRM). |
 | Authentication → Email Templates → **Reset Password** | Confirm it uses `{{ .ConfirmationURL }}` so `redirect_to` is honoured. If it was customised to a CRM-only `token_hash` link, ROA's redirect is ignored and the reset lands in the CRM. |
-| Authentication → Sign In / Providers → **Allow new users to sign up** | **Turn off** (recommended). CRM invites use the admin API and are unaffected. Verified 2026-10-14: currently ON. |
+| Authentication → Sign In / Providers → **Allow new users to sign up** | **Turn off** (confirmed decision; external action). CRM invites use the admin API and are unaffected. Last read 2026-10-14: still ON. *Optional hygiene after cutover:* the legacy ROA Auth project also has sign-up on (unchanged, and it also requires confirmed emails); its tokens are rejected after Step B. |
 | Confirm email | Already required (`mailer_autoconfirm: false`, verified). **Do not turn on auto-confirm** — `npm run check:auth-config -- --live` fails if it is on. |
 | ROA Supabase project | **No change.** No Auth users deleted, no policies/migrations touched. |
 
@@ -152,48 +154,58 @@ Production currently has: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE
 
 **Not run against production — BLOCKED** (needs the CRM and ROA service-role keys, which this environment doesn't have; I did not look for them).
 What I could verify without them: the directory has 13 unique, valid mailboxes (test-enforced); CRM Auth requires confirmed emails and has open sign-up; the live ROA bundle uses the ROA project.
-To produce the real counts and exceptions:
-```
-RECON_CRM_SUPABASE_URL=… RECON_CRM_SERVICE_ROLE_KEY=… RECON_ROA_SUPABASE_URL=… RECON_ROA_SERVICE_ROLE_KEY=… npm run reconcile:brokers
-```
-Read-only (lists CRM users; selects `id, advisor_user_id, advisor_email` — never `snapshot_json`, banking or evidence). Prints counts, directory names and **masked** third-party addresses. Reports: brokers with a ready / missing / unconfirmed / banned / duplicate CRM account; submissions reachable at cutover vs waiting on an account vs owned by a non-directory email (unreachable); ambiguous historic ids; id/email conflicts. `--fail-on-exceptions` gives a CI-style exit code. Tested with a fabricated 13/9/4 scenario.
+**Read-only, and exactly which variables it needs** (set them in your own shell for the run only; they are deliberately *not* application configuration — not in Vercel, not in `.env.example`, never `VITE_`-prefixed):
 
+| Variable | Value | Used for |
+|---|---|---|
+| `RECON_CRM_SUPABASE_URL` | `https://mgqelduyralkdbsbwqcu.supabase.co` | CRM project |
+| `RECON_CRM_SERVICE_ROLE_KEY` | CRM service-role key | `auth.admin.listUsers` only (id, email, confirmed/banned/anonymous flags) |
+| `RECON_ROA_SUPABASE_URL` | `https://rylfshngbafldisqrhec.supabase.co` | ROA data project |
+| `RECON_ROA_SERVICE_ROLE_KEY` | ROA service-role key | `select id, advisor_user_id, advisor_email from roa_submissions` only |
+
+```
+npm run reconcile:brokers            # add  -- --fail-on-exceptions  for a CI-style exit code
+```
+Guarantees (checked against the code and enforced by tests): the script's only Supabase calls are `auth.admin.listUsers` and that three-column `select` — no insert/update/upsert/delete/rpc/storage, no user creation/invitation/deletion/sign-out, never `snapshot_json`, banking or evidence. It prints counts, directory broker names (already public in this repo) and **masked** third-party addresses; never a key. A missing variable exits 2 naming the variable (not its value); keys passed on the command line are refused; a network failure prints a library stack trace (cosmetic) but no key. It reports: brokers with a ready / missing / unconfirmed / banned / duplicate CRM account; submissions reachable at cutover vs waiting on an account vs owned by a non-directory email (unreachable); ambiguous historic ids; id/email conflicts. Tested with a fabricated 13/9/4 scenario.
 ## 8. Test results (all executed)
 
 | Check | Result |
 |---|---|
-| Unit/integration tests | **36 files, 415 tests, all pass** (baseline on `origin/main`: 31 files / 292 pass) |
+| Unit/integration tests | **36 files, 423 tests, all pass** (415 at commit `532be8d` + 8 added by the readiness gate; baseline on `origin/main`: 31 files / 292). **Clean-checkout caveat:** with no `.env` and no `VITE_*` variables, `tests/roaRegisterCrmEvidence.test.js` fails to load (it imports a component that imports the Supabase client). That is **pre-existing** — identical on a pristine `origin/main` ("supabaseUrl is required") — and was masked by the ignored local `.env`. From a pristine checkout of `532be8d` with placeholder `VITE_AUTH_SUPABASE_URL` / `VITE_AUTH_SUPABASE_ANON_KEY` in the environment: **415 / 415 pass**. CI needs those two placeholders. |
 | Lint | pass (baseline pass) |
 | Build | pass (baseline pass) |
 | Typecheck | **pre-existing: 230 errors** (tsc over JS; config omitted Vite/PNG declarations). Now **223**. Zero genuinely new: one line is the pre-existing `createContext()` error moved from line 4 to 12 |
+| Pristine-checkout lint / build / typecheck | pass / pass (no env needed; no secret-shaped or project-host strings in the bundle) / 223 errors vs 230 on a pristine `origin/main` — the one line not present on `origin/main` is the same pre-existing `createContext()` error moved from line 4 to 12 |
+| Secret leakage test | Built with sentinel values in six server/operator secret variables and two public `VITE_*` variables: both public values are in the bundle, **none** of the six secrets are |
+| Rollback simulation | Row created on CRM auth + pre-cutover row → configuration flipped to legacy → both retrievable and downloadable under the original ROA ids; isolation intact; CRM token refused (401) |
 | Mutation checks | Breaking the ownership rule → 7 isolation tests fail; skipping the issuer check → 1 fails; dropping the confirmed-email check → 1 fails (files restored) |
 | Live, against the real CRM project (anon key only, no credentials) | `check:auth-config --live`: confirmation required ✔, sign-up open ⚠, forged token refused (HTTP 403). Real `authenticate()` + real supabase-js: forged token, old-ROA-issuer token, expired, `alg:none`, anon-key-as-bearer, no token → **all rejected** |
 | Local end-to-end simulation (fake CRM Auth + fake ROA data/storage + the real built SPA + real handlers + real supabase-js, loopback only) | not-approved CRM user → notice, no session, no dashboard ✔ · approved broker → dashboard ✔ · My ROAs shows only the broker's own pre-cutover rows (legacy ids, mixed-case email) ✔ · own signed/certificate/audit PDFs hash-verified ✔ · another broker's metadata/evidence → 404 and storage untouched ✔ · zero browser→data-API requests ✔ · logout sends `scope=local`, session revoked, **replayed pre-logout token → 401** ✔ · reset request hits the auth server with the fixed redirect, no data-API call ✔ · recovery link → form → validation → `PUT /user` → dashboard ✔ · handoff off: tokens scrubbed and ignored ✔; on: signs in ✔ |
 
 **Not tested:** the real acceptance flow (existing CRM broker → ROA); real password-reset email and allow-list; creating a Personal/Commercial ROA, sending for signature, reminders, reconciliation, Documenso/DocuSign, CRM sync **against live services** (these are covered only by the existing mocked suites, which still pass unchanged apart from fixture tokens). No live signing emails were sent, no production records created or modified.
 
-## 9. Production deployment (needs your explicit approval)
+## 9. Production deployment (needs your explicit approval — **not started**)
 
-0. **Gates:** approvals; run `npm run check:auth-config -- --env-file <file> --live --expect-auth-ref mgqelduyralkdbsbwqcu --expect-data-ref rylfshngbafldisqrhec`; run `npm run reconcile:brokers` and resolve exceptions; invite the four missing brokers in the CRM (confirm their email); CRM redirect allow-list + template check; disable public sign-up; have in-flight ROAs submitted.
-1. **Preview** (§5 preview note) → run the §11 acceptance checklist with the authorised test broker.
-2. **Step A — ship the code, change nothing else.** Merge and deploy with **no new env vars**. Everything falls back to the legacy config, so behaviour is identical to today (plus the new reset page). Smoke-test.
-3. **Step B — cutover.** Add the four AUTH variables (Production), redeploy (the `VITE_` pair needs a fresh build). Smoke-test read-only with an authorised broker: sign in, My ROAs, open an existing ROA, download evidence, sign out. Do not create production ROAs as a test.
+0. **Gates:** approvals; `npm run check:auth-config -- --env-file <file> --live --expect-auth-ref mgqelduyralkdbsbwqcu --expect-data-ref rylfshngbafldisqrhec` → `Result: OK` (the preflight accepts the legacy `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` as the data pair, which is the intended Step B shape); `npm run reconcile:brokers` reviewed and exceptions resolved; the four missing brokers invited in the CRM with confirmed email; CRM redirect allow-list + Reset Password template checked; CRM public sign-up disabled; in-flight ROAs submitted.
+1. **Preview acceptance** — [ROA_CRM_Auth_Acceptance_Runbook.md](ROA_CRM_Auth_Acceptance_Runbook.md), signed off.
+2. **Step A — ship the code with NO new auth variables.** Merge and deploy to production while **none** of `AUTH_SUPABASE_URL`, `AUTH_SUPABASE_ANON_KEY`, `VITE_AUTH_SUPABASE_URL`, `VITE_AUTH_SUPABASE_ANON_KEY`, `ROA_SUPABASE_*`, `VITE_ENABLE_CRM_SESSION_HANDOFF` exist. Everything resolves to the legacy configuration (verified with the real modules: server auth, server data and browser auth all `legacy`), so authentication is exactly today's, plus the new reset page and the URL-token scrubbing. Smoke-test (runbook §4).
+3. **Step B — cutover, only after acceptance approval.** It must be **the very next production deployment after Step A** (Hobby plan: Instant Rollback only reaches the *immediately previous* deployment — deploy nothing else in between). Add the four variables (`AUTH_SUPABASE_URL`, `AUTH_SUPABASE_ANON_KEY`, `VITE_AUTH_SUPABASE_URL`, `VITE_AUTH_SUPABASE_ANON_KEY`, all pointing at the CRM project; Production) and redeploy — env changes never touch existing deployments, and the `VITE_` pair is inlined at build time. **Do not edit or remove** `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` during the rollback window. Smoke-test read-only (runbook §4); never create or sign an ROA as a test.
 4. Watch for 401/403 from `/api/roa-submissions/*` and CRM Auth rate limits for a few days.
 5. After a stable week, optional clean-up (§5).
 
-**Session impact:** every existing ROA browser session ends at Step B (different project). Brokers sign in again with their CRM credentials; the stale ROA-project token in each browser is purged automatically on first load. Unsaved wizard progress in an open tab is kept by the existing draft storage, but in-flight ROAs should be completed first.
+**Session impact (Step B only):** every existing ROA browser session ends (different Auth project). Brokers sign in again with their CRM credentials; the stale ROA-project token in each browser is purged automatically on first load. Unsaved wizard progress in an open tab is kept by the existing draft storage, but in-flight ROAs should be completed first. Step A causes no re-authentication.
 
 ## 10. Rollback (no effect on ROA documents, submissions or CRM integrations)
 
-* **Preferred — Vercel Instant Rollback to the Step A deployment.** That deployment has the new code with the legacy auth config baked in, so auth reverts to the ROA project and **rows created during the cutover remain visible** (ownership is email-based).
-* **Config rollback:** remove the four AUTH variables and redeploy → identical outcome.
+* **Preferred — Vercel Instant Rollback to the Step A deployment.** Per Vercel's documentation a rolled-back deployment keeps the environment variables it was deployed with, so this restores the legacy auth configuration on the new code, and **rows created during the cutover remain visible** (ownership is email-based). *Hobby-plan caveat:* only the immediately previous deployment is eligible, so Step B must directly follow Step A. After a rollback Vercel stops auto-promoting new pushes until you use *Undo Rollback* / `vercel promote`.
+* **Config rollback (always available):** remove the four AUTH variables, then redeploy (preferably without the build cache) → legacy auth again. This works because the legacy variables were never removed.
 * **Avoid** rolling back to pre-change code: it keys ownership on the old Auth id, so rows created on CRM auth would be hidden (not lost) until re-cutover.
-* Nothing to undo in either database: no migration, no data change, no Auth user created or deleted. Brokers sign in again on rollback (ROA-project credentials; the CRM-project session is purged).
+* **No data to restore:** this change contains no migration and writes no data (`git diff origin/main HEAD -- supabase` is empty); the only signing-related edits are renames of an argument. No Auth user is created or deleted. Brokers sign in again on rollback (ROA-project credentials).
+* **Evidence:** `tests/brokerIsolation.test.js` → *rollback* simulates exactly this: a row created on CRM auth plus a pre-cutover row, configuration flipped back to legacy, the same people authenticating with their *original* ROA ids → both rows listed, retrievable and downloadable; other brokers still isolated; a CRM-issued token now refused (401).
 
-## 11. Acceptance checklist for the preview (explicitly authorised test broker)
+## 11. Acceptance checklist
 
-1. Sign in with the CRM credentials. 2. Dashboard loads. 3. My ROAs lists only that broker's records, including pre-cutover ones. 4. Open an existing ROA; download signed PDF / certificate / audit log. 5. Try another broker's id by URL → 404. 6. Use a CRM account that is **not** on the directory → clear "not approved" notice, no dashboard. 7. Forgot password → email arrives, link returns to ROA's reset page, new password works in **both** apps. 8. Create a test Personal ROA against **staging** signing + CRM, confirm sync. 9. Sign out; replay a captured pre-logout token → 401. 10. Confirm a CRM-launched link leaves no tokens in the address bar.
-
+Moved to [ROA_CRM_Auth_Acceptance_Runbook.md](ROA_CRM_Auth_Acceptance_Runbook.md) (preview environment, the eleven steps with expected results and evidence, console snippets, stop conditions, production smoke tests).
 ## 12. Status
 
 | Component | Status | Notes |
@@ -208,4 +220,36 @@ Read-only (lists CRM users; selects `id, advisor_user_id, advisor_email` — nev
 | CRM sync regression | **PASS** | Existing suites green; live sync **NOT TESTED** |
 | Real acceptance test (existing CRM broker → ROA) | **NOT TESTED** | Needs an authorised test identity + preview environment |
 | Broker reconciliation on real data | **BLOCKED** | Needs service-role keys; tool ready |
-| Production readiness | **BLOCKED** | Awaiting items 1–6 in §0 |
+| Production readiness | **BLOCKED** | Awaiting items 1–5 in §0 |
+
+## 13. Pre-production readiness gate (2026-10-14)
+
+Scope: validation, configuration review and preparation only. **Nothing was pushed, merged or deployed; no Supabase setting, Auth user, database row, Documenso or CRM-sync behaviour was changed.**
+
+**Defect found and fixed during the gate:** `npm run check:auth-config` required an explicit `ROA_SUPABASE_*` pair and so reported a false FAIL on the approved Step B environment (where the legacy `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` remain the ROA data pair, exactly as the server resolves them). It now mirrors the server's resolution; reproduced on the old code, fixed, and covered by five tests including the "legacy variable repointed at the CRM" mistake.
+
+**Confirmed from the code and by test/build evidence**
+* No CRM service-role key is needed by ROA at all (browser or server; the server holds only the CRM *anon* key). The only CRM service key anywhere is the operator-only `RECON_CRM_SERVICE_ROLE_KEY` for the reconciliation script.
+* No ROA service-role key reaches the browser: zero references in `src/`; the sentinel build proves non-`VITE_` values are not inlined; the preflight fails on any `VITE_*SERVICE|SECRET|PRIVATE` variable.
+* No browser route queries ROA tables or storage: one `createClient` in `src/` (the auth client), no `.from` / `.storage` / `.rpc`; every `fetch` targets `/api/…`.
+* `VITE_ENABLE_CRM_SESSION_HANDOFF` is off by default (code default and not set anywhere); ROA never builds a URL containing tokens (only fixed paths), only scrubs tokens it receives.
+* Documenso, signing, CRM-sync and PDF code are untouched apart from renaming an argument in two files; no migration.
+* Legacy ROA Auth requires confirmed emails (`mailer_autoconfirm: false`), so the new confirmed-email check cannot lock anyone out at Step A.
+
+**CRM-side finding to schedule (not in this repo):** the CRM's "Open ROA System" button still appends live access + refresh tokens to the ROA URL. With the handoff off that has no benefit and exposes tokens in browser history and the request URL. Ask for `buildRoaUrl()` in `hrs-crm` to stop doing it.
+
+| Gate | Status |
+|---|---|
+| Working tree clean | **PASS** — `.claude/launch.json` is gone (an empty, untracked `.claude/` directory remains; git ignores it); everything else committed |
+| Tests | **PASS** — 423 pass; the previously reported 415 pass from a pristine checkout of `532be8d` when the two placeholder `VITE_AUTH_*` variables are supplied (see §8 caveat: one pre-existing suite needs them) |
+| Lint | **PASS** |
+| Build | **PASS** |
+| Typecheck regression-free | **PASS** — 223 vs 230 on `origin/main`; no new error |
+| Auth/data separation | **PASS** |
+| Reconciliation script ready | **PASS** — read-only (verified and test-enforced), exact variables documented in §7; **not run** |
+| CRM redirect configuration | **EXTERNAL CHECK** |
+| CRM signup disabled | **EXTERNAL CHECK** — last read 2026-10-14: still open |
+| Real broker acceptance | **BLOCKED** — runbook ready; needs an authorised test broker and a preview |
+| Step A readiness | **PASS** — legacy resolution verified for server auth, server data and browser; no AUTH variables to add; awaiting your approval to merge/deploy |
+| Step B readiness | **BLOCKED** — needs acceptance sign-off, CRM allow-list, sign-up disabled, reconciliation reviewed, and Step B to directly follow Step A (Hobby rollback rule) |
+| Production readiness | **BLOCKED** — Step A is technically ready; Step B is not |

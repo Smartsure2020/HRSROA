@@ -1,6 +1,9 @@
 // Operator tooling for the CRM-auth cutover: the configuration preflight and the
 // broker-identity reconciliation. Fabricated data only — no real accounts, no network.
 
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   describeKey,
@@ -41,6 +44,62 @@ describe('config preflight', () => {
     const result = evaluateAuthEnvironment(goodEnv(), { expectedAuthRef: CRM_REF, expectedDataRef: ROA_REF });
     expect(result.ok).toBe(true);
     expect(failing(result)).toEqual([]);
+  });
+
+  // The approved Step B: only the four AUTH variables are added; the legacy
+  // SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY keep feeding the ROA data client.
+  const stepBEnv = (overrides = {}) => {
+    const { ROA_SUPABASE_URL, ROA_SUPABASE_SERVICE_ROLE_KEY, ...rest } = goodEnv();
+    return {
+      ...rest,
+      SUPABASE_URL: ROA_SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY: ROA_SUPABASE_SERVICE_ROLE_KEY,
+      SUPABASE_ANON_KEY: jwtKey({ role: 'anon', ref: ROA_REF }),
+      VITE_SUPABASE_URL: ROA_SUPABASE_URL,
+      VITE_SUPABASE_ANON_KEY: jwtKey({ role: 'anon', ref: ROA_REF }),
+      ...overrides,
+    };
+  };
+
+  it('accepts the approved Step B shape: AUTH pair added, legacy variables still supplying the ROA data pair', () => {
+    const result = evaluateAuthEnvironment(stepBEnv(), { expectedAuthRef: CRM_REF, expectedDataRef: ROA_REF });
+    expect(failing(result)).toEqual([]);
+    expect(result.ok).toBe(true);
+    const data = result.checks.find((c) => c.name === 'ROA data pair');
+    expect(data.detail).toContain('via legacy SUPABASE_URL');
+  });
+
+  it('lets an explicit ROA_* pair take precedence over the legacy pair', () => {
+    const result = evaluateAuthEnvironment(
+      stepBEnv({ SUPABASE_URL: `https://${CRM_REF}.supabase.co`, SUPABASE_SERVICE_ROLE_KEY: jwtKey({ role: 'service_role', ref: CRM_REF }),
+        ROA_SUPABASE_URL: `https://${ROA_REF}.supabase.co`, ROA_SUPABASE_SERVICE_ROLE_KEY: roaService }),
+      { expectedDataRef: ROA_REF },
+    );
+    expect(failing(result)).toEqual([]);
+  });
+
+  it('fails if the legacy data variables have been repointed at the CRM project (the "swap two env vars" mistake)', () => {
+    const result = evaluateAuthEnvironment(
+      stepBEnv({ SUPABASE_URL: `https://${CRM_REF}.supabase.co`, SUPABASE_SERVICE_ROLE_KEY: jwtKey({ role: 'service_role', ref: CRM_REF }) }),
+      { expectedAuthRef: CRM_REF, expectedDataRef: ROA_REF },
+    );
+    expect(failing(result)).toEqual(expect.arrayContaining([
+      'DATA project is the expected ROA project',
+      'Auth and data are separate projects',
+    ]));
+    expect(result.ok).toBe(false);
+  });
+
+  it('fails when neither the ROA_* nor the legacy data pair is set, or the legacy pair is partial', () => {
+    const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ...none } = stepBEnv();
+    expect(failing(evaluateAuthEnvironment(none))).toContain('ROA data pair');
+    const partial = stepBEnv(); delete partial.SUPABASE_SERVICE_ROLE_KEY;
+    expect(failing(evaluateAuthEnvironment(partial))).toContain('ROA data pair');
+  });
+
+  it('fails when the browser AUTH pair is missing at Step B (the bundle would still authenticate against the old project)', () => {
+    const env = stepBEnv(); delete env.VITE_AUTH_SUPABASE_URL; delete env.VITE_AUTH_SUPABASE_ANON_KEY;
+    expect(failing(evaluateAuthEnvironment(env))).toContain('Browser AUTH pair');
   });
 
   it('fails when the browser and server point at different auth projects', () => {
@@ -237,5 +296,38 @@ describe('broker identity reconciliation', () => {
     expect(report).toContain('Exceptions needing a decision');
     expect(maskEmail('jane.doe@x.co')).toBe('j***@x.co');
     expect(maskEmail('nonsense')).toBe('(unreadable)');
+  });
+});
+
+describe('reconciliation script stays read-only and secret-safe', () => {
+  const scriptUrl = new URL('../scripts/reconcile-broker-identities.mjs', import.meta.url);
+  const code = readFileSync(scriptUrl, 'utf8').replace(/^\s*\/\/.*$/gm, '');
+
+  it('can only list CRM users and select three non-sensitive columns', () => {
+    expect([...code.matchAll(/auth\.admin\.(\w+)/g)].map((m) => m[1])).toEqual(['listUsers']);
+    expect(code).toContain(".select('id,advisor_user_id,advisor_email')");
+    for (const forbidden of [
+      '.insert(', '.update(', '.upsert(', '.delete(', '.rpc(', '.storage',
+      'createUser', 'deleteUser', 'inviteUserByEmail', 'generateLink', 'updateUserById', 'signOut',
+      'snapshot_json', 'bank',
+    ]) {
+      expect(code, forbidden).not.toContain(forbidden);
+    }
+  });
+
+  it('needs the four operator variables, exits before any network call without them, and refuses keys on the command line', () => {
+    const script = fileURLToPath(scriptUrl);
+    const run = (args) => spawnSync(process.execPath, [script, ...args], { env: {}, encoding: 'utf8' });
+
+    const missing = run([]);
+    expect(missing.status).toBe(2);
+    for (const name of ['RECON_CRM_SUPABASE_URL', 'RECON_CRM_SERVICE_ROLE_KEY', 'RECON_ROA_SUPABASE_URL', 'RECON_ROA_SERVICE_ROLE_KEY']) {
+      expect(missing.stderr).toContain(name);
+    }
+
+    const cli = run(['--service-key=super-secret-value']);
+    expect(cli.status).toBe(2);
+    expect(cli.stderr).toMatch(/environment, never on the command line/);
+    expect(`${cli.stdout}${cli.stderr}`).not.toContain('super-secret-value');
   });
 });

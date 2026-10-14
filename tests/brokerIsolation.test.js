@@ -381,6 +381,78 @@ describe('ambiguous or malformed ownership data fails safe', () => {
   });
 });
 
+describe('rollback: switching authentication back to the ROA project loses nothing', () => {
+  const legacyToken = (sub) => makeTestJwt({ sub, iss: `${ROA_URL}/auth/v1` });
+
+  function switchToLegacyConfiguration() {
+    // Rollback = the four AUTH variables are removed; the original variables remain.
+    delete process.env.AUTH_SUPABASE_URL;
+    delete process.env.AUTH_SUPABASE_ANON_KEY;
+    delete process.env.ROA_SUPABASE_URL;
+    delete process.env.ROA_SUPABASE_SERVICE_ROLE_KEY;
+    process.env.SUPABASE_URL = ROA_URL;
+    process.env.SUPABASE_ANON_KEY = 'roa-anon';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'roa-service';
+    _resetServerSupabaseForTests();
+  }
+
+  it('rows created while on CRM auth stay retrievable under the legacy Auth ids, and CRM tokens stop working', async () => {
+    // 1. Pre-cutover history (old ROA id) plus a submission created on CRM auth.
+    const history = seedLegacyRow({ advisorUserId: 'old-roa-andrew', advisorEmail: 'andrew@hrsinsurance.co.za', withSigned: true });
+    const submissionId = generateSubmissionId();
+    const created = mockRes();
+    await createHandler({
+      method: 'POST',
+      ...asBroker(TOKENS.andrew),
+      body: {
+        submissionId,
+        roaType: 'Personal',
+        snapshot: { firstName: 'Jane', surname: 'Doe' },
+        versions: { templateVersion: 't', statutoryDisclosureVersion: 's', brokerAppointmentVersion: 'b', brokerFeeVersion: 'f' },
+        pdfBase64: signedPdfBytes('created-on-crm-auth').toString('base64'),
+      },
+    }, created);
+    expect(created.statusCode).toBe(200);
+    expect(mock.fixtures.getRow(submissionId).advisor_user_id).toBe('crm-andrew'); // a CRM id the legacy project has never heard of
+    const werners = seedLegacyRow({ advisorUserId: 'old-roa-werner', advisorEmail: 'werner@hrsinsurance.co.za' });
+
+    // 2. Roll back the configuration.
+    switchToLegacyConfiguration();
+    // The same people now authenticate with their ORIGINAL ROA-project ids.
+    const andrewLegacy = legacyToken('old-roa-andrew-account');
+    const wernerLegacy = legacyToken('old-roa-werner-account');
+    mock.fixtures.addAuthUser(andrewLegacy, { id: 'old-roa-andrew-account', email: 'andrew@hrsinsurance.co.za' });
+    mock.fixtures.addAuthUser(wernerLegacy, { id: 'old-roa-werner-account', email: 'werner@hrsinsurance.co.za' });
+
+    // 3. Authentication is back on the ROA project.
+    const probe = mockRes();
+    await listHandler({ method: 'GET', query: { view: 'session' }, ...asBroker(andrewLegacy) }, probe);
+    expect(probe.statusCode).toBe(200);
+    expect(probe.body.authSource).toBe('legacy');
+
+    // 4. Nothing was lost: history AND the row created on CRM auth are both there, and downloadable.
+    const mine = mockRes();
+    await listHandler({ method: 'GET', query: {}, ...asBroker(andrewLegacy) }, mine);
+    expect(mine.body.submissions.map((s) => s.submissionId).sort()).toEqual([history.id, submissionId].sort());
+    const download = mockRes();
+    await pdfHandler({ method: 'GET', query: { id: history.id, kind: 'signed' }, ...asBroker(andrewLegacy) }, download);
+    expect(download.statusCode).toBe(200);
+    const crmCreated = mockRes();
+    await getHandler({ method: 'GET', query: { id: submissionId }, ...asBroker(andrewLegacy) }, crmCreated);
+    expect(crmCreated.statusCode).toBe(200);
+
+    // 5. Isolation is unchanged after rollback.
+    const theirs = mockRes();
+    await listHandler({ method: 'GET', query: {}, ...asBroker(wernerLegacy) }, theirs);
+    expect(theirs.body.submissions.map((s) => s.submissionId)).toEqual([werners.id]);
+
+    // 6. A CRM-issued token is refused again (wrong issuer for the restored configuration).
+    const stale = mockRes();
+    await listHandler({ method: 'GET', query: {}, ...asBroker(TOKENS.andrew) }, stale);
+    expect(stale.statusCode).toBe(401);
+    expect(stale.body).toEqual({ error: 'invalid_token' });
+  });
+});
 describe('static contract: no unscoped service-role access from broker routes', () => {
   const root = new URL('../', import.meta.url);
   const read = (relative) => readFileSync(new URL(relative, root), 'utf8');

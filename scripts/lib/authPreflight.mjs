@@ -56,12 +56,25 @@ export function evaluateAuthEnvironment(env, options = {}) {
 
   const serverAuth = pair(env, 'AUTH_SUPABASE_URL', 'AUTH_SUPABASE_ANON_KEY');
   const browserAuth = pair(env, 'VITE_AUTH_SUPABASE_URL', 'VITE_AUTH_SUPABASE_ANON_KEY');
-  const data = pair(env, 'ROA_SUPABASE_URL', 'ROA_SUPABASE_SERVICE_ROLE_KEY');
+  // Resolved exactly as api/_lib/authConfig.js does: an explicit ROA_* pair wins; if
+  // neither ROA_* variable is set the legacy SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY
+  // pair IS the data configuration. The approved cutover leaves those legacy
+  // variables in place, so requiring ROA_* here would report a false failure.
+  const dataExplicit = pair(env, 'ROA_SUPABASE_URL', 'ROA_SUPABASE_SERVICE_ROLE_KEY');
+  const dataViaLegacy = dataExplicit.state === 'unset';
+  const data = dataViaLegacy ? pair(env, 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY') : dataExplicit;
 
   // --- completeness -------------------------------------------------------
   for (const [label, p] of [['Server AUTH pair', serverAuth], ['Browser AUTH pair', browserAuth], ['ROA data pair', data]]) {
-    if (p.state === 'set') checks.push(check(label, STATUS.PASS, `project ${p.ref}`));
-    else if (p.state === 'unset') checks.push(check(label, STATUS.FAIL, 'not set (legacy single-project fallback would be used)'));
+    if (p.state === 'set') {
+      const via = label === 'ROA data pair' && dataViaLegacy ? ' (via legacy SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)' : '';
+      checks.push(check(label, STATUS.PASS, `project ${p.ref}${via}`));
+    }
+    else if (p.state === 'unset') {
+      checks.push(check(label, STATUS.FAIL, label === 'ROA data pair'
+        ? 'neither ROA_SUPABASE_* nor the legacy SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY is set'
+        : 'not set (legacy single-project fallback would be used)'));
+    }
     else if (p.state === 'partial') checks.push(check(label, STATUS.FAIL, 'only one of URL / key is set — refusing to mix projects'));
     else checks.push(check(label, STATUS.FAIL, 'URL is not a valid https Supabase URL'));
   }
