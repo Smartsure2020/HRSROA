@@ -6,6 +6,7 @@ import AdviceRecord from './pages/AdviceRecord';
 import CommercialAdviceRecord from './pages/CommercialAdviceRecord';
 import Login from './pages/Login';
 import RoaRegister from './pages/RoaRegister';
+import ResetPassword from './pages/ResetPassword';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 
 function AuthGate({ children }) {
@@ -30,15 +31,25 @@ function App() {
   return (
     <AuthProvider>
       <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <AuthGate>
-            <Routes>
-              <Route path="/" element={<SelectROA />} />
-              <Route path="/personal" element={<AdviceRecord />} />
-              <Route path="/commercial" element={<CommercialAdviceRecord />} />
-              <Route path="/roas" element={<RoaRegister />} />
-              <Route path="*" element={<PageNotFound />} />
-            </Routes>
-          </AuthGate>
+          <Routes>
+            {/* Password recovery must be reachable before sign-in: the emailed link
+                establishes its own short-lived recovery session. */}
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route
+              path="*"
+              element={(
+                <AuthGate>
+                  <Routes>
+                    <Route path="/" element={<SelectROA />} />
+                    <Route path="/personal" element={<AdviceRecord />} />
+                    <Route path="/commercial" element={<CommercialAdviceRecord />} />
+                    <Route path="/roas" element={<RoaRegister />} />
+                    <Route path="*" element={<PageNotFound />} />
+                  </Routes>
+                </AuthGate>
+              )}
+            />
+          </Routes>
         </Router>
         <Toaster />
     </AuthProvider>

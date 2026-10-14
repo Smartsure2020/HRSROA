@@ -166,7 +166,7 @@ async function reconcileAmbiguousSend({
     });
   }
 
-  await releaseEnvelopeReservation(submissionId, user.id, {
+  await releaseEnvelopeReservation(submissionId, user, {
     reason: 'not_found_after_ambiguous_send',
   });
   return res.status(503).json({
@@ -184,7 +184,7 @@ export default async function handler(req, res) {
   const { submissionId } = req.body ?? {};
   if (!isSubmissionId(submissionId)) return res.status(400).json({ error: 'Invalid submissionId' });
 
-  const row = await loadSubmissionForBroker(submissionId, user.id);
+  const row = await loadSubmissionForBroker(submissionId, user);
   if (!row) return res.status(404).json({ error: 'not_found' });
 
   const signer = signerForSubmission(row);
@@ -257,7 +257,7 @@ export default async function handler(req, res) {
     return reconcileAmbiguousSend({ submissionId, user, row, runtime, res });
   }
 
-  const reservation = await reserveEnvelopeSlot(submissionId, user.id);
+  const reservation = await reserveEnvelopeSlot(submissionId, user);
   if (!reservation.reserved) {
     const current = reservation.row;
     if (current?.docusign_envelope_id) {
@@ -285,7 +285,7 @@ export default async function handler(req, res) {
       ([, email]) => email.toLowerCase() === String(authenticatedBrokerEmail).toLowerCase(),
     )?.[0];
   if (!brokerName) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'broker_lookup_failed' });
+    await releaseEnvelopeReservation(submissionId, user, { reason: 'broker_lookup_failed' });
     return res.status(500).json({ error: 'broker_lookup_failed' });
   }
   const brokerEmail = BROKER_EMAIL_MAP[brokerName];
@@ -294,13 +294,13 @@ export default async function handler(req, res) {
   try {
     pdfBytes = await downloadPdf(reservedRow.pdf_storage_path);
   } catch (err) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'canonical_download_failed' });
+    await releaseEnvelopeReservation(submissionId, user, { reason: 'canonical_download_failed' });
     console.error('send-for-signature: canonical download failed', err?.message);
     return res.status(500).json({ error: 'canonical_download_failed' });
   }
   const actualHash = sha256HexOfBytes(pdfBytes);
   if (actualHash !== reservedRow.pdf_sha256) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'canonical_hash_mismatch' });
+    await releaseEnvelopeReservation(submissionId, user, { reason: 'canonical_hash_mismatch' });
     return res.status(500).json({ error: 'canonical_hash_mismatch' });
   }
 
@@ -308,7 +308,7 @@ export default async function handler(req, res) {
   try {
     docusignConfig = getDocusignConfig();
   } catch (err) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'docusign_config' });
+    await releaseEnvelopeReservation(submissionId, user, { reason: 'docusign_config' });
     console.error('send-for-signature: docusign config', err?.message);
     return res.status(500).json({ error: 'docusign_environment_misconfigured' });
   }
@@ -333,7 +333,7 @@ export default async function handler(req, res) {
   try {
     runtime = await resolveDocusignRuntime();
   } catch (err) {
-    await releaseEnvelopeReservation(submissionId, user.id, { reason: 'docusign_bootstrap_failed' });
+    await releaseEnvelopeReservation(submissionId, user, { reason: 'docusign_bootstrap_failed' });
     console.error('send-for-signature: docusign bootstrap failed', err?.message);
     return res.status(500).json({ error: 'docusign_bootstrap_failed' });
   }
@@ -371,7 +371,7 @@ export default async function handler(req, res) {
   const data = await response.json().catch(() => null);
 
   if (!response.ok && response.status < 500) {
-    await releaseEnvelopeReservation(submissionId, user.id, {
+    await releaseEnvelopeReservation(submissionId, user, {
       reason: `docusign_http_${response.status}`,
     });
     console.error('send-for-signature: DocuSign envelope rejected', data);

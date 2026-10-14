@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeMockSupabase } from './testUtils/mockSupabase.js';
+import { TEST_TOKENS } from './testUtils/testJwt.js';
 import { sha256HexOfBytes } from '../api/_lib/sha256.js';
 
 const mock = makeMockSupabase();
@@ -72,7 +73,7 @@ async function seedSubmission(snapshot = {}) {
   const pdfBytes = Buffer.from(`%PDF-1.4\n${submissionId}\n${'x'.repeat(600)}\n%%EOF`);
   await createHandler({
     method: 'POST',
-    headers: { authorization: 'Bearer token-andrew' },
+    headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
     body: {
       submissionId,
       roaType: 'Personal',
@@ -101,7 +102,7 @@ async function send(submissionId, body = {}) {
   const response = res();
   await sendHandler({
     method: 'POST',
-    headers: { authorization: 'Bearer token-andrew' },
+    headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
     body: { submissionId, ...body },
   }, response);
   return response;
@@ -115,7 +116,7 @@ beforeEach(() => {
   process.env.DOCUMENSO_BASE_URL = 'https://sign.example.test';
   process.env.DOCUMENSO_API_TOKEN = 'api-test';
   _resetServerSupabaseForTests();
-  mock.fixtures.addAuthUser('token-andrew', {
+  mock.fixtures.addAuthUser(TEST_TOKENS.andrew, {
     id: 'user-andrew',
     email: 'andrew@hrsinsurance.co.za',
   });
@@ -287,7 +288,7 @@ describe('Documenso reliability after PR #3 reconciliation', () => {
     const first = res();
     await refreshHandler({
       method: 'POST',
-      headers: { authorization: 'Bearer token-andrew' },
+      headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
       body: { submissionId: id },
     }, first);
 
@@ -309,7 +310,7 @@ describe('Documenso reliability after PR #3 reconciliation', () => {
     const second = res();
     await refreshHandler({
       method: 'POST',
-      headers: { authorization: 'Bearer token-andrew' },
+      headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
       body: { submissionId: id },
     }, second);
     row = mock.fixtures.getRow(id);
@@ -329,7 +330,7 @@ describe('Documenso reliability after PR #3 reconciliation', () => {
       const response = res();
       await refreshHandler({
         method: 'POST',
-        headers: { authorization: 'Bearer token-andrew' },
+        headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
         body: { submissionId: id },
       }, response);
       const row = mock.fixtures.getRow(id);

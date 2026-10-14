@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeMockSupabase } from './testUtils/mockSupabase.js';
+import { TEST_TOKENS } from './testUtils/testJwt.js';
 
 // Shared mock: both api/_lib/auth.js (ANON client) and api/_lib/supabaseServer.js
 // (service-role client) call createClient(); we return the same in-memory
@@ -70,9 +71,9 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
 
   // Two brokers exercised by these tests.
-  mock.fixtures.addAuthUser('token-andrew', { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
-  mock.fixtures.addAuthUser('token-werner', { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
-  mock.fixtures.addAuthUser('token-stranger', { id: 'user-stranger', email: 'stranger@example.com' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.andrew, { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.werner, { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.stranger, { id: 'user-stranger', email: 'stranger@example.com' });
 });
 
 afterEach(() => {
@@ -116,7 +117,7 @@ describe('/api/roa-submissions/create', () => {
     await createHandler(
       {
         method: 'POST',
-        headers: { authorization: 'Bearer token-andrew' },
+        headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
         body: {
           submissionId: 'not-a-uuid',
           roaType: 'Personal',
@@ -136,7 +137,7 @@ describe('/api/roa-submissions/create', () => {
     await createHandler(
       {
         method: 'POST',
-        headers: { authorization: 'Bearer token-andrew' },
+        headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
         body: {
           submissionId: generateSubmissionId(),
           roaType: 'Personal',
@@ -156,7 +157,7 @@ describe('/api/roa-submissions/create', () => {
     const bytes = fakePdfBytes(submissionId);
     mock.fixtures.putStorage(`${submissionId}/canonical.pdf`, bytes);
 
-    const { res } = await createFor('token-andrew', { submissionId, bytes });
+    const { res } = await createFor(TEST_TOKENS.andrew, { submissionId, bytes });
     expect(res.statusCode).toBe(200);
     expect(res.body.submissionId).toBe(submissionId);
     expect(mock.fixtures.getRow(submissionId).pdf_sha256).toBe(sha256HexOfBytes(bytes));
@@ -167,13 +168,13 @@ describe('/api/roa-submissions/create', () => {
     const bytes = fakePdfBytes(submissionId);
     mock.fixtures.failNextInsert('database unavailable');
 
-    const first = await createFor('token-andrew', { submissionId, bytes });
+    const first = await createFor(TEST_TOKENS.andrew, { submissionId, bytes });
     expect(first.res.statusCode).toBe(500);
     expect(first.res.body.error).toBe('persist_failed');
     expect(mock.fixtures.getRow(submissionId)).toBeNull();
     expect(mock.fixtures.getStorage(`${submissionId}/canonical.pdf`).equals(bytes)).toBe(true);
 
-    const retry = await createFor('token-andrew', { submissionId, bytes });
+    const retry = await createFor(TEST_TOKENS.andrew, { submissionId, bytes });
     expect(retry.res.statusCode).toBe(200);
     expect(retry.res.body.submissionId).toBe(submissionId);
     expect(mock.fixtures.getRow(submissionId).pdf_sha256).toBe(sha256HexOfBytes(bytes));
@@ -187,17 +188,17 @@ describe('/api/roa-submissions/create', () => {
       fakePdfBytes('DIFFERENT-EVIDENCE'),
     );
 
-    const { res } = await createFor('token-andrew', { submissionId, bytes });
+    const { res } = await createFor(TEST_TOKENS.andrew, { submissionId, bytes });
     expect(res.statusCode).toBe(409);
     expect(res.body.error).toBe('canonical_storage_conflict');
     expect(mock.fixtures.getRow(submissionId)).toBeNull();
   });
 
   it('reconciles a duplicate create retry when the DB row already matches', async () => {
-    const first = await createFor('token-andrew');
+    const first = await createFor(TEST_TOKENS.andrew);
     expect(first.res.statusCode).toBe(200);
 
-    const second = await createFor('token-andrew', {
+    const second = await createFor(TEST_TOKENS.andrew, {
       submissionId: first.submissionId,
       bytes: first.bytes,
     });
@@ -207,7 +208,7 @@ describe('/api/roa-submissions/create', () => {
   });
 
   it('persists a row, uploads canonical bytes, and returns SHA-256', async () => {
-    const { res, submissionId, bytes } = await createFor('token-andrew');
+    const { res, submissionId, bytes } = await createFor(TEST_TOKENS.andrew);
     expect(res.statusCode).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.submissionId).toBe(submissionId);
@@ -235,10 +236,10 @@ describe('/api/roa-submissions/get — ownership + safe 404', () => {
   });
 
   it('owner sees their own submission', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     const res = mockRes();
     await getHandler(
-      { method: 'GET', headers: { authorization: 'Bearer token-andrew' }, query: { id: submissionId } },
+      { method: 'GET', headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` }, query: { id: submissionId } },
       res,
     );
     expect(res.statusCode).toBe(200);
@@ -249,10 +250,10 @@ describe('/api/roa-submissions/get — ownership + safe 404', () => {
   });
 
   it('cross-broker → 404 (existence is not leaked)', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     const res = mockRes();
     await getHandler(
-      { method: 'GET', headers: { authorization: 'Bearer token-werner' }, query: { id: submissionId } },
+      { method: 'GET', headers: { authorization: `Bearer ${TEST_TOKENS.werner}` }, query: { id: submissionId } },
       res,
     );
     expect(res.statusCode).toBe(404);
@@ -261,7 +262,7 @@ describe('/api/roa-submissions/get — ownership + safe 404', () => {
   it('non-HRS-broker authenticated user → 403 before any lookup', async () => {
     const res = mockRes();
     await getHandler(
-      { method: 'GET', headers: { authorization: 'Bearer token-stranger' }, query: { id: 'ROA-x' } },
+      { method: 'GET', headers: { authorization: `Bearer ${TEST_TOKENS.stranger}` }, query: { id: 'ROA-x' } },
       res,
     );
     expect(res.statusCode).toBe(403);
@@ -277,10 +278,10 @@ describe('/api/roa-submissions/list — broker-scoped register', () => {
   });
 
   it('returns only the authenticated broker submissions without snapshot_json', async () => {
-    const andrew = await createFor('token-andrew');
-    const werner = await createFor('token-werner');
+    const andrew = await createFor(TEST_TOKENS.andrew);
+    const werner = await createFor(TEST_TOKENS.werner);
     const res = mockRes();
-    await listHandler({ method: 'GET', headers: { authorization: 'Bearer token-andrew' } }, res);
+    await listHandler({ method: 'GET', headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` } }, res);
     expect(res.statusCode).toBe(200);
     const ids = res.body.submissions.map((item) => item.submissionId);
     expect(ids).toContain(andrew.submissionId);
@@ -292,12 +293,12 @@ describe('/api/roa-submissions/list — broker-scoped register', () => {
 
 describe('/api/roa-submissions/pdf — evidence hash verification', () => {
   it('serves canonical bytes to the owner with the persisted hash', async () => {
-    const { submissionId, bytes } = await createFor('token-andrew');
+    const { submissionId, bytes } = await createFor(TEST_TOKENS.andrew);
     const res = mockRes();
     await pdfHandler(
       {
         method: 'GET',
-        headers: { authorization: 'Bearer token-andrew' },
+        headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
         query: { id: submissionId, kind: 'canonical' },
       },
       res,
@@ -308,12 +309,12 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
   });
 
   it('cross-broker canonical download → 404', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     const res = mockRes();
     await pdfHandler(
       {
         method: 'GET',
-        headers: { authorization: 'Bearer token-werner' },
+        headers: { authorization: `Bearer ${TEST_TOKENS.werner}` },
         query: { id: submissionId, kind: 'canonical' },
       },
       res,
@@ -322,12 +323,12 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
   });
 
   it('signed download → 409 while no signed.pdf exists yet', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     const res = mockRes();
     await pdfHandler(
       {
         method: 'GET',
-        headers: { authorization: 'Bearer token-andrew' },
+        headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
         query: { id: submissionId, kind: 'signed' },
       },
       res,
@@ -337,7 +338,7 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
   });
 
   it('detects storage corruption via SHA-256 mismatch → 500', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     // Simulate someone (or something) replacing the object bytes.
     mock.fixtures.deleteStorage(`${submissionId}/canonical.pdf`);
     mock.fixtures.putStorage(`${submissionId}/canonical.pdf`, Buffer.from('corrupted'.repeat(60)));
@@ -345,7 +346,7 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
     await pdfHandler(
       {
         method: 'GET',
-        headers: { authorization: 'Bearer token-andrew' },
+        headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
         query: { id: submissionId, kind: 'canonical' },
       },
       res,
@@ -355,18 +356,18 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
   });
 
   it('audit-log download requires authentication', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     const res = mockRes();
     await pdfHandler({ method: 'GET', headers: {}, query: { id: submissionId, kind: 'audit-log' } }, res);
     expect(res.statusCode).toBe(401);
   });
 
   it('audit-log download is broker-owned and unavailable evidence returns 409', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     const unavailable = mockRes();
     await pdfHandler({
       method: 'GET',
-      headers: { authorization: 'Bearer token-andrew' },
+      headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
       query: { id: submissionId, kind: 'audit-log' },
     }, unavailable);
     expect(unavailable.statusCode).toBe(409);
@@ -375,14 +376,14 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
     const otherBroker = mockRes();
     await pdfHandler({
       method: 'GET',
-      headers: { authorization: 'Bearer token-werner' },
+      headers: { authorization: `Bearer ${TEST_TOKENS.werner}` },
       query: { id: submissionId, kind: 'audit-log' },
     }, otherBroker);
     expect(otherBroker.statusCode).toBe(404);
   });
 
   it('serves a verified audit log and fails closed on hash mismatch', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     const path = `${submissionId}/audit-log.pdf`;
     const bytes = fakePdfBytes('audit-log');
     mock.fixtures.putStorage(path, bytes);
@@ -394,7 +395,7 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
     const ok = mockRes();
     await pdfHandler({
       method: 'GET',
-      headers: { authorization: 'Bearer token-andrew' },
+      headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
       query: { id: submissionId, kind: 'audit-log' },
     }, ok);
     expect(ok.statusCode).toBe(200);
@@ -405,7 +406,7 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
     const corrupt = mockRes();
     await pdfHandler({
       method: 'GET',
-      headers: { authorization: 'Bearer token-andrew' },
+      headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
       query: { id: submissionId, kind: 'audit-log' },
     }, corrupt);
     expect(corrupt.statusCode).toBe(500);
@@ -415,7 +416,7 @@ describe('/api/roa-submissions/pdf — evidence hash verification', () => {
 
 describe('/api/roa-submissions/sync-crm', () => {
   it('owner triggers a server-to-server sync with only the submission id', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     process.env.CRM_BASE_URL = 'https://crm.example.test';
     process.env.CRM_INTEGRATION_SECRET = 's'.repeat(32);
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
@@ -430,7 +431,7 @@ describe('/api/roa-submissions/sync-crm', () => {
     await syncCrmHandler(
       {
         method: 'POST',
-        headers: { authorization: 'Bearer token-andrew' },
+        headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
         body: { submissionId },
       },
       res,
@@ -450,13 +451,13 @@ describe('/api/roa-submissions/sync-crm', () => {
   });
 
   it('cross-broker sync → 404 before any outbound call', async () => {
-    const { submissionId } = await createFor('token-andrew');
+    const { submissionId } = await createFor(TEST_TOKENS.andrew);
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const res = mockRes();
     await syncCrmHandler(
       {
         method: 'POST',
-        headers: { authorization: 'Bearer token-werner' },
+        headers: { authorization: `Bearer ${TEST_TOKENS.werner}` },
         body: { submissionId },
       },
       res,
@@ -466,14 +467,14 @@ describe('/api/roa-submissions/sync-crm', () => {
   });
 
   it('records a soft CRM failure without damaging the authoritative ROA', async () => {
-    const { submissionId, bytes } = await createFor('token-andrew');
+    const { submissionId, bytes } = await createFor(TEST_TOKENS.andrew);
     process.env.CRM_BASE_URL = 'https://crm.example.test';
     process.env.CRM_INTEGRATION_SECRET = 's'.repeat(32);
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
     const res = mockRes();
     await syncCrmHandler({
       method: 'POST',
-      headers: { authorization: 'Bearer token-andrew' },
+      headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
       body: { submissionId },
     }, res);
     expect(res.statusCode).toBe(502);

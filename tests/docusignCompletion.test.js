@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeMockSupabase } from './testUtils/mockSupabase.js';
+import { TEST_TOKENS } from './testUtils/testJwt.js';
 
 const mock = makeMockSupabase();
 vi.mock('@supabase/supabase-js', () => ({
@@ -83,8 +84,8 @@ beforeEach(() => {
     if (!fetchScript.length) throw new Error('fetch called with no scripted response');
     return fetchScript.shift();
   });
-  mock.fixtures.addAuthUser('token-andrew', { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
-  mock.fixtures.addAuthUser('token-werner', { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.andrew, { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.werner, { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
 });
 
 afterEach(() => {
@@ -93,7 +94,7 @@ afterEach(() => {
   Object.assign(process.env, originalEnv);
 });
 
-async function seedSubmission(token = 'token-andrew') {
+async function seedSubmission(token = TEST_TOKENS.andrew) {
   const submissionId = generateSubmissionId();
   const res = mockRes();
   await createHandler(
@@ -143,7 +144,7 @@ async function refreshCall(token, submissionId) {
 describe('DocuSign real-envelope send + status persistence', () => {
   it('creates the envelope, persists id + status, uses the account-specific base URI', async () => {
     const id = await seedSubmission();
-    const r = await sendReal('token-andrew', id, { envelopeId: 'env-abc', envelopeStatus: 'sent' });
+    const r = await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-abc', envelopeStatus: 'sent' });
     expect(r.statusCode).toBe(200);
     expect(r.body.envelopeId).toBe('env-abc');
     const row = mock.fixtures.getRow(id);
@@ -155,13 +156,13 @@ describe('DocuSign real-envelope send + status persistence', () => {
 
   it('a subsequent send returns the same envelope (no duplicate DocuSign call)', async () => {
     const id = await seedSubmission();
-    await sendReal('token-andrew', id, { envelopeId: 'env-x' });
+    await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-x' });
     // No fetch scripted for the second call — if the endpoint tried to hit
     // DocuSign again, the fetch mock would throw.
     const res = mockRes();
     await sendHandler(
       {
-        method: 'POST', headers: { authorization: 'Bearer token-andrew' },
+        method: 'POST', headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
         body: { submissionId: id, signerName: 'X', signerEmail: 'x@y.co' },
       },
       res,
@@ -177,7 +178,7 @@ describe('DocuSign real-envelope send + status persistence', () => {
     const res = mockRes();
     await sendHandler(
       {
-        method: 'POST', headers: { authorization: 'Bearer token-andrew' },
+        method: 'POST', headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
         body: { submissionId: id, signerName: 'J', signerEmail: 'j@y.co' },
       },
       res,
@@ -189,11 +190,14 @@ describe('DocuSign real-envelope send + status persistence', () => {
     // A subsequent retry can proceed because the WHERE clause matches
     // status IN ('submitted','signature_failed') AND envelope_id IS NULL.
     pushFetchResponse(jsonResponse({ envelopeId: 'env-retry', status: 'sent' }));
-    const retry = await sendReal('token-andrew', id, { envelopeId: 'env-retry' });
+    const retry = await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-retry' });
     expect(retry.statusCode).toBe(200);
     expect(retry.body.envelopeId).toBe('env-retry');
   });
 });
+
+// The authorised-broker object endpoints receive from requireAuthenticatedBroker.
+const ANDREW = { normalizedEmail: 'andrew@hrsinsurance.co.za' };
 
 describe('refresh — polling DocuSign', () => {
   it('preserves the first completed_at value across competing observations', async () => {
@@ -201,17 +205,17 @@ describe('refresh — polling DocuSign', () => {
     const firstObserved = '2026-09-25T08:00:00.000Z';
     const laterObserved = '2026-09-25T08:00:05.000Z';
 
-    await setCompletionIfMissing(id, 'user-andrew', firstObserved);
-    await setCompletionIfMissing(id, 'user-andrew', laterObserved);
+    await setCompletionIfMissing(id, ANDREW, firstObserved);
+    await setCompletionIfMissing(id, ANDREW, laterObserved);
 
     expect(mock.fixtures.getRow(id).completed_at).toBe(firstObserved);
   });
 
   it('sent → persists observed status, does not create signed/certificate objects', async () => {
     const id = await seedSubmission();
-    await sendReal('token-andrew', id, { envelopeId: 'env-1', envelopeStatus: 'sent' });
+    await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-1', envelopeStatus: 'sent' });
     pushFetchResponse(jsonResponse({ status: 'delivered' }));
-    const r = await refreshCall('token-andrew', id);
+    const r = await refreshCall(TEST_TOKENS.andrew, id);
     expect(r.statusCode).toBe(200);
     expect(r.body.observedStatus).toBe('delivered');
     const row = mock.fixtures.getRow(id);
@@ -222,14 +226,14 @@ describe('refresh — polling DocuSign', () => {
 
   it('completed → retrieves signed PDF + certificate, marks evidence retrieved', async () => {
     const id = await seedSubmission();
-    await sendReal('token-andrew', id, { envelopeId: 'env-c', envelopeStatus: 'sent' });
+    await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-c', envelopeStatus: 'sent' });
     // Refresh flow: status → signed pdf → certificate.
     pushFetchResponse(jsonResponse({ status: 'completed' }));
     const signedBytes = Buffer.from('%PDF-1.4\nSIGNED\n');
     const certBytes = Buffer.from('%PDF-1.4\nCERT\n');
     pushFetchResponse(pdfResponse(signedBytes));
     pushFetchResponse(pdfResponse(certBytes));
-    const r = await refreshCall('token-andrew', id);
+    const r = await refreshCall(TEST_TOKENS.andrew, id);
     expect(r.statusCode).toBe(200);
     expect(r.body.observedStatus).toBe('completed');
     const row = mock.fixtures.getRow(id);
@@ -246,13 +250,13 @@ describe('refresh — polling DocuSign', () => {
 
   it('completed + certificate retrieval fails → signed stored, evidence_retrieved_at NOT set, retry succeeds', async () => {
     const id = await seedSubmission();
-    await sendReal('token-andrew', id, { envelopeId: 'env-cx', envelopeStatus: 'sent' });
+    await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-cx', envelopeStatus: 'sent' });
     // First refresh: status ok, signed ok, certificate fails.
     pushFetchResponse(jsonResponse({ status: 'completed' }));
     const signedBytes = Buffer.from('%PDF-1.4\nSIGNED-2\n');
     pushFetchResponse(pdfResponse(signedBytes));
     pushFetchResponse(pdfResponse(Buffer.from(''), false, 502));
-    const r1 = await refreshCall('token-andrew', id);
+    const r1 = await refreshCall(TEST_TOKENS.andrew, id);
     expect(r1.body.evidenceErrors).toEqual(['certificate']);
     const row1 = mock.fixtures.getRow(id);
     expect(row1.signed_pdf_storage_path).toBe(`${id}/signed.pdf`);
@@ -262,7 +266,7 @@ describe('refresh — polling DocuSign', () => {
     pushFetchResponse(jsonResponse({ status: 'completed' }));
     const certBytes = Buffer.from('%PDF-1.4\nCERT-2\n');
     pushFetchResponse(pdfResponse(certBytes));
-    const r2 = await refreshCall('token-andrew', id);
+    const r2 = await refreshCall(TEST_TOKENS.andrew, id);
     expect(r2.body.evidenceErrors).toBeUndefined();
     const row2 = mock.fixtures.getRow(id);
     expect(row2.certificate_storage_path).toBe(`${id}/certificate.pdf`);
@@ -271,9 +275,9 @@ describe('refresh — polling DocuSign', () => {
 
   it('declined → persisted, no signed/certificate fetch attempted', async () => {
     const id = await seedSubmission();
-    await sendReal('token-andrew', id, { envelopeId: 'env-d', envelopeStatus: 'sent' });
+    await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-d', envelopeStatus: 'sent' });
     pushFetchResponse(jsonResponse({ status: 'declined' }));
-    const r = await refreshCall('token-andrew', id);
+    const r = await refreshCall(TEST_TOKENS.andrew, id);
     expect(r.statusCode).toBe(200);
     expect(r.body.observedStatus).toBe('declined');
     const row = mock.fixtures.getRow(id);
@@ -284,9 +288,9 @@ describe('refresh — polling DocuSign', () => {
 
   it('voided → persisted, no signed fetch', async () => {
     const id = await seedSubmission();
-    await sendReal('token-andrew', id, { envelopeId: 'env-v', envelopeStatus: 'sent' });
+    await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-v', envelopeStatus: 'sent' });
     pushFetchResponse(jsonResponse({ status: 'voided' }));
-    const r = await refreshCall('token-andrew', id);
+    const r = await refreshCall(TEST_TOKENS.andrew, id);
     expect(r.body.observedStatus).toBe('voided');
     const row = mock.fixtures.getRow(id);
     expect(row.status).toBe('voided');
@@ -296,9 +300,9 @@ describe('refresh — polling DocuSign', () => {
 
   it('expired → persisted but completed_at remains null', async () => {
     const id = await seedSubmission();
-    await sendReal('token-andrew', id, { envelopeId: 'env-e', envelopeStatus: 'sent' });
+    await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-e', envelopeStatus: 'sent' });
     pushFetchResponse(jsonResponse({ status: 'expired' }));
-    const r = await refreshCall('token-andrew', id);
+    const r = await refreshCall(TEST_TOKENS.andrew, id);
     expect(r.body.observedStatus).toBe('expired');
     const row = mock.fixtures.getRow(id);
     expect(row.status).toBe('expired');
@@ -308,15 +312,15 @@ describe('refresh — polling DocuSign', () => {
 
   it('cross-broker refresh → 404 (no state observed, no DocuSign call)', async () => {
     const id = await seedSubmission();
-    await sendReal('token-andrew', id, { envelopeId: 'env-owned' });
+    await sendReal(TEST_TOKENS.andrew, id, { envelopeId: 'env-owned' });
     // No fetch scripted — a stray call would throw.
-    const r = await refreshCall('token-werner', id);
+    const r = await refreshCall(TEST_TOKENS.werner, id);
     expect(r.statusCode).toBe(404);
   });
 
   it('refresh before send has an envelope → returns current state without contacting DocuSign', async () => {
     const id = await seedSubmission();
-    const r = await refreshCall('token-andrew', id);
+    const r = await refreshCall(TEST_TOKENS.andrew, id);
     expect(r.statusCode).toBe(200);
     expect(r.body.refreshed).toBe(false);
   });

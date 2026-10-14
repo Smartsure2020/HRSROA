@@ -4,11 +4,23 @@
 // All row ownership checks live here. Endpoints call these helpers instead of
 // touching Supabase directly, so a missed ownership check cannot exist.
 //
+// This module talks to the ROA data project through the SERVICE ROLE, which
+// bypasses RLS. Equivalent authorisation is therefore enforced in code: every
+// read and write that is reachable from a broker request takes the authorised
+// `broker` object produced by `requireAuthenticatedBroker` and is scoped to that
+// broker's verified email (see ./brokerIdentity.js for why email, not the Auth
+// user id, is the ownership key after the CRM-auth cutover).
+//
+// Reads are filtered in the query AND re-checked in code; single-row writes carry
+// the same ownership filter, so a write can never touch another broker's row even
+// if a caller forgot to load it first.
+//
 // Never log snapshot_json or banking fields.
 
 import { StoragePaths, ROA_STORAGE_BUCKET, getServerSupabase } from './supabaseServer.js';
 import { sha256HexOfBytes } from './sha256.js';
 import { shouldReconcileSigningRecord } from './signingLifecycle.js';
+import { ownerEmailPattern, ownsSubmission } from './brokerIdentity.js';
 
 /**
  * Loads a submission row (any advisor).
@@ -29,15 +41,18 @@ export async function loadSubmissionRaw(submissionId) {
  * Loads a submission row and enforces broker ownership. Returns null if the
  * row does not exist OR the caller is not the advisor (safe 404 convention
  * that does not leak the existence of other brokers' submissions).
+ *
+ * @param {string} submissionId
+ * @param {{ normalizedEmail: string }} broker — the authorised broker
  */
-export async function loadSubmissionForBroker(submissionId, brokerUserId) {
+export async function loadSubmissionForBroker(submissionId, broker) {
   const row = await loadSubmissionRaw(submissionId);
   if (!row) return null;
-  if (row.advisor_user_id !== brokerUserId) return null;
+  if (!ownsSubmission(row, broker)) return null;
   return row;
 }
 
-export async function listSubmissionsForBroker(brokerUserId) {
+export async function listSubmissionsForBroker(broker) {
   const supabase = getServerSupabase();
   const columns = [
     'id', 'roa_type', 'client_reference', 'advisor_email', 'status', 'snapshot_json',
@@ -51,18 +66,19 @@ export async function listSubmissionsForBroker(brokerUserId) {
   const { data, error } = await supabase
     .from('roa_submissions')
     .select(columns)
-    .eq('advisor_user_id', brokerUserId);
+    .ilike('advisor_email', ownerEmailPattern(broker));
   if (error) throw new Error(`List submissions failed: ${error.message}`);
   return (data || [])
+    .filter((row) => ownsSubmission(row, broker))
     .sort((a, b) => String(b.submitted_at || '').localeCompare(String(a.submitted_at || '')))
     .slice(0, 250);
 }
 
-export async function listPendingSigningForBroker(brokerUserId, { limit = 25 } = {}) {
+export async function listPendingSigningForBroker(broker, { limit = 25 } = {}) {
   const boundedLimit = Math.min(Math.max(Number(limit) || 25, 1), 25);
   const supabase = getServerSupabase();
   const columns = [
-    'id', 'advisor_user_id', 'status', 'submitted_at',
+    'id', 'advisor_user_id', 'advisor_email', 'status', 'submitted_at',
     'signing_provider', 'signing_envelope_id', 'signing_item_id', 'signing_status',
     'docusign_envelope_id', 'docusign_status',
     'completed_at', 'evidence_retrieved_at',
@@ -73,9 +89,10 @@ export async function listPendingSigningForBroker(brokerUserId, { limit = 25 } =
   const { data, error } = await supabase
     .from('roa_submissions')
     .select(columns)
-    .eq('advisor_user_id', brokerUserId);
+    .ilike('advisor_email', ownerEmailPattern(broker));
   if (error) throw new Error(`List pending submissions failed: ${error.message}`);
   return (data || [])
+    .filter((row) => ownsSubmission(row, broker))
     .filter(shouldReconcileSigningRecord)
     .sort((a, b) => String(a.submitted_at || '').localeCompare(String(b.submitted_at || '')))
     .slice(0, boundedLimit);
@@ -105,13 +122,13 @@ export async function updateSubmission(submissionId, patch) {
 }
 
 /** Records the first observed provider completion time without overwriting it. */
-export async function setCompletionIfMissing(submissionId, brokerUserId, completedAt) {
+export async function setCompletionIfMissing(submissionId, broker, completedAt) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
     .from('roa_submissions')
     .update({ completed_at: completedAt })
     .eq('id', submissionId)
-    .eq('advisor_user_id', brokerUserId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
     .is('completed_at', null)
     .select('*')
     .maybeSingle();
@@ -127,25 +144,25 @@ export async function setCompletionIfMissing(submissionId, brokerUserId, complet
  * current state (which will already carry an envelope_id or be in a
  * terminal state).
  */
-export async function reserveEnvelopeSlot(submissionId, brokerUserId) {
+export async function reserveEnvelopeSlot(submissionId, broker) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
     .from('roa_submissions')
     .update({ status: 'awaiting_signature', sent_for_signature_at: new Date().toISOString() })
     .eq('id', submissionId)
-    .eq('advisor_user_id', brokerUserId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
     .is('docusign_envelope_id', null)
     .in('status', ['submitted', 'signature_failed'])
     .select('*')
     .maybeSingle();
   if (error) throw new Error(`Reserve envelope slot failed: ${error.message}`);
   if (data) return { reserved: true, row: data };
-  const current = await loadSubmissionForBroker(submissionId, brokerUserId);
+  const current = await loadSubmissionForBroker(submissionId, broker);
   return { reserved: false, row: current };
 }
 
 /** Rolls a reservation back so the broker can retry after a definite failure. */
-export async function releaseEnvelopeReservation(submissionId, brokerUserId, { reason } = {}) {
+export async function releaseEnvelopeReservation(submissionId, broker, { reason } = {}) {
   const supabase = getServerSupabase();
   const { error } = await supabase
     .from('roa_submissions')
@@ -155,7 +172,7 @@ export async function releaseEnvelopeReservation(submissionId, brokerUserId, { r
       docusign_status: reason ? `failed: ${reason}`.slice(0, 200) : 'failed',
     })
     .eq('id', submissionId)
-    .eq('advisor_user_id', brokerUserId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
     .eq('status', 'awaiting_signature')
     .is('docusign_envelope_id', null);
   if (error) throw new Error(`Release envelope reservation failed: ${error.message}`);
@@ -165,7 +182,7 @@ export async function releaseEnvelopeReservation(submissionId, brokerUserId, { r
 /**
  * Provider-neutral signing reservation used by new signing integrations.
  */
-export async function reserveSigningSlot(submissionId, brokerUserId, provider) {
+export async function reserveSigningSlot(submissionId, broker, provider) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
     .from('roa_submissions')
@@ -175,18 +192,18 @@ export async function reserveSigningSlot(submissionId, brokerUserId, provider) {
       signing_provider: provider,
     })
     .eq('id', submissionId)
-    .eq('advisor_user_id', brokerUserId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
     .is('signing_envelope_id', null)
     .in('status', ['submitted', 'signature_failed'])
     .select('*')
     .maybeSingle();
   if (error) throw new Error(`Reserve signing slot failed: ${error.message}`);
   if (data) return { reserved: true, row: data };
-  const current = await loadSubmissionForBroker(submissionId, brokerUserId);
+  const current = await loadSubmissionForBroker(submissionId, broker);
   return { reserved: false, row: current };
 }
 
-export async function releaseSigningReservation(submissionId, brokerUserId, provider, { reason } = {}) {
+export async function releaseSigningReservation(submissionId, broker, provider, { reason } = {}) {
   const supabase = getServerSupabase();
   const { error } = await supabase
     .from('roa_submissions')
@@ -196,7 +213,7 @@ export async function releaseSigningReservation(submissionId, brokerUserId, prov
       signing_status: reason ? `failed: ${reason}`.slice(0, 200) : 'failed',
     })
     .eq('id', submissionId)
-    .eq('advisor_user_id', brokerUserId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
     .eq('signing_provider', provider)
     .eq('status', 'awaiting_signature')
     .is('signing_envelope_id', null);

@@ -10,7 +10,9 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:auth-config": "node scripts/check-auth-config.mjs",
+    "reconcile:brokers": "node scripts/reconcile-broker-identities.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^4.1.2",

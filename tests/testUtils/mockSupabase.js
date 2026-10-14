@@ -17,7 +17,32 @@ export function makeMockSupabase() {
     const entry = authUsers.get(token);
     if (!entry) return { data: { user: null }, error: { message: 'invalid token' } };
     if (entry === 'throw') throw new Error('auth service unreachable');
-    return { data: { user: entry.user }, error: null };
+    // Supabase Auth only issues sessions for confirmed emails (autoconfirm off);
+    // fixtures can override this to model an unconfirmed / anonymous / banned user.
+    return {
+      data: { user: { email_confirmed_at: '2026-01-01T00:00:00.000Z', ...entry.user } },
+      error: null,
+    };
+  }
+
+  // Postgres LIKE/ILIKE semantics: `%` any run, `_` any single char, backslash
+  // escapes the next character. Case-insensitive for ILIKE.
+  function likeToRegExp(pattern) {
+    let source = '';
+    for (let i = 0; i < pattern.length; i += 1) {
+      const ch = pattern[i];
+      if (ch === '\\' && i + 1 < pattern.length) {
+        i += 1;
+        source += pattern[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      } else if (ch === '%') {
+        source += '.*';
+      } else if (ch === '_') {
+        source += '.';
+      } else {
+        source += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      }
+    }
+    return new RegExp(`^${source}$`, 'i');
   }
 
   function whereMatches(row, filters) {
@@ -27,6 +52,7 @@ export function makeMockSupabase() {
       if (op === 'eq' && v !== val) return false;
       if (op === 'is' && !(val === null ? v === null || v === undefined : v === val)) return false;
       if (op === 'in' && !val.includes(v)) return false;
+      if (op === 'ilike' && !(typeof v === 'string' && likeToRegExp(val).test(v))) return false;
     }
     return true;
   }
@@ -54,6 +80,7 @@ export function makeMockSupabase() {
           eq(col, val) { filters.push(['eq', col, val]); return this; },
           in(col, val) { filters.push(['in', col, val]); return this; },
           is(col, val) { filters.push(['is', col, val]); return this; },
+          ilike(col, val) { filters.push(['ilike', col, val]); return this; },
           maybeSingle: () => selectQuery(filters).maybeSingle(),
           single: () => selectQuery(filters).single(),
           then(onFulfilled, onRejected) {
@@ -100,6 +127,7 @@ export function makeMockSupabase() {
           eq(col, val) { filters.push(['eq', col, val]); return this; },
           in(col, val) { filters.push(['in', col, val]); return this; },
           is(col, val) { filters.push(['is', col, val]); return this; },
+          ilike(col, val) { filters.push(['ilike', col, val]); return this; },
           select() {
             return {
               async single() {
@@ -185,6 +213,9 @@ export function makeMockSupabase() {
       putStorage: (path, bytes) => storage.set(path, Buffer.from(bytes)),
       deleteStorage: (path) => storage.delete(path),
       putRow: (id, patch) => Object.assign(rows.get(id) || {}, patch),
+      // Seeds a complete row exactly as given (e.g. a pre-cutover row stamped with a
+      // legacy ROA Auth id and a mixed-case advisor_email).
+      insertRow: (row) => { rows.set(row.id, { ...row }); },
       failNextInsert: (message = 'injected insert failure') => { nextInsertError = message; },
       reset() {
         rows.clear();

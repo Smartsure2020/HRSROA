@@ -57,7 +57,7 @@ async function docusignGetPdf(url, accessToken) {
   return Buffer.from(await response.arrayBuffer());
 }
 
-async function reconcileViaDocusign({ submissionId, row, brokerUserId }) {
+async function reconcileViaDocusign({ submissionId, row, broker }) {
   if (!process.env.DOCUSIGN_INTEGRATION_KEY) {
     return { row, refreshed: false, provider: 'docusign', message: 'Dev mock — no DocuSign refresh performed' };
   }
@@ -79,7 +79,7 @@ async function reconcileViaDocusign({ submissionId, row, brokerUserId }) {
   const lifecycleStatus = LIFECYCLE_STATUS_FROM_DOCUSIGN[observedStatus];
   if (lifecycleStatus && lifecycleStatus !== row.status) patch.status = lifecycleStatus;
   if (observedStatus === 'completed' && !row.completed_at) {
-    await setCompletionIfMissing(submissionId, brokerUserId, new Date().toISOString());
+    await setCompletionIfMissing(submissionId, broker, new Date().toISOString());
   }
 
   let signedRetrieved = Boolean(row.signed_pdf_storage_path);
@@ -130,14 +130,14 @@ async function reconcileViaDocusign({ submissionId, row, brokerUserId }) {
   };
 }
 
-export async function reconcileSigningSubmission({ submissionId, row, brokerUserId }) {
+export async function reconcileSigningSubmission({ submissionId, row, broker }) {
   if (!shouldReconcileSigningRecord(row)) {
     const syncedRow = await maybeSyncCompletedSubmissionToCrm(row);
     return { row: syncedRow, provider: signingProviderFor(row), refreshed: false, skipped: true };
   }
 
   if (signingProviderFor(row) === 'documenso') {
-    const result = await refreshViaDocumenso({ submissionId, row, brokerUserId });
+    const result = await refreshViaDocumenso({ submissionId, row, broker });
     return {
       ...result,
       row: await maybeSyncCompletedSubmissionToCrm(result.row),
@@ -148,6 +148,6 @@ export async function reconcileSigningSubmission({ submissionId, row, brokerUser
   if (!row.docusign_envelope_id) {
     return { row, provider: signingProviderFor(row), refreshed: false, skipped: true };
   }
-  const result = await reconcileViaDocusign({ submissionId, row, brokerUserId });
+  const result = await reconcileViaDocusign({ submissionId, row, broker });
   return { ...result, row: await maybeSyncCompletedSubmissionToCrm(result.row) };
 }

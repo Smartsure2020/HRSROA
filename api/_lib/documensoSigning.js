@@ -122,7 +122,7 @@ export async function sendViaDocumenso({
 
     const recovered = await findDocumensoEnvelopeByExternalId(submissionId);
     if (!recovered?.id) {
-      await releaseSigningReservation(submissionId, user.id, PROVIDER, {
+      await releaseSigningReservation(submissionId, user, PROVIDER, {
         reason: 'not_found_after_ambiguous_send',
       });
       const err = new Error('documenso_send_unconfirmed');
@@ -152,7 +152,7 @@ export async function sendViaDocumenso({
     };
   }
 
-  const reservation = await reserveSigningSlot(submissionId, user.id, PROVIDER);
+  const reservation = await reserveSigningSlot(submissionId, user, PROVIDER);
   if (!reservation.reserved) {
     const current = reservation.row;
     if (current?.signing_provider === PROVIDER && current?.signing_envelope_id) {
@@ -172,7 +172,7 @@ export async function sendViaDocumenso({
   const pdfBytes = await downloadPdf(reserved.pdf_storage_path);
   const actualHash = sha256HexOfBytes(pdfBytes);
   if (actualHash !== reserved.pdf_sha256) {
-    await releaseSigningReservation(submissionId, user.id, PROVIDER, {
+    await releaseSigningReservation(submissionId, user, PROVIDER, {
       reason: 'canonical_hash_mismatch',
     });
     const err = new Error('canonical_hash_mismatch');
@@ -197,7 +197,7 @@ export async function sendViaDocumenso({
     // A provider 4xx response is a definite rejection. A 5xx or network/runtime
     // failure is ambiguous and must never unlock a potentially-created send.
     if (Number.isFinite(createErr?.status) && createErr.status < 500) {
-      await releaseSigningReservation(submissionId, user.id, PROVIDER, {
+      await releaseSigningReservation(submissionId, user, PROVIDER, {
         reason: `create_http_${createErr.status}`,
       });
       throw createErr;
@@ -245,7 +245,7 @@ export async function sendViaDocumenso({
   };
 }
 
-export async function refreshViaDocumenso({ submissionId, row, brokerUserId }) {
+export async function refreshViaDocumenso({ submissionId, row, broker }) {
   if (!row.signing_envelope_id) {
     return { refreshed: false, row };
   }
@@ -261,7 +261,7 @@ export async function refreshViaDocumenso({ submissionId, row, brokerUserId }) {
   if (observed.status === 'COMPLETED' && !row.completed_at) {
     await setCompletionIfMissing(
       submissionId,
-      brokerUserId,
+      broker,
       observed.completedAt || new Date().toISOString(),
     );
   }

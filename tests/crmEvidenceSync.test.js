@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeMockSupabase } from './testUtils/mockSupabase.js';
+import { TEST_TOKENS } from './testUtils/testJwt.js';
 
 const mock = makeMockSupabase();
 vi.mock('@supabase/supabase-js', () => ({ createClient: () => mock.client }));
@@ -36,7 +37,7 @@ async function seedCompleted({ provider = 'documenso', withAudit = true } = {}) 
   const res = mockRes();
   await createHandler({
     method: 'POST',
-    headers: { authorization: 'Bearer token-andrew' },
+    headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
     body: {
       submissionId,
       roaType: 'Personal',
@@ -95,7 +96,7 @@ const linkedWithAudit = {
 async function sync(submissionId) {
   const res = mockRes();
   await syncCrmHandler({
-    method: 'POST', headers: { authorization: 'Bearer token-andrew' }, body: { submissionId },
+    method: 'POST', headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` }, body: { submissionId },
   }, res);
   return res;
 }
@@ -109,7 +110,7 @@ beforeEach(() => {
   _resetServerSupabaseForTests();
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
-  mock.fixtures.addAuthUser('token-andrew', { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.andrew, { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
 });
 
 afterEach(() => {

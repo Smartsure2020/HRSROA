@@ -30,7 +30,7 @@ export default async function handler(req, res) {
   if (!isSubmissionId(id)) return res.status(400).json({ error: 'Invalid submissionId' });
   if (!KINDS.includes(kind)) return res.status(400).json({ error: 'Invalid kind' });
 
-  const row = await loadSubmissionForBroker(id, user.id);
+  const row = await loadSubmissionForBroker(id, user);
   if (!row) return res.status(404).json({ error: 'not_found' });
 
   if (DERIVED_COMPLIANCE_KINDS.includes(kind)) {

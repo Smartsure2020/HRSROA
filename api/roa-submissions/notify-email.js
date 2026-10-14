@@ -28,7 +28,7 @@ export default async function handler(req, res) {
   if (typeof subject !== 'string' || !subject) return res.status(400).json({ error: 'Missing subject' });
   if (typeof body !== 'string' || !body) return res.status(400).json({ error: 'Missing body' });
 
-  const row = await loadSubmissionForBroker(submissionId, user.id);
+  const row = await loadSubmissionForBroker(submissionId, user);
   if (!row) return res.status(404).json({ error: 'not_found' });
 
   let pdfBytes;

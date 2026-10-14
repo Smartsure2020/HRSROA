@@ -1,35 +1,40 @@
-// Service-role Supabase client (Phase ROA-1).
+// Service-role Supabase client for ROA business data (Phase ROA-1).
 //
 // Used by the roa-submissions endpoints for DB inserts, updates and Storage
 // upload/download. NEVER shipped to the browser — this file is only imported
 // by files under api/, which run only on the server.
 //
-// Distinct from api/_lib/auth.js which uses the ANON key to call
-// supabase.auth.getUser(userToken). That is fine (anon is public); the
-// service-role key is not — it bypasses RLS.
+// This client always points at the ROA DATA project (the original ROA Supabase
+// project that owns roa_submissions and the private `roa-pdfs` bucket). It is
+// deliberately NOT the project brokers authenticate against — see
+// ./authConfig.js. The service role bypasses RLS, so every query made through it
+// is scoped to the authenticated broker in ./submissionRepo.js.
 //
 // Env vars (server-side only):
-//   SUPABASE_URL              — same value as VITE_SUPABASE_URL on the client
-//   SUPABASE_SERVICE_ROLE_KEY — the project's service-role secret
+//   ROA_SUPABASE_URL / ROA_SUPABASE_SERVICE_ROLE_KEY
+//   (legacy fallback: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)
 //
-// A missing env var throws so a mis-configured deploy fails fast rather than
-// silently falling back to an unauthenticated code path.
+// A missing or partial configuration throws so a mis-configured deploy fails fast
+// rather than silently falling back to an unauthenticated code path.
 
 import { createClient } from '@supabase/supabase-js';
+import { getRoaDataConfig } from './authConfig.js';
 
 const ROA_STORAGE_BUCKET = 'roa-pdfs';
 
 let cachedClient = null;
 
-/** Server-side Supabase client with service-role privileges. */
+/** Server-side Supabase client with service-role privileges (ROA data project). */
 export function getServerSupabase() {
   if (cachedClient) return cachedClient;
-  const url = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    throw new Error('Server Supabase misconfigured: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
+  const config = getRoaDataConfig();
+  if (!config.ok) {
+    throw new Error(
+      `Server Supabase misconfigured (${config.error}): ROA_SUPABASE_URL and ROA_SUPABASE_SERVICE_ROLE_KEY are required `
+      + '(or the legacy SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)',
+    );
   }
-  cachedClient = createClient(url, serviceKey, {
+  cachedClient = createClient(config.url, config.serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
   });
   return cachedClient;

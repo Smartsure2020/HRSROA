@@ -17,11 +17,11 @@ export default async function handler(req, res) {
   const { submissionId } = req.body ?? {};
   if (!isSubmissionId(submissionId)) return res.status(400).json({ error: 'Invalid submissionId' });
 
-  const row = await loadSubmissionForBroker(submissionId, user.id);
+  const row = await loadSubmissionForBroker(submissionId, user);
   if (!row) return res.status(404).json({ error: 'not_found' });
 
   try {
-    const result = await reconcileSigningSubmission({ submissionId, row, brokerUserId: user.id });
+    const result = await reconcileSigningSubmission({ submissionId, row, broker: user });
     return res.status(200).json({
       ok: true,
       provider: result.provider,
