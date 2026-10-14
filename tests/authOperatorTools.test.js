@@ -15,7 +15,6 @@ import {
   maskEmail,
   reconcileBrokerIdentities,
 } from '../scripts/lib/brokerReconciliation.mjs';
-import { BROKER_EMAIL_MAP } from '../src/lib/brokerDirectory.js';
 
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
 const jwtKey = (claims) => `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64(claims)}.${Buffer.from('sig').toString('base64url')}`;
@@ -180,16 +179,27 @@ describe('AUTH project settings (live check interpretation)', () => {
 });
 
 // ---- reconciliation ------------------------------------------------------
+// Entirely synthetic: a fabricated 13-broker directory on a reserved test domain, so no
+// real person, mailbox or account status appears anywhere in this fixture.
 
-const MISSING_IN_CRM = ['Andrew Penney', 'Charmaine Brogden', 'Jaryd Browne', 'Timothy Simpson'];
-const emailOf = (name) => BROKER_EMAIL_MAP[name];
+const SYNTHETIC_DIRECTORY = Object.fromEntries(
+  Array.from({ length: 13 }, (_, i) => {
+    const n = String(i + 1).padStart(2, '0');
+    return [`Test Broker ${n}`, `broker${n}@hrs.test`];
+  }),
+);
+const brokerNames = Object.keys(SYNTHETIC_DIRECTORY);
+const MISSING_IN_CRM = brokerNames.slice(-4); // a fabricated "4 without a CRM account"
+const [B1, B2, B3, B4, B5, B6] = brokerNames;
+const emailOf = (name) => SYNTHETIC_DIRECTORY[name];
+const reconcile = (input) => reconcileBrokerIdentities({ directory: SYNTHETIC_DIRECTORY, ...input });
 
 function crmUsersFor(names, extra = {}) {
   return names.map((name, i) => ({
     id: `crm-${i}`, email: emailOf(name), email_confirmed_at: '2026-01-01T00:00:00Z', banned_until: null, is_anonymous: false, ...extra,
   }));
 }
-const withCrm = Object.keys(BROKER_EMAIL_MAP).filter((name) => !MISSING_IN_CRM.includes(name));
+const withCrm = brokerNames.filter((name) => !MISSING_IN_CRM.includes(name));
 
 function rowsFor(name, count, legacyId) {
   return Array.from({ length: count }, (_, i) => ({
@@ -198,15 +208,15 @@ function rowsFor(name, count, legacyId) {
 }
 
 describe('broker identity reconciliation', () => {
-  it('reproduces the briefed picture: 13 approved brokers, 9 with CRM accounts, 4 without', () => {
-    const result = reconcileBrokerIdentities({
+  it('reconciles a fabricated 13-broker directory: 9 with CRM accounts, 4 without', () => {
+    const result = reconcile({
       crmUsers: [
         ...crmUsersFor(withCrm),
-        { id: 'crm-staff', email: 'accounts@hrsinsurance.co.za', email_confirmed_at: '2026-01-01T00:00:00Z' },
+        { id: 'crm-staff', email: 'accounts@hrs.test', email_confirmed_at: '2026-01-01T00:00:00Z' },
       ],
       roaRows: [
-        ...rowsFor('Werner Joubert', 5, 'legacy-werner'),
-        ...rowsFor('Timothy Simpson', 3, 'legacy-timothy'),
+        ...rowsFor(B1, 5, 'legacy-b1'),
+        ...rowsFor(MISSING_IN_CRM[0], 3, 'legacy-missing'),
       ],
     });
 
@@ -225,48 +235,48 @@ describe('broker identity reconciliation', () => {
 
   it('matches case-insensitively and counts several historic ids for one broker', () => {
     const rows = [
-      { id: 'a', advisor_user_id: 'legacy-1', advisor_email: 'WERNER@HRSInsurance.co.za' },
-      { id: 'b', advisor_user_id: 'legacy-2', advisor_email: 'werner@hrsinsurance.co.za' },
+      { id: 'a', advisor_user_id: 'legacy-1', advisor_email: emailOf(B1).toUpperCase() },
+      { id: 'b', advisor_user_id: 'legacy-2', advisor_email: emailOf(B1) },
     ];
-    const result = reconcileBrokerIdentities({ crmUsers: crmUsersFor(withCrm), roaRows: rows });
-    const werner = result.perBroker.find((b) => b.name === 'Werner Joubert');
-    expect(werner).toMatchObject({ submissions: 2, distinctLegacyIds: 2, crmStatus: 'ready' });
+    const result = reconcile({ crmUsers: crmUsersFor(withCrm), roaRows: rows });
+    const broker = result.perBroker.find((b) => b.name === B1);
+    expect(broker).toMatchObject({ submissions: 2, distinctLegacyIds: 2, crmStatus: 'ready' });
     expect(result.needsAttention).toBe(false);
   });
 
   it('classifies unconfirmed, banned, anonymous and duplicate CRM accounts without guessing', () => {
     const now = Date.parse('2026-10-14T00:00:00Z');
     const users = [
-      { id: 'u1', email: emailOf('Aedan Doubell'), email_confirmed_at: null },
-      { id: 'u2', email: emailOf('Daniel Pottier'), email_confirmed_at: '2026-01-01', banned_until: '2026-12-01T00:00:00Z' },
-      { id: 'u3', email: emailOf('Brian Hodges'), email_confirmed_at: '2026-01-01', is_anonymous: true },
-      { id: 'u4', email: emailOf('Faizel Patel'), email_confirmed_at: '2026-01-01' },
-      { id: 'u5', email: emailOf('Faizel Patel').toUpperCase(), email_confirmed_at: '2026-01-01' },
-      { id: 'u6', email: emailOf('Steve Pickstock'), email_confirmed_at: '2026-01-01', banned_until: '2025-01-01T00:00:00Z' },
+      { id: 'u1', email: emailOf(B2), email_confirmed_at: null },
+      { id: 'u2', email: emailOf(B3), email_confirmed_at: '2026-01-01', banned_until: '2026-12-01T00:00:00Z' },
+      { id: 'u3', email: emailOf(B4), email_confirmed_at: '2026-01-01', is_anonymous: true },
+      { id: 'u4', email: emailOf(B5), email_confirmed_at: '2026-01-01' },
+      { id: 'u5', email: emailOf(B5).toUpperCase(), email_confirmed_at: '2026-01-01' },
+      { id: 'u6', email: emailOf(B6), email_confirmed_at: '2026-01-01', banned_until: '2025-01-01T00:00:00Z' },
     ];
-    const result = reconcileBrokerIdentities({ crmUsers: users, roaRows: [], now });
+    const result = reconcile({ crmUsers: users, roaRows: [], now });
 
-    expect(result.accounts.unconfirmed).toEqual(['Aedan Doubell']);
-    expect(result.accounts.banned).toEqual(['Daniel Pottier']);
-    expect(result.accounts.anonymous).toEqual(['Brian Hodges']);
-    expect(result.accounts.duplicate).toEqual(['Faizel Patel']);
-    expect(result.accounts.ready).toEqual(['Steve Pickstock']); // lapsed ban no longer blocks
+    expect(result.accounts.unconfirmed).toEqual([B2]);
+    expect(result.accounts.banned).toEqual([B3]);
+    expect(result.accounts.anonymous).toEqual([B4]);
+    expect(result.accounts.duplicate).toEqual([B5]);
+    expect(result.accounts.ready).toEqual([B6]); // lapsed ban no longer blocks
     expect(result.needsAttention).toBe(true); // duplicates need a human decision
   });
 
   it('surfaces ownership exceptions instead of repairing them', () => {
     const rows = [
-      ...rowsFor('Werner Joubert', 1, 'legacy-werner'),
+      ...rowsFor(B1, 1, 'legacy-b1'),
       { id: 'foreign', advisor_user_id: 'legacy-x', advisor_email: 'someone.else@example.com' },
       { id: 'blank', advisor_user_id: 'legacy-y', advisor_email: '' },
       { id: 'nulled', advisor_user_id: 'legacy-z', advisor_email: null },
       // one historic id recorded under two different approved emails
-      { id: 'amb1', advisor_user_id: 'legacy-dup', advisor_email: emailOf('Aedan Doubell') },
-      { id: 'amb2', advisor_user_id: 'legacy-dup', advisor_email: emailOf('Daniel Pottier') },
-      // a row stamped with a CRM user id whose email is someone else's
-      { id: 'conflict', advisor_user_id: 'crm-0', advisor_email: emailOf('Werner Joubert') },
+      { id: 'amb1', advisor_user_id: 'legacy-dup', advisor_email: emailOf(B2) },
+      { id: 'amb2', advisor_user_id: 'legacy-dup', advisor_email: emailOf(B3) },
+      // a row stamped with a CRM user id (crm-0 is B1's account) whose email is someone else's
+      { id: 'conflict', advisor_user_id: 'crm-0', advisor_email: emailOf(B2) },
     ];
-    const result = reconcileBrokerIdentities({ crmUsers: crmUsersFor(withCrm), roaRows: rows });
+    const result = reconcile({ crmUsers: crmUsersFor(withCrm), roaRows: rows });
 
     expect(result.summary.submissionsWithForeignOwner).toBe(1);
     expect(result.summary.submissionsWithMalformedOwner).toBe(2);
@@ -277,7 +287,7 @@ describe('broker identity reconciliation', () => {
 
   it('flags a directory with duplicate or invalid mailboxes', () => {
     const result = reconcileBrokerIdentities({
-      directory: { A: 'same@hrsinsurance.co.za', B: 'SAME@hrsinsurance.co.za', C: 'not an email' },
+      directory: { A: 'same@hrs.test', B: 'SAME@hrs.test', C: 'not an email' },
       crmUsers: [],
       roaRows: [],
     });
@@ -287,7 +297,7 @@ describe('broker identity reconciliation', () => {
   });
 
   it('prints aggregates and masked third-party addresses only', () => {
-    const report = formatReconciliation(reconcileBrokerIdentities({
+    const report = formatReconciliation(reconcile({
       crmUsers: crmUsersFor(withCrm),
       roaRows: [{ id: 'foreign', advisor_user_id: 'legacy-x', advisor_email: 'private.person@example.com' }],
     }));
@@ -298,7 +308,6 @@ describe('broker identity reconciliation', () => {
     expect(maskEmail('nonsense')).toBe('(unreadable)');
   });
 });
-
 describe('reconciliation script stays read-only and secret-safe', () => {
   const scriptUrl = new URL('../scripts/reconcile-broker-identities.mjs', import.meta.url);
   const code = readFileSync(scriptUrl, 'utf8').replace(/^\s*\/\/.*$/gm, '');

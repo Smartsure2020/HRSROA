@@ -36,7 +36,7 @@ Companion to [ROA_CRM_Auth_Integration.md](ROA_CRM_Auth_Integration.md). **Nothi
 `vercel env add <NAME> preview feat/roa-crm-auth` prompts for each value (don't pass values on the command line).
 
 **Config gate (no secrets printed):**
-`node scripts/check-auth-config.mjs --env-file <file with the variables above> --live --expect-auth-ref mgqelduyralkdbsbwqcu --expect-data-ref <staging-ref>` → expect `Result: OK` (a `WARN` on public sign-up is acceptable only until the CRM setting is changed).
+`node scripts/check-auth-config.mjs --env-file <file with the variables above> --live --expect-auth-ref mgqelduyralkdbsbwqcu --expect-data-ref <staging-ref>` → expect `Result: OK` (a `WARN` about public signup is tolerable for a preview run only; it must be cleared before Step B).
 
 **Deploy without pushing:** `vercel deploy` (no `--prod`) from the repo, with `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` set (both appear in `.vercel/project.json` after `vercel link` in any scratch directory — don't link inside the repo). Alternatively push the branch, which needs your explicit go-ahead.
 
