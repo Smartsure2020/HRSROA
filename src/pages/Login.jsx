@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { supabase } from '@/lib/supabaseClient';
+import { requestPasswordReset } from '@/lib/passwordRecovery';
+import { AUTH_NOTICES } from '@/lib/authSession';
 import logoUrl from '@/assets/hrs-logo.png';
 
 export default function Login() {
-  const { signIn } = useAuth();
+  const { signIn, authNotice, retryAuthorisation } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,14 +33,15 @@ export default function Login() {
     e.preventDefault();
     setResetLoading(true);
     setResetStatus('');
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-    setResetLoading(false);
-    if (resetError) {
-      setResetStatus(`error:${resetError.message}`);
-    } else {
+    try {
+      // Recovery runs against the CRM Supabase Auth project (same account and
+      // password as the CRM) and always returns to this app's /reset-password.
+      await requestPasswordReset(supabase, resetEmail, window.location.origin);
       setResetStatus('success');
+    } catch (resetError) {
+      setResetStatus(`error:${resetError.message}`);
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -49,7 +52,21 @@ export default function Login() {
       </div>
       <div className="bg-white/10 border border-white/20 rounded-2xl p-8 w-full max-w-sm">
         <h1 className="font-heading text-white text-xl text-center mb-1">Record of Advice</h1>
-        <p className="text-white/50 text-sm text-center mb-6">Sign in to continue</p>
+        <p className="text-white/50 text-sm text-center mb-6">Sign in with your HRS CRM email and password</p>
+        {authNotice && (
+          <div className="text-amber-300 text-xs bg-amber-300/10 rounded-lg px-3 py-2 mb-4" role="alert">
+            <p>{authNotice}</p>
+            {authNotice === AUTH_NOTICES.unverified && (
+              <button
+                type="button"
+                onClick={retryAuthorisation}
+                className="mt-1 underline underline-offset-2 text-amber-200 hover:text-white"
+              >
+                Check again
+              </button>
+            )}
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="text-white/70 text-xs mb-1 block">Email</label>

@@ -27,13 +27,13 @@ export default async function handler(req, res) {
   if (!user) return;
 
   try {
-    const rows = await listPendingSigningForBroker(user.id, { limit: BATCH_SIZE });
+    const rows = await listPendingSigningForBroker(user, { limit: BATCH_SIZE });
     const results = await mapWithConcurrency(rows, CONCURRENCY, async (row) => {
       try {
         const result = await reconcileSigningSubmission({
           submissionId: row.id,
           row,
-          brokerUserId: user.id,
+          broker: user,
         });
         return {
           submissionId: row.id,

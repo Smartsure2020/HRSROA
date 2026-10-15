@@ -1,0 +1,342 @@
+// Operator tooling for the CRM-auth cutover: the configuration preflight and the
+// broker-identity reconciliation. Fabricated data only — no real accounts, no network.
+
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import {
+  describeKey,
+  evaluateAuthEnvironment,
+  evaluateAuthSettings,
+} from '../scripts/lib/authPreflight.mjs';
+import {
+  formatReconciliation,
+  maskEmail,
+  reconcileBrokerIdentities,
+} from '../scripts/lib/brokerReconciliation.mjs';
+
+const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+const jwtKey = (claims) => `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64(claims)}.${Buffer.from('sig').toString('base64url')}`;
+
+const CRM_REF = 'mgqelduyralkdbsbwqcu';
+const ROA_REF = 'rylfshngbafldisqrhec';
+const crmAnon = jwtKey({ role: 'anon', ref: CRM_REF });
+const roaService = jwtKey({ role: 'service_role', ref: ROA_REF });
+
+function goodEnv(overrides = {}) {
+  return {
+    AUTH_SUPABASE_URL: `https://${CRM_REF}.supabase.co`,
+    AUTH_SUPABASE_ANON_KEY: crmAnon,
+    VITE_AUTH_SUPABASE_URL: `https://${CRM_REF}.supabase.co`,
+    VITE_AUTH_SUPABASE_ANON_KEY: crmAnon,
+    ROA_SUPABASE_URL: `https://${ROA_REF}.supabase.co`,
+    ROA_SUPABASE_SERVICE_ROLE_KEY: roaService,
+    CRM_INTEGRATION_SECRET: 'x'.repeat(40),
+    ...overrides,
+  };
+}
+const failing = (result) => result.checks.filter((c) => c.status === 'FAIL').map((c) => c.name);
+
+describe('config preflight', () => {
+  it('passes a correct cutover configuration', () => {
+    const result = evaluateAuthEnvironment(goodEnv(), { expectedAuthRef: CRM_REF, expectedDataRef: ROA_REF });
+    expect(result.ok).toBe(true);
+    expect(failing(result)).toEqual([]);
+  });
+
+  // The approved Step B: only the four AUTH variables are added; the legacy
+  // SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY keep feeding the ROA data client.
+  const stepBEnv = (overrides = {}) => {
+    const { ROA_SUPABASE_URL, ROA_SUPABASE_SERVICE_ROLE_KEY, ...rest } = goodEnv();
+    return {
+      ...rest,
+      SUPABASE_URL: ROA_SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY: ROA_SUPABASE_SERVICE_ROLE_KEY,
+      SUPABASE_ANON_KEY: jwtKey({ role: 'anon', ref: ROA_REF }),
+      VITE_SUPABASE_URL: ROA_SUPABASE_URL,
+      VITE_SUPABASE_ANON_KEY: jwtKey({ role: 'anon', ref: ROA_REF }),
+      ...overrides,
+    };
+  };
+
+  it('accepts the approved Step B shape: AUTH pair added, legacy variables still supplying the ROA data pair', () => {
+    const result = evaluateAuthEnvironment(stepBEnv(), { expectedAuthRef: CRM_REF, expectedDataRef: ROA_REF });
+    expect(failing(result)).toEqual([]);
+    expect(result.ok).toBe(true);
+    const data = result.checks.find((c) => c.name === 'ROA data pair');
+    expect(data.detail).toContain('via legacy SUPABASE_URL');
+  });
+
+  it('lets an explicit ROA_* pair take precedence over the legacy pair', () => {
+    const result = evaluateAuthEnvironment(
+      stepBEnv({ SUPABASE_URL: `https://${CRM_REF}.supabase.co`, SUPABASE_SERVICE_ROLE_KEY: jwtKey({ role: 'service_role', ref: CRM_REF }),
+        ROA_SUPABASE_URL: `https://${ROA_REF}.supabase.co`, ROA_SUPABASE_SERVICE_ROLE_KEY: roaService }),
+      { expectedDataRef: ROA_REF },
+    );
+    expect(failing(result)).toEqual([]);
+  });
+
+  it('fails if the legacy data variables have been repointed at the CRM project (the "swap two env vars" mistake)', () => {
+    const result = evaluateAuthEnvironment(
+      stepBEnv({ SUPABASE_URL: `https://${CRM_REF}.supabase.co`, SUPABASE_SERVICE_ROLE_KEY: jwtKey({ role: 'service_role', ref: CRM_REF }) }),
+      { expectedAuthRef: CRM_REF, expectedDataRef: ROA_REF },
+    );
+    expect(failing(result)).toEqual(expect.arrayContaining([
+      'DATA project is the expected ROA project',
+      'Auth and data are separate projects',
+    ]));
+    expect(result.ok).toBe(false);
+  });
+
+  it('fails when neither the ROA_* nor the legacy data pair is set, or the legacy pair is partial', () => {
+    const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ...none } = stepBEnv();
+    expect(failing(evaluateAuthEnvironment(none))).toContain('ROA data pair');
+    const partial = stepBEnv(); delete partial.SUPABASE_SERVICE_ROLE_KEY;
+    expect(failing(evaluateAuthEnvironment(partial))).toContain('ROA data pair');
+  });
+
+  it('fails when the browser AUTH pair is missing at Step B (the bundle would still authenticate against the old project)', () => {
+    const env = stepBEnv(); delete env.VITE_AUTH_SUPABASE_URL; delete env.VITE_AUTH_SUPABASE_ANON_KEY;
+    expect(failing(evaluateAuthEnvironment(env))).toContain('Browser AUTH pair');
+  });
+
+  it('fails when the browser and server point at different auth projects', () => {
+    const result = evaluateAuthEnvironment(goodEnv({ VITE_AUTH_SUPABASE_URL: `https://${ROA_REF}.supabase.co` }));
+    expect(failing(result)).toContain('Browser and server use the same AUTH project');
+  });
+
+  it('fails when the auth URL is paired with the other project\'s key', () => {
+    const result = evaluateAuthEnvironment(goodEnv({ AUTH_SUPABASE_ANON_KEY: jwtKey({ role: 'anon', ref: ROA_REF }) }));
+    expect(failing(result)).toContain('AUTH key belongs to the AUTH URL');
+  });
+
+  it('fails when a privileged key is used for token validation or exposed to the browser', () => {
+    expect(failing(evaluateAuthEnvironment(goodEnv({ AUTH_SUPABASE_ANON_KEY: jwtKey({ role: 'service_role', ref: CRM_REF }) }))))
+      .toContain('AUTH key is an anon (public) key');
+    expect(failing(evaluateAuthEnvironment(goodEnv({ VITE_ROA_SERVICE_ROLE_KEY: 'oops' }))))
+      .toContain('No privileged key exposed through a VITE_ variable');
+  });
+
+  it('fails when the data key is not the service-role key', () => {
+    const result = evaluateAuthEnvironment(goodEnv({ ROA_SUPABASE_SERVICE_ROLE_KEY: jwtKey({ role: 'anon', ref: ROA_REF }) }));
+    expect(failing(result)).toContain('DATA key is the service-role key');
+  });
+
+  it('fails a partial pair and a missing pair rather than silently mixing', () => {
+    const partial = evaluateAuthEnvironment(goodEnv({ AUTH_SUPABASE_ANON_KEY: undefined }));
+    expect(failing(partial)).toContain('Server AUTH pair');
+    const unset = evaluateAuthEnvironment({});
+    expect(failing(unset)).toEqual(expect.arrayContaining(['Server AUTH pair', 'Browser AUTH pair', 'ROA data pair']));
+  });
+
+  it('treats auth == data as a failure for cutover and a warning for rollback validation', () => {
+    const same = goodEnv({ AUTH_SUPABASE_URL: `https://${ROA_REF}.supabase.co`, AUTH_SUPABASE_ANON_KEY: jwtKey({ role: 'anon', ref: ROA_REF }),
+      VITE_AUTH_SUPABASE_URL: `https://${ROA_REF}.supabase.co`, VITE_AUTH_SUPABASE_ANON_KEY: jwtKey({ role: 'anon', ref: ROA_REF }) });
+    expect(failing(evaluateAuthEnvironment(same))).toContain('Auth and data are separate projects');
+    const rollback = evaluateAuthEnvironment(same, { requireSplit: false });
+    expect(rollback.checks.find((c) => c.name === 'Auth and data are separate projects').status).toBe('WARN');
+  });
+
+  it('flags the CRM integration secret being reused as an auth/data key', () => {
+    const result = evaluateAuthEnvironment(goodEnv({ CRM_INTEGRATION_SECRET: crmAnon }));
+    expect(failing(result)).toContain('CRM integration secret is distinct from auth/data keys');
+  });
+
+  it('never echoes key material', () => {
+    const output = JSON.stringify(evaluateAuthEnvironment(goodEnv()));
+    expect(output).not.toContain(crmAnon);
+    expect(output).not.toContain(roaService);
+  });
+
+  it('classifies key formats without verifying them', () => {
+    expect(describeKey(crmAnon)).toEqual({ kind: 'jwt', role: 'anon', ref: CRM_REF });
+    expect(describeKey('sb_publishable_abc').kind).toBe('publishable');
+    expect(describeKey('sb_secret_abc').kind).toBe('secret');
+    expect(describeKey('')).toEqual({ kind: 'missing' });
+    expect(describeKey('garbage').kind).toBe('unknown');
+  });
+});
+
+describe('AUTH project settings (live check interpretation)', () => {
+  it('passes only when email confirmation is required; warns while public sign-up is open', () => {
+    const open = evaluateAuthSettings({ mailer_autoconfirm: false, disable_signup: false });
+    expect(open.ok).toBe(true);
+    expect(open.checks.find((c) => c.name === 'Public sign-up is disabled').status).toBe('WARN');
+
+    expect(evaluateAuthSettings({ mailer_autoconfirm: false, disable_signup: true }).checks.every((c) => c.status === 'PASS')).toBe(true);
+  });
+
+  it('fails when autoconfirm is on — an approved broker\'s address could then be registered by anyone', () => {
+    const result = evaluateAuthSettings({ mailer_autoconfirm: true, disable_signup: false });
+    expect(result.ok).toBe(false);
+    expect(failing(result)).toContain('Email confirmation is required (autoconfirm off)');
+  });
+
+  it('fails when settings are unreadable', () => {
+    expect(evaluateAuthSettings(null).ok).toBe(false);
+  });
+});
+
+// ---- reconciliation ------------------------------------------------------
+// Entirely synthetic: a fabricated 13-broker directory on a reserved test domain, so no
+// real person, mailbox or account status appears anywhere in this fixture.
+
+const SYNTHETIC_DIRECTORY = Object.fromEntries(
+  Array.from({ length: 13 }, (_, i) => {
+    const n = String(i + 1).padStart(2, '0');
+    return [`Test Broker ${n}`, `broker${n}@hrs.test`];
+  }),
+);
+const brokerNames = Object.keys(SYNTHETIC_DIRECTORY);
+const MISSING_IN_CRM = brokerNames.slice(-4); // a fabricated "4 without a CRM account"
+const [B1, B2, B3, B4, B5, B6] = brokerNames;
+const emailOf = (name) => SYNTHETIC_DIRECTORY[name];
+const reconcile = (input) => reconcileBrokerIdentities({ directory: SYNTHETIC_DIRECTORY, ...input });
+
+function crmUsersFor(names, extra = {}) {
+  return names.map((name, i) => ({
+    id: `crm-${i}`, email: emailOf(name), email_confirmed_at: '2026-01-01T00:00:00Z', banned_until: null, is_anonymous: false, ...extra,
+  }));
+}
+const withCrm = brokerNames.filter((name) => !MISSING_IN_CRM.includes(name));
+
+function rowsFor(name, count, legacyId) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `ROA-${name}-${i}`, advisor_user_id: legacyId, advisor_email: emailOf(name),
+  }));
+}
+
+describe('broker identity reconciliation', () => {
+  it('reconciles a fabricated 13-broker directory: 9 with CRM accounts, 4 without', () => {
+    const result = reconcile({
+      crmUsers: [
+        ...crmUsersFor(withCrm),
+        { id: 'crm-staff', email: 'accounts@hrs.test', email_confirmed_at: '2026-01-01T00:00:00Z' },
+      ],
+      roaRows: [
+        ...rowsFor(B1, 5, 'legacy-b1'),
+        ...rowsFor(MISSING_IN_CRM[0], 3, 'legacy-missing'),
+      ],
+    });
+
+    expect(result.summary).toMatchObject({
+      directoryBrokers: 13,
+      crmAccountsReady: 9,
+      crmAccountsMissing: 4,
+      crmAccountsOutsideDirectory: 1,
+      submissionsTotal: 8,
+      submissionsReachableAtCutover: 5,
+      submissionsAwaitingCrmAccount: 3,
+    });
+    expect(result.accounts.missing.sort()).toEqual([...MISSING_IN_CRM].sort());
+    expect(result.needsAttention).toBe(false); // missing accounts delay access; nothing is lost
+  });
+
+  it('matches case-insensitively and counts several historic ids for one broker', () => {
+    const rows = [
+      { id: 'a', advisor_user_id: 'legacy-1', advisor_email: emailOf(B1).toUpperCase() },
+      { id: 'b', advisor_user_id: 'legacy-2', advisor_email: emailOf(B1) },
+    ];
+    const result = reconcile({ crmUsers: crmUsersFor(withCrm), roaRows: rows });
+    const broker = result.perBroker.find((b) => b.name === B1);
+    expect(broker).toMatchObject({ submissions: 2, distinctLegacyIds: 2, crmStatus: 'ready' });
+    expect(result.needsAttention).toBe(false);
+  });
+
+  it('classifies unconfirmed, banned, anonymous and duplicate CRM accounts without guessing', () => {
+    const now = Date.parse('2026-10-14T00:00:00Z');
+    const users = [
+      { id: 'u1', email: emailOf(B2), email_confirmed_at: null },
+      { id: 'u2', email: emailOf(B3), email_confirmed_at: '2026-01-01', banned_until: '2026-12-01T00:00:00Z' },
+      { id: 'u3', email: emailOf(B4), email_confirmed_at: '2026-01-01', is_anonymous: true },
+      { id: 'u4', email: emailOf(B5), email_confirmed_at: '2026-01-01' },
+      { id: 'u5', email: emailOf(B5).toUpperCase(), email_confirmed_at: '2026-01-01' },
+      { id: 'u6', email: emailOf(B6), email_confirmed_at: '2026-01-01', banned_until: '2025-01-01T00:00:00Z' },
+    ];
+    const result = reconcile({ crmUsers: users, roaRows: [], now });
+
+    expect(result.accounts.unconfirmed).toEqual([B2]);
+    expect(result.accounts.banned).toEqual([B3]);
+    expect(result.accounts.anonymous).toEqual([B4]);
+    expect(result.accounts.duplicate).toEqual([B5]);
+    expect(result.accounts.ready).toEqual([B6]); // lapsed ban no longer blocks
+    expect(result.needsAttention).toBe(true); // duplicates need a human decision
+  });
+
+  it('surfaces ownership exceptions instead of repairing them', () => {
+    const rows = [
+      ...rowsFor(B1, 1, 'legacy-b1'),
+      { id: 'foreign', advisor_user_id: 'legacy-x', advisor_email: 'someone.else@example.com' },
+      { id: 'blank', advisor_user_id: 'legacy-y', advisor_email: '' },
+      { id: 'nulled', advisor_user_id: 'legacy-z', advisor_email: null },
+      // one historic id recorded under two different approved emails
+      { id: 'amb1', advisor_user_id: 'legacy-dup', advisor_email: emailOf(B2) },
+      { id: 'amb2', advisor_user_id: 'legacy-dup', advisor_email: emailOf(B3) },
+      // a row stamped with a CRM user id (crm-0 is B1's account) whose email is someone else's
+      { id: 'conflict', advisor_user_id: 'crm-0', advisor_email: emailOf(B2) },
+    ];
+    const result = reconcile({ crmUsers: crmUsersFor(withCrm), roaRows: rows });
+
+    expect(result.summary.submissionsWithForeignOwner).toBe(1);
+    expect(result.summary.submissionsWithMalformedOwner).toBe(2);
+    expect(result.exceptions.ambiguousLegacyIds).toHaveLength(1);
+    expect(result.exceptions.idEmailConflicts.map((c) => c.rowId)).toEqual(['conflict']);
+    expect(result.needsAttention).toBe(true);
+  });
+
+  it('flags a directory with duplicate or invalid mailboxes', () => {
+    const result = reconcileBrokerIdentities({
+      directory: { A: 'same@hrs.test', B: 'SAME@hrs.test', C: 'not an email' },
+      crmUsers: [],
+      roaRows: [],
+    });
+    expect(result.exceptions.directoryIssues.map((i) => i.issue).sort()).toEqual(['duplicate_email', 'invalid_email']);
+    expect(result.summary.directoryBrokers).toBe(1);
+    expect(result.needsAttention).toBe(true);
+  });
+
+  it('prints aggregates and masked third-party addresses only', () => {
+    const report = formatReconciliation(reconcile({
+      crmUsers: crmUsersFor(withCrm),
+      roaRows: [{ id: 'foreign', advisor_user_id: 'legacy-x', advisor_email: 'private.person@example.com' }],
+    }));
+    expect(report).toContain('p***@example.com');
+    expect(report).not.toContain('private.person');
+    expect(report).toContain('Exceptions needing a decision');
+    expect(maskEmail('jane.doe@x.co')).toBe('j***@x.co');
+    expect(maskEmail('nonsense')).toBe('(unreadable)');
+  });
+});
+describe('reconciliation script stays read-only and secret-safe', () => {
+  const scriptUrl = new URL('../scripts/reconcile-broker-identities.mjs', import.meta.url);
+  const code = readFileSync(scriptUrl, 'utf8').replace(/^\s*\/\/.*$/gm, '');
+
+  it('can only list CRM users and select three non-sensitive columns', () => {
+    expect([...code.matchAll(/auth\.admin\.(\w+)/g)].map((m) => m[1])).toEqual(['listUsers']);
+    expect(code).toContain(".select('id,advisor_user_id,advisor_email')");
+    for (const forbidden of [
+      '.insert(', '.update(', '.upsert(', '.delete(', '.rpc(', '.storage',
+      'createUser', 'deleteUser', 'inviteUserByEmail', 'generateLink', 'updateUserById', 'signOut',
+      'snapshot_json', 'bank',
+    ]) {
+      expect(code, forbidden).not.toContain(forbidden);
+    }
+  });
+
+  it('needs the four operator variables, exits before any network call without them, and refuses keys on the command line', () => {
+    const script = fileURLToPath(scriptUrl);
+    const run = (args) => spawnSync(process.execPath, [script, ...args], { env: {}, encoding: 'utf8' });
+
+    const missing = run([]);
+    expect(missing.status).toBe(2);
+    for (const name of ['RECON_CRM_SUPABASE_URL', 'RECON_CRM_SERVICE_ROLE_KEY', 'RECON_ROA_SUPABASE_URL', 'RECON_ROA_SERVICE_ROLE_KEY']) {
+      expect(missing.stderr).toContain(name);
+    }
+
+    const cli = run(['--service-key=super-secret-value']);
+    expect(cli.status).toBe(2);
+    expect(cli.stderr).toMatch(/environment, never on the command line/);
+    expect(`${cli.stdout}${cli.stderr}`).not.toContain('super-secret-value');
+  });
+});

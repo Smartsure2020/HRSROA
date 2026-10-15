@@ -19,6 +19,12 @@
 //   • external Resend / DocuSign fetch never called on any auth failure
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { makeTestJwt } from './testUtils/testJwt.js';
+
+// Structurally valid (unsigned) access token for subject "user-1". The Auth service
+// response is mocked, so the signature segment is only a placeholder.
+const GOOD_TOKEN = makeTestJwt({ sub: 'user-1' });
+const BEARER = `Bearer ${GOOD_TOKEN}`;
 
 // The mock queue lets each test push the next `getUser` response before it
 // calls the handler. This keeps the mock deterministic across handler calls.
@@ -70,7 +76,7 @@ function mockRes() {
 
 function validSupabaseUser(email) {
   return {
-    data: { user: { id: `user-${email}`, email } },
+    data: { user: { id: 'user-1', email, email_confirmed_at: '2026-01-01T00:00:00.000Z' } },
     error: null,
   };
 }
@@ -103,45 +109,45 @@ afterEach(() => {
 describe('authenticate() — Supabase Auth token verification', () => {
   it('rejects a missing Authorization header (401 missing_token)', async () => {
     const result = await authenticate({ headers: {} });
-    expect(result).toEqual({ ok: false, error: AUTH_ERROR.MISSING_TOKEN, status: 401 });
+    expect(result).toMatchObject({ ok: false, error: AUTH_ERROR.MISSING_TOKEN, status: 401 });
   });
 
   it('rejects a malformed Authorization header (401)', async () => {
     const result = await authenticate({ headers: { authorization: 'not-a-bearer' } });
-    expect(result).toEqual({ ok: false, error: AUTH_ERROR.MISSING_TOKEN, status: 401 });
+    expect(result).toMatchObject({ ok: false, error: AUTH_ERROR.MISSING_TOKEN, status: 401 });
   });
 
   it('returns server_misconfigured (500) when SUPABASE_URL is missing', async () => {
     delete process.env.SUPABASE_URL;
-    const result = await authenticate({ headers: { authorization: 'Bearer whatever' } });
-    expect(result).toEqual({ ok: false, error: AUTH_ERROR.SERVER_MISCONFIGURED, status: 500 });
+    const result = await authenticate({ headers: { authorization: BEARER } });
+    expect(result).toMatchObject({ ok: false, error: AUTH_ERROR.SERVER_MISCONFIGURED, status: 500 });
   });
 
   it('returns server_misconfigured (500) when SUPABASE_ANON_KEY is missing', async () => {
     delete process.env.SUPABASE_ANON_KEY;
-    const result = await authenticate({ headers: { authorization: 'Bearer whatever' } });
-    expect(result).toEqual({ ok: false, error: AUTH_ERROR.SERVER_MISCONFIGURED, status: 500 });
+    const result = await authenticate({ headers: { authorization: BEARER } });
+    expect(result).toMatchObject({ ok: false, error: AUTH_ERROR.SERVER_MISCONFIGURED, status: 500 });
   });
 
   it('rejects a token Supabase Auth says is invalid (401)', async () => {
     pushGetUserResponse(invalidTokenResponse);
-    const result = await authenticate({ headers: { authorization: 'Bearer garbage' } });
-    expect(result).toEqual({ ok: false, error: AUTH_ERROR.INVALID_TOKEN, status: 401 });
+    const result = await authenticate({ headers: { authorization: BEARER } });
+    expect(result).toMatchObject({ ok: false, error: AUTH_ERROR.INVALID_TOKEN, status: 401 });
   });
 
   it('fails closed (500 auth_service_error) when Supabase Auth throws', async () => {
     pushGetUserResponse({ throw: 'ECONNRESET' });
-    const result = await authenticate({ headers: { authorization: 'Bearer good-shape' } });
-    expect(result).toEqual({ ok: false, error: AUTH_ERROR.AUTH_SERVICE_ERROR, status: 500 });
+    const result = await authenticate({ headers: { authorization: BEARER } });
+    expect(result).toMatchObject({ ok: false, error: AUTH_ERROR.AUTH_SERVICE_ERROR, status: 500 });
   });
 
   it('accepts a valid Supabase user (returns id + email)', async () => {
     pushGetUserResponse(validSupabaseUser('andrew@hrsinsurance.co.za'));
-    const result = await authenticate({ headers: { authorization: 'Bearer good' } });
+    const result = await authenticate({ headers: { authorization: BEARER } });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.user.email).toBe('andrew@hrsinsurance.co.za');
-      expect(result.user.id).toBe('user-andrew@hrsinsurance.co.za');
+      expect(result.user.id).toBe('user-1');
     }
   });
 });
@@ -150,7 +156,7 @@ describe('requireAuthenticatedBroker() — HRS-broker membership', () => {
   it('rejects an authenticated but non-broker email (403)', async () => {
     pushGetUserResponse(validSupabaseUser('stranger@example.com'));
     const res = mockRes();
-    const user = await requireAuthenticatedBroker({ headers: { authorization: 'Bearer good' } }, res);
+    const user = await requireAuthenticatedBroker({ headers: { authorization: BEARER } }, res);
     expect(user).toBeNull();
     expect(res.statusCode).toBe(403);
     expect(res.body).toEqual({ error: 'not_an_hrs_broker' });
@@ -159,7 +165,7 @@ describe('requireAuthenticatedBroker() — HRS-broker membership', () => {
   it('accepts a known HRS broker (case-insensitive)', async () => {
     pushGetUserResponse(validSupabaseUser('ANDREW@hrsinsurance.co.za'));
     const res = mockRes();
-    const user = await requireAuthenticatedBroker({ headers: { authorization: 'Bearer good' } }, res);
+    const user = await requireAuthenticatedBroker({ headers: { authorization: BEARER } }, res);
     expect(user).not.toBeNull();
     expect(user.email).toBe('ANDREW@hrsinsurance.co.za');
     expect(res.statusCode).toBeNull();
@@ -181,7 +187,7 @@ describe('/api/send-email — rejects unauthenticated callers before touching Re
     pushGetUserResponse(invalidTokenResponse);
     const res = mockRes();
     await sendEmail(
-      { method: 'POST', headers: { authorization: 'Bearer garbage' }, body: { to: 'x@y', subject: 's', body: 'b' } },
+      { method: 'POST', headers: { authorization: BEARER }, body: { to: 'x@y', subject: 's', body: 'b' } },
       res,
     );
     expect(res.statusCode).toBe(401);
@@ -192,7 +198,7 @@ describe('/api/send-email — rejects unauthenticated callers before touching Re
     pushGetUserResponse({ throw: 'ENETUNREACH' });
     const res = mockRes();
     await sendEmail(
-      { method: 'POST', headers: { authorization: 'Bearer good-shape' }, body: { to: 'x@y', subject: 's', body: 'b' } },
+      { method: 'POST', headers: { authorization: BEARER }, body: { to: 'x@y', subject: 's', body: 'b' } },
       res,
     );
     expect(res.statusCode).toBe(500);
@@ -209,7 +215,7 @@ describe('/api/send-email — rejects unauthenticated callers before touching Re
     await sendEmail(
       {
         method: 'POST',
-        headers: { authorization: 'Bearer good' },
+        headers: { authorization: BEARER },
         body: { to: 'andrew@hrsinsurance.co.za', subject: 's', body: 'b' },
       },
       res,
@@ -242,7 +248,7 @@ describe('/api/send-for-signature — rejects unauthenticated callers before tou
     pushGetUserResponse(invalidTokenResponse);
     const res = mockRes();
     await sendForSignature(
-      { method: 'POST', headers: { authorization: 'Bearer bad' }, body: validPayload },
+      { method: 'POST', headers: { authorization: BEARER }, body: validPayload },
       res,
     );
     expect(res.statusCode).toBe(401);
@@ -253,7 +259,7 @@ describe('/api/send-for-signature — rejects unauthenticated callers before tou
     pushGetUserResponse(validSupabaseUser('stranger@example.com'));
     const res = mockRes();
     await sendForSignature(
-      { method: 'POST', headers: { authorization: 'Bearer good' }, body: validPayload },
+      { method: 'POST', headers: { authorization: BEARER }, body: validPayload },
       res,
     );
     expect(res.statusCode).toBe(403);
@@ -268,7 +274,7 @@ describe('/api/send-for-signature — rejects unauthenticated callers before tou
     pushGetUserResponse(validSupabaseUser('andrew@hrsinsurance.co.za'));
     const res = mockRes();
     await sendForSignature(
-      { method: 'POST', headers: { authorization: 'Bearer good' }, body: validPayload },
+      { method: 'POST', headers: { authorization: BEARER }, body: validPayload },
       res,
     );
     expect(res.statusCode).toBe(410);

@@ -10,6 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeMockSupabase } from './testUtils/mockSupabase.js';
+import { TEST_TOKENS } from './testUtils/testJwt.js';
 
 const mock = makeMockSupabase();
 vi.mock('@supabase/supabase-js', () => ({
@@ -47,8 +48,8 @@ beforeEach(() => {
   _resetServerSupabaseForTests();
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(console, 'log').mockImplementation(() => {});
-  mock.fixtures.addAuthUser('token-andrew', { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
-  mock.fixtures.addAuthUser('token-werner', { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.andrew, { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.werner, { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
 });
 
 afterEach(() => {
@@ -57,7 +58,7 @@ afterEach(() => {
   Object.assign(process.env, originalEnv);
 });
 
-async function seedSubmission(token = 'token-andrew') {
+async function seedSubmission(token = TEST_TOKENS.andrew) {
   const submissionId = generateSubmissionId();
   const res = mockRes();
   await createHandler(
@@ -99,7 +100,7 @@ async function send(token, submissionId) {
 describe('send-for-signature — idempotency', () => {
   it('first send creates an envelope', async () => {
     const id = await seedSubmission();
-    const r1 = await send('token-andrew', id);
+    const r1 = await send(TEST_TOKENS.andrew, id);
     expect(r1.statusCode).toBe(200);
     expect(r1.body.envelopeId).toMatch(/^dev-mock-/);
     expect(r1.body.status).toBe('sent');
@@ -108,8 +109,8 @@ describe('send-for-signature — idempotency', () => {
 
   it('second send for the same submission returns the SAME envelope', async () => {
     const id = await seedSubmission();
-    const r1 = await send('token-andrew', id);
-    const r2 = await send('token-andrew', id);
+    const r1 = await send(TEST_TOKENS.andrew, id);
+    const r2 = await send(TEST_TOKENS.andrew, id);
     expect(r1.statusCode).toBe(200);
     expect(r2.statusCode).toBe(200);
     expect(r2.body.alreadySent).toBe(true);
@@ -123,21 +124,21 @@ describe('send-for-signature — idempotency', () => {
   it('different submissions produce different envelopes', async () => {
     const a = await seedSubmission();
     const b = await seedSubmission();
-    const ra = await send('token-andrew', a);
-    const rb = await send('token-andrew', b);
+    const ra = await send(TEST_TOKENS.andrew, a);
+    const rb = await send(TEST_TOKENS.andrew, b);
     expect(ra.body.envelopeId).not.toBe(rb.body.envelopeId);
   });
 
   it('cross-broker send → 404 (does not touch the submission)', async () => {
-    const id = await seedSubmission('token-andrew');
-    const r = await send('token-werner', id);
+    const id = await seedSubmission(TEST_TOKENS.andrew);
+    const r = await send(TEST_TOKENS.werner, id);
     expect(r.statusCode).toBe(404);
     const row = mock.fixtures.getRow(id);
     expect(row.docusign_envelope_id).toBeUndefined();
   });
 
   it('unknown submissionId → 404', async () => {
-    const r = await send('token-andrew', 'ROA-11111111-2222-3333-4444-555555555555');
+    const r = await send(TEST_TOKENS.andrew, 'ROA-11111111-2222-3333-4444-555555555555');
     expect(r.statusCode).toBe(404);
   });
 

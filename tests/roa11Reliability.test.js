@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeMockSupabase } from './testUtils/mockSupabase.js';
+import { TEST_TOKENS } from './testUtils/testJwt.js';
 
 const mock = makeMockSupabase();
 vi.mock('@supabase/supabase-js', () => ({ createClient: () => mock.client }));
@@ -42,7 +43,7 @@ beforeEach(() => {
   process.env.DOCUSIGN_USER_ID = 'user-test';
   process.env.DOCUSIGN_ACCOUNT_ID = 'acct-test';
   _resetServerSupabaseForTests();
-  mock.fixtures.addAuthUser('token-andrew', { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.andrew, { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
   vi.spyOn(console, 'error').mockImplementation(() => {});
   script = [];
   vi.spyOn(global, 'fetch').mockImplementation(async (...args) => {
@@ -64,7 +65,7 @@ async function seed() {
   const r = res();
   await createHandler({
     method: 'POST',
-    headers: { authorization: 'Bearer token-andrew' },
+    headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
     body: {
       submissionId: id,
       roaType: 'Personal',
@@ -80,7 +81,7 @@ async function send(id) {
   const r = res();
   await sendHandler({
     method: 'POST',
-    headers: { authorization: 'Bearer token-andrew' },
+    headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
     body: { submissionId: id, signerName: 'Jane Doe', signerEmail: 'jane@example.com' },
   }, r);
   return r;
@@ -98,7 +99,7 @@ describe('ROA-1.1 DocuSign ambiguous-send reconciliation', () => {
     const r = res();
     await sendHandler({
       method: 'POST',
-      headers: { authorization: 'Bearer token-andrew' },
+      headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
       body: {
         submissionId: id,
         signerName: 'Attacker',

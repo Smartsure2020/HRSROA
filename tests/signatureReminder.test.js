@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeMockSupabase } from './testUtils/mockSupabase.js';
+import { TEST_TOKENS } from './testUtils/testJwt.js';
 import {
   REMINDER_COOLDOWN_MS,
   canOfferSignatureReminder,
@@ -63,7 +64,7 @@ async function seedSent() {
   const r = res();
   await createHandler({
     method: 'POST',
-    headers: { authorization: 'Bearer token-andrew' },
+    headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
     body: {
       submissionId,
       roaType: 'Personal',
@@ -80,14 +81,14 @@ async function seedSent() {
   fetchQueue.push(jsonResponse(envelope()));
   const sent = res();
   await sendHandler({
-    method: 'POST', headers: { authorization: 'Bearer token-andrew' }, body: { submissionId },
+    method: 'POST', headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` }, body: { submissionId },
   }, sent);
   expect(sent.statusCode).toBe(200);
   fetchCalls.length = 0;
   return submissionId;
 }
 
-async function remind(submissionId, token = 'token-andrew') {
+async function remind(submissionId, token = TEST_TOKENS.andrew) {
   const r = res();
   await reminderHandler({
     method: 'POST', headers: { authorization: `Bearer ${token}` }, body: { submissionId },
@@ -103,8 +104,8 @@ beforeEach(() => {
   process.env.DOCUMENSO_BASE_URL = 'https://sign.example.test';
   process.env.DOCUMENSO_API_TOKEN = 'api-test';
   _resetServerSupabaseForTests();
-  mock.fixtures.addAuthUser('token-andrew', { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
-  mock.fixtures.addAuthUser('token-werner', { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.andrew, { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.werner, { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
   fetchQueue = [];
   fetchCalls = [];
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -157,7 +158,7 @@ describe('Documenso signature reminder endpoint', () => {
 
     const again = res();
     await sendHandler({
-      method: 'POST', headers: { authorization: 'Bearer token-andrew' }, body: { submissionId: id },
+      method: 'POST', headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` }, body: { submissionId: id },
     }, again);
     expect(again.statusCode).toBe(200);
     expect(again.body).toMatchObject({ alreadySent: true, envelopeId: 'doc-env-1' });
@@ -210,7 +211,7 @@ describe('Documenso signature reminder endpoint', () => {
     const submissionId = generateSubmissionId();
     await createHandler({
       method: 'POST',
-      headers: { authorization: 'Bearer token-andrew' },
+      headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` },
       body: {
         submissionId, roaType: 'Personal',
         snapshot: { firstName: 'Jane', surname: 'Doe', email: 'jane@example.com' },
@@ -271,17 +272,17 @@ describe('Documenso signature reminder endpoint', () => {
 
   it('is broker-scoped and authenticated', async () => {
     const id = await seedSent();
-    const other = await remind(id, 'token-werner');
+    const other = await remind(id, TEST_TOKENS.werner);
     expect(other.statusCode).toBe(404);
     const anon = res();
     await reminderHandler({ method: 'POST', headers: {}, body: { submissionId: id } }, anon);
     expect(anon.statusCode).toBe(401);
     const wrongMethod = res();
-    await reminderHandler({ method: 'GET', headers: { authorization: 'Bearer token-andrew' } }, wrongMethod);
+    await reminderHandler({ method: 'GET', headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` } }, wrongMethod);
     expect(wrongMethod.statusCode).toBe(405);
     const invalid = res();
     await reminderHandler({
-      method: 'POST', headers: { authorization: 'Bearer token-andrew' }, body: { submissionId: 'nope' },
+      method: 'POST', headers: { authorization: `Bearer ${TEST_TOKENS.andrew}` }, body: { submissionId: 'nope' },
     }, invalid);
     expect(invalid.statusCode).toBe(400);
     expect(fetchCalls).toHaveLength(0);

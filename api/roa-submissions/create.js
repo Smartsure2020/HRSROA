@@ -27,6 +27,7 @@ import {
   loadSubmissionForBroker,
   StoragePaths,
 } from '../_lib/submissionRepo.js';
+import { ownsSubmission } from '../_lib/brokerIdentity.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
 
 const ROA_TYPES = ['Personal', 'Commercial'];
@@ -107,8 +108,10 @@ export default async function handler(req, res) {
     id: submissionId,
     roa_type: roaType,
     status: 'submitted',
+    // advisor_user_id is the CRM Auth user id. Ownership of this and every historic
+    // row is decided by the verified advisor_email (see _lib/brokerIdentity.js).
     advisor_user_id: user.id,
-    advisor_email: user.email,
+    advisor_email: user.normalizedEmail,
     client_reference: clientReferenceFor(roaType, snapshot),
     snapshot_json: snapshot,
     template_version: versions.templateVersion,
@@ -139,7 +142,7 @@ export default async function handler(req, res) {
     // matches; otherwise the reused submission id fails closed.
     let existing = null;
     try {
-      existing = await loadSubmissionForBroker(submissionId, user.id);
+      existing = await loadSubmissionForBroker(submissionId, user);
     } catch (reconcileErr) {
       console.error('roa-submissions/create: DB reconciliation failed', reconcileErr?.message);
     }
@@ -147,7 +150,7 @@ export default async function handler(req, res) {
     if (existing) {
       const sameSubmission =
         existing.roa_type === roaType
-        && existing.advisor_email === user.email
+        && ownsSubmission(existing, user)
         && existing.pdf_sha256 === pdfSha256
         && existing.pdf_storage_path === canonicalPath
         && existing.pdf_byte_length === bytes.length

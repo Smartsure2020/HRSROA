@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeMockSupabase } from './testUtils/mockSupabase.js';
+import { TEST_TOKENS } from './testUtils/testJwt.js';
 
 const mock = makeMockSupabase();
 vi.mock('@supabase/supabase-js', () => ({ createClient: () => mock.client }));
@@ -44,7 +45,7 @@ function pdfResponse(label) {
   };
 }
 
-async function seed(token = 'token-andrew') {
+async function seed(token = TEST_TOKENS.andrew) {
   const submissionId = generateSubmissionId();
   const response = res();
   const pdf = Buffer.from(`%PDF-1.4\n${submissionId}\n${'x'.repeat(600)}\n%%EOF`);
@@ -63,7 +64,7 @@ async function seed(token = 'token-andrew') {
   return submissionId;
 }
 
-async function reconcile(token = 'token-andrew') {
+async function reconcile(token = TEST_TOKENS.andrew) {
   const response = res();
   await reconcilePendingHandler({
     method: 'POST',
@@ -81,8 +82,8 @@ beforeEach(() => {
   process.env.DOCUMENSO_API_TOKEN = 'api-test';
   mock.fixtures.reset();
   _resetServerSupabaseForTests();
-  mock.fixtures.addAuthUser('token-andrew', { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
-  mock.fixtures.addAuthUser('token-werner', { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.andrew, { id: 'user-andrew', email: 'andrew@hrsinsurance.co.za' });
+  mock.fixtures.addAuthUser(TEST_TOKENS.werner, { id: 'user-werner', email: 'werner@hrsinsurance.co.za' });
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
@@ -138,12 +139,12 @@ describe('broker-scoped pending signing reconciliation', () => {
   });
 
   it('never exposes or reconciles another broker\'s submission', async () => {
-    const id = await seed('token-andrew');
+    const id = await seed(TEST_TOKENS.andrew);
     mock.fixtures.putRow(id, {
       status: 'awaiting_signature', signing_provider: 'documenso', signing_status: 'pending', signing_envelope_id: 'private-env',
     });
     const fetchSpy = vi.spyOn(global, 'fetch');
-    const response = await reconcile('token-werner');
+    const response = await reconcile(TEST_TOKENS.werner);
     expect(response.statusCode).toBe(200);
     expect(response.body.attempted).toBe(0);
     expect(fetchSpy).not.toHaveBeenCalled();

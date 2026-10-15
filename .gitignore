@@ -1,6 +1,8 @@
 #env
 .env
 .env.*
+# The template documents variable NAMES only (placeholders, no values) — keep it tracked.
+!.env.example
 
 # Logs
 /logs
