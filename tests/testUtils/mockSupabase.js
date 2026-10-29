@@ -6,12 +6,101 @@
 //
 // Never talks to the network. Storage objects are held as Node Buffers.
 
+import { isDeepStrictEqual } from 'node:util';
+
 export function makeMockSupabase() {
   /** @type {Map<string, object>} */ const rows = new Map();
   /** @type {Map<string, Buffer>} */ const storage = new Map();
   /** @type {Map<string, {user: {id: string, email: string}} | null>} */
   const authUsers = new Map();
   let nextInsertError = null;
+  let nextRpcError = null;
+  let dropNextRpcResponse = false;
+  const rpcCalls = [];
+  /** @type {Array<{ match: Function, run: Function, once: boolean }>} */
+  const updateHooks = [];
+  let uploadMode = null; // null | 'fail' | 'corrupt' — applies to the next storage upload only
+
+  // Deterministic interleaving for concurrency tests: a hook runs at the instant an UPDATE is
+  // about to be applied, i.e. after the caller made its decision from an earlier read and
+  // before its write lands. It may mutate rows (another request got there first) and/or return
+  // `{ error }` to fail the write (the process died or the database refused). The write then
+  // evaluates its filters against whatever the hook left behind, exactly like the real thing.
+  function runUpdateHooks(patch) {
+    for (let i = 0; i < updateHooks.length; i += 1) {
+      const hook = updateHooks[i];
+      if (!hook.match(patch)) continue;
+      if (hook.once) updateHooks.splice(i, 1);
+      const outcome = hook.run(patch);
+      if (outcome?.error) return outcome;
+      return null;
+    }
+    return null;
+  }
+
+  const rpcFailure = (code, message) => ({ data: null, error: { code, message } });
+
+  // Mirrors public.roa_create_revision (supabase/migrations/20261029_roa_amendments.sql): one
+  // atomic step that locks nothing in JS only because a JS test is single-threaded — the
+  // check-then-write below has no await in it, so two "concurrent" calls serialise exactly
+  // like the real function's FOR UPDATE. The SQL is verified against a real Postgres in
+  // tests/amendmentSql.test.js; this keeps the endpoint tests honest about its contract.
+  function emulateCreateRevision(a) {
+    const prev = rows.get(a.p_supersedes_id);
+    if (!prev || String(prev.advisor_email).toLowerCase() !== String(a.p_owner_email).toLowerCase()) {
+      return rpcFailure('RA001', 'roa_revision_predecessor_not_found');
+    }
+    const existing = rows.get(a.p_new_id);
+    if (existing) {
+      const same = existing.supersedes_submission_id === a.p_supersedes_id
+        && String(existing.advisor_email).toLowerCase() === String(a.p_owner_email).toLowerCase()
+        && existing.roa_type === a.p_roa_type
+        && existing.pdf_sha256 === a.p_pdf_sha256
+        && existing.pdf_storage_path === a.p_pdf_storage_path
+        && existing.pdf_byte_length === a.p_pdf_byte_length
+        && isDeepStrictEqual(existing.snapshot_json, a.p_snapshot)
+        && (existing.amendment_reason ?? null) === (a.p_amendment_reason ?? null)
+        && (existing.amendment_reason_detail ?? null) === (a.p_amendment_reason_detail ?? null);
+      if (!same) return rpcFailure('RA007', 'roa_revision_id_conflict');
+      if (!prev.superseded_by_submission_id) prev.superseded_by_submission_id = a.p_new_id; // heal a missing link
+      return { data: { ...existing }, error: null };
+    }
+    if (prev.superseded_by_submission_id) return rpcFailure('RA006', 'roa_revision_already_superseded');
+    if (prev.roa_type !== a.p_roa_type) return rpcFailure('RA003', 'roa_revision_type_mismatch');
+
+    const now = new Date().toISOString();
+    const created = {
+      id: a.p_new_id,
+      roa_type: a.p_roa_type,
+      status: 'submitted',
+      advisor_user_id: a.p_advisor_user_id,
+      advisor_email: String(a.p_owner_email).toLowerCase(),
+      client_reference: a.p_client_reference,
+      snapshot_json: a.p_snapshot,
+      template_version: a.p_template_version,
+      statutory_disclosure_version: a.p_statutory_disclosure_version,
+      broker_appointment_version: a.p_broker_appointment_version,
+      broker_fee_version: a.p_broker_fee_version,
+      letter_investigation_version: a.p_letter_investigation_version,
+      pdf_sha256: a.p_pdf_sha256,
+      pdf_storage_path: a.p_pdf_storage_path,
+      pdf_byte_length: a.p_pdf_byte_length,
+      revision_no: (prev.revision_no || 1) + 1,
+      parent_submission_id: prev.parent_submission_id || prev.id,
+      supersedes_submission_id: prev.id,
+      superseded_by_submission_id: null,
+      amendment_reason: a.p_amendment_reason,
+      amendment_reason_detail: a.p_amendment_reason_detail,
+      amended_by: String(a.p_amended_by).toLowerCase(),
+      amended_at: now,
+      submitted_at: now,
+      created_at: now,
+      updated_at: now,
+    };
+    rows.set(created.id, created);
+    prev.superseded_by_submission_id = created.id;
+    return { data: { ...created }, error: null };
+  }
 
   function respondUserForToken(token) {
     const entry = authUsers.get(token);
@@ -131,12 +220,16 @@ export function makeMockSupabase() {
           select() {
             return {
               async single() {
+                const intercepted = runUpdateHooks(patch);
+                if (intercepted) return { data: null, error: intercepted.error };
                 const matches = Array.from(rows.values()).filter((r) => whereMatches(r, filters));
                 if (matches.length !== 1) return { data: null, error: { message: `expected 1 row, got ${matches.length}` } };
                 Object.assign(matches[0], patch, { updated_at: new Date().toISOString() });
                 return { data: { ...matches[0] }, error: null };
               },
               async maybeSingle() {
+                const intercepted = runUpdateHooks(patch);
+                if (intercepted) return { data: null, error: intercepted.error };
                 const matches = Array.from(rows.values()).filter((r) => whereMatches(r, filters));
                 if (matches.length === 0) return { data: null, error: null };
                 Object.assign(matches[0], patch, { updated_at: new Date().toISOString() });
@@ -173,13 +266,35 @@ export function makeMockSupabase() {
       if (table !== 'roa_submissions') throw new Error(`Unexpected table ${table}`);
       return tableQuery();
     },
+    async rpc(name, args) {
+      rpcCalls.push({ name, args });
+      if (nextRpcError) {
+        const message = nextRpcError;
+        nextRpcError = null;
+        return rpcFailure('XX000', message);
+      }
+      if (name !== 'roa_create_revision') return rpcFailure('42883', `unknown function ${name}`);
+      const outcome = emulateCreateRevision(args);
+      if (outcome.error) return outcome;
+      if (dropNextRpcResponse) {
+        // The transaction committed but the caller never hears about it.
+        dropNextRpcResponse = false;
+        return rpcFailure('08006', 'connection lost');
+      }
+      return outcome;
+    },
     storage: {
       from(bucket) {
         if (bucket !== 'roa-pdfs') throw new Error(`Unexpected bucket ${bucket}`);
         return {
           async upload(path, bytes, _opts) {
             if (storage.has(path)) return { error: { message: `object exists at ${path}` } };
-            const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+            const mode = uploadMode;
+            uploadMode = null;
+            if (mode === 'fail') return { error: { message: 'injected storage failure' } };
+            let buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+            // 'corrupt': the object is stored, but is not the bytes that were sent.
+            if (mode === 'corrupt') buf = Buffer.concat([buf, Buffer.from('corrupted')]);
             storage.set(path, buf);
             return { error: null };
           },
@@ -217,11 +332,28 @@ export function makeMockSupabase() {
       // legacy ROA Auth id and a mixed-case advisor_email).
       insertRow: (row) => { rows.set(row.id, { ...row }); },
       failNextInsert: (message = 'injected insert failure') => { nextInsertError = message; },
+      // The next revision RPC fails before doing anything (a definite failure).
+      failNextRpc: (message = 'injected rpc failure') => { nextRpcError = message; },
+      // The next revision RPC COMMITS but its response is lost (an ambiguous failure).
+      loseNextRpcResponse: () => { dropNextRpcResponse = true; },
+      rpcCalls: () => rpcCalls.map((call) => ({ ...call })),
+      // Runs `run(patch)` just before the next UPDATE whose patch satisfies `match(patch)` is
+      // applied (see runUpdateHooks). Return `{ error: { message } }` to fail that write.
+      onUpdate: (match, run, { once = true } = {}) => { updateHooks.push({ match, run, once }); },
+      pendingUpdateHooks: () => updateHooks.length,
+      // The next storage upload fails outright / is silently stored with the wrong bytes.
+      failNextUpload: () => { uploadMode = 'fail'; },
+      corruptNextUpload: () => { uploadMode = 'corrupt'; },
       reset() {
+        updateHooks.length = 0;
+        uploadMode = null;
         rows.clear();
         storage.clear();
         authUsers.clear();
         nextInsertError = null;
+        nextRpcError = null;
+        dropNextRpcResponse = false;
+        rpcCalls.length = 0;
       },
     },
   };

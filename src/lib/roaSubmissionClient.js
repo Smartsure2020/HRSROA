@@ -16,7 +16,14 @@ async function postJson(url, body) {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error || `${url} failed (${res.status})`);
+  if (!res.ok) {
+    const err = new Error(data?.error || `${url} failed (${res.status})`);
+    // Machine-readable detail so a screen can react to a specific refusal (for example an
+    // amendment gate) without parsing the message.
+    err.code = data?.error;
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
@@ -41,7 +48,12 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
-export async function createSubmission({ submissionId, roaType, snapshot, versions, pdfBytes }) {
+/**
+ * Freezes a submission. Pass `amendment` ({ supersedesSubmissionId, reason, reasonDetail })
+ * to create the next REVISION of an existing ROA; the server derives the revision number,
+ * lineage and amender itself.
+ */
+export async function createSubmission({ submissionId, roaType, snapshot, versions, pdfBytes, amendment }) {
   if (!isSubmissionId(submissionId)) throw new Error('createSubmission: invalid submissionId');
   return postJson('/api/roa-submissions/create', {
     submissionId,
@@ -49,7 +61,28 @@ export async function createSubmission({ submissionId, roaType, snapshot, versio
     snapshot,
     versions,
     pdfBase64: bytesToBase64(pdfBytes),
+    ...(amendment ? { amendment } : {}),
   });
+}
+
+/**
+ * Owner-only read of the frozen source snapshot an amendment starts from. Throws an Error
+ * whose `.code` is the server's reason ('already_superseded', 'not_found', …) when the ROA
+ * cannot be amended.
+ */
+export async function getAmendmentSource(submissionId) {
+  if (!isSubmissionId(submissionId)) throw new Error('getAmendmentSource: invalid submissionId');
+  const res = await fetch(
+    `/api/roa-submissions/get?id=${encodeURIComponent(submissionId)}&view=amendment`,
+    { method: 'GET', cache: 'no-store', headers: { ...(await authHeader()) } },
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data?.error || `Amendment source failed (${res.status})`);
+    err.code = data?.error || 'amendment_source_failed';
+    throw err;
+  }
+  return data.amendment;
 }
 
 export async function getSubmission(submissionId) {

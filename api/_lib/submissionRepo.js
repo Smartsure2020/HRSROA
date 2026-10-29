@@ -62,6 +62,9 @@ export async function listSubmissionsForBroker(broker) {
     'audit_log_storage_path', 'signing_meta', 'crm_client_id', 'crm_deal_id',
     'crm_sync_status', 'crm_sync_error', 'crm_sync_attempted_at', 'crm_synced_at',
     'crm_signed_roa_document_id', 'crm_certificate_document_id', 'crm_audit_log_document_id',
+    'revision_no', 'parent_submission_id', 'supersedes_submission_id',
+    'superseded_by_submission_id', 'amendment_reason', 'amendment_reason_detail',
+    'amended_by', 'amended_at',
   ].join(',');
   const { data, error } = await supabase
     .from('roa_submissions')
@@ -121,7 +124,16 @@ export async function updateSubmission(submissionId, patch) {
   return data;
 }
 
-/** Records the first observed provider completion time without overwriting it. */
+// Lifecycle states in which a signing request may still be live (or was never sent). A row
+// in any other state (completed, declined, voided, expired) is final as far as a provider
+// OBSERVATION is concerned: a read taken a moment ago must never move it.
+export const SUPERSEDABLE_STATUSES = Object.freeze(['awaiting_signature', 'submitted', 'signature_failed']);
+
+/**
+ * Records the first observed provider completion time without overwriting it. Only a row
+ * that is still open (or already completed) can receive it, so a completion observed for a
+ * row that was meanwhile voided or declined does not leave a contradictory timestamp.
+ */
 export async function setCompletionIfMissing(submissionId, broker, completedAt) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
@@ -129,11 +141,40 @@ export async function setCompletionIfMissing(submissionId, broker, completedAt) 
     .update({ completed_at: completedAt })
     .eq('id', submissionId)
     .ilike('advisor_email', ownerEmailPattern(broker))
+    .in('status', [...SUPERSEDABLE_STATUSES, 'completed'])
     .is('completed_at', null)
     .select('*')
     .maybeSingle();
   if (error) throw new Error(`Set completion timestamp failed: ${error.message}`);
   return data;
+}
+
+/**
+ * Writes what a provider READ said about a signing request, without ever acting on a stale
+ * read. Broker-scoped and conditional on the row's CURRENT lifecycle:
+ *
+ *   - an observation that is not "completed" (pending, rejected, cancelled …) only applies
+ *     while the row is still open AND has no completion time. If a signature completed in
+ *     the meantime the write matches nothing, and the completed record is left exactly as it
+ *     is (status, signing_status, completion time and evidence);
+ *   - a "completed" observation may also be written to a row that is already completed, so
+ *     evidence that failed to download the first time can still be filled in.
+ *
+ * Returns the updated row, or null when the row no longer matches (the caller re-reads it).
+ */
+export async function applyProviderObservation(submissionId, broker, patch, { completion = false } = {}) {
+  const supabase = getServerSupabase();
+  let query = supabase
+    .from('roa_submissions')
+    .update(patch)
+    .eq('id', submissionId)
+    .ilike('advisor_email', ownerEmailPattern(broker));
+  query = completion
+    ? query.in('status', [...SUPERSEDABLE_STATUSES, 'completed'])
+    : query.in('status', SUPERSEDABLE_STATUSES).is('completed_at', null);
+  const { data, error } = await query.select('*').maybeSingle();
+  if (error) throw new Error(`Apply provider observation failed: ${error.message}`);
+  return data || null;
 }
 
 /**
@@ -218,6 +259,162 @@ export async function releaseSigningReservation(submissionId, broker, provider, 
     .eq('status', 'awaiting_signature')
     .is('signing_envelope_id', null);
   if (error) throw new Error(`Release signing reservation failed: ${error.message}`);
+}
+
+// ---------- Amendments (Issue #8) --------------------------------------------
+
+export class RevisionCreateError extends Error {
+  constructor(code, status) {
+    super(code);
+    this.name = 'RevisionCreateError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+// SQLSTATEs raised by public.roa_create_revision / the revision guard triggers
+// (supabase/migrations/20261029_roa_amendments.sql).
+const REVISION_SQLSTATES = {
+  RA001: ['predecessor_not_found', 404],
+  RA002: ['predecessor_not_found', 404], // another broker's row: indistinguishable from "missing"
+  RA003: ['roa_type_mismatch', 409],
+  RA004: ['revision_conflict', 409],
+  RA005: ['revision_conflict', 409],
+  RA006: ['already_superseded', 409],
+  RA007: ['submission_conflict', 409],
+  RA008: ['revision_conflict', 409],
+  '23505': ['revision_conflict', 409], // unique successor / unique revision number
+};
+
+function revisionErrorFrom(error) {
+  const code = String(error?.code || '');
+  const mapped = REVISION_SQLSTATES[code];
+  if (mapped) return new RevisionCreateError(mapped[0], mapped[1]);
+  // Fall back to the stable message token if the code was not surfaced.
+  const token = String(error?.message || '').match(/roa_revision_[a-z_]+/)?.[0];
+  const byToken = {
+    roa_revision_predecessor_not_found: REVISION_SQLSTATES.RA001,
+    roa_revision_owner_mismatch: REVISION_SQLSTATES.RA002,
+    roa_revision_type_mismatch: REVISION_SQLSTATES.RA003,
+    roa_revision_already_superseded: REVISION_SQLSTATES.RA006,
+    roa_revision_id_conflict: REVISION_SQLSTATES.RA007,
+  }[token];
+  if (byToken) return new RevisionCreateError(byToken[0], byToken[1]);
+  return new RevisionCreateError('revision_create_failed', 500);
+}
+
+/**
+ * Creates the next revision in ONE database transaction (roa_create_revision): the
+ * predecessor is locked, verified to be the head of the chain and owned by `broker`,
+ * the new row is inserted and the predecessor's forward link is written. A retry with
+ * the same `submissionId` and identical content returns the existing row, so a lost
+ * response or a partial failure on the caller's side is always safe to repeat.
+ *
+ * Nothing about the predecessor changes except its write-once forward link.
+ */
+export async function createRevision({
+  submissionId,
+  supersedesId,
+  broker,
+  roaType,
+  clientReference,
+  snapshot,
+  versions,
+  pdf,
+  reason,
+  reasonDetail,
+}) {
+  ownerEmailPattern(broker); // throws for an unusable identity, never degrades to unscoped
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase.rpc('roa_create_revision', {
+    p_new_id: submissionId,
+    p_supersedes_id: supersedesId,
+    p_owner_email: broker.normalizedEmail,
+    p_advisor_user_id: broker.id,
+    p_roa_type: roaType,
+    p_client_reference: clientReference,
+    p_snapshot: snapshot,
+    p_template_version: versions.templateVersion,
+    p_statutory_disclosure_version: versions.statutoryDisclosureVersion,
+    p_broker_appointment_version: versions.brokerAppointmentVersion,
+    p_broker_fee_version: versions.brokerFeeVersion,
+    p_letter_investigation_version: versions.letterInvestigationVersion || null,
+    p_pdf_sha256: pdf.sha256,
+    p_pdf_storage_path: pdf.path,
+    p_pdf_byte_length: pdf.byteLength,
+    p_amendment_reason: reason,
+    p_amendment_reason_detail: reasonDetail || null,
+    p_amended_by: broker.normalizedEmail,
+  });
+  if (error) throw revisionErrorFrom(error);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.id) throw new RevisionCreateError('revision_create_failed', 500);
+  return row;
+}
+
+/**
+ * Persists a step of the cancellation state machine (intent, evidence backup progress,
+ * delete dispatch / acknowledgement, manual-resolution flag) in `signing_meta.supersession`.
+ * Broker-scoped and conditional on the row still being open with no completion time, so a
+ * stale writer cannot touch a row that completed meanwhile. Null if the row moved on.
+ */
+export async function recordSupersessionState(submissionId, broker, signingMeta) {
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .update({ signing_meta: signingMeta })
+    .eq('id', submissionId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
+    .in('status', SUPERSEDABLE_STATUSES)
+    .is('completed_at', null)
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Record supersession state failed: ${error.message}`);
+  return data || null;
+}
+
+/**
+ * Marks a superseded request as voided once the provider has verifiably cancelled it.
+ * Compare-and-swap on status + completed_at (and on the forward link, so only the revision
+ * that actually replaces this one can void it): returns null, changing nothing, if the row
+ * completed or otherwise changed in the meantime.
+ */
+export async function markSupersededVoided(submissionId, broker, signingMeta, replacementId) {
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .update({ status: 'voided', signing_status: 'cancelled', signing_meta: signingMeta })
+    .eq('id', submissionId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
+    .eq('superseded_by_submission_id', replacementId)
+    .in('status', SUPERSEDABLE_STATUSES)
+    .is('completed_at', null)
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Mark superseded request voided failed: ${error.message}`);
+  return data || null;
+}
+
+/**
+ * Records an envelope that was created at the provider but never written back (a lost
+ * response). Conditional on the reservation still being the one we are recovering, so it
+ * cannot overwrite a row that completed, was cancelled or already received an envelope.
+ */
+export async function adoptRecoveredEnvelope(submissionId, broker, patch) {
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .update(patch)
+    .eq('id', submissionId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
+    .eq('status', 'awaiting_signature')
+    .eq('signing_provider', 'documenso')
+    .is('signing_envelope_id', null)
+    .is('completed_at', null)
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Adopt recovered envelope failed: ${error.message}`);
+  return data || null;
 }
 
 // ---------- Storage ---------------------------------------------------------

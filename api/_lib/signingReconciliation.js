@@ -6,9 +6,10 @@ import { resolveDocusignAccountBaseUrl } from './docusignAccount.js';
 import { getDocusignAccessToken } from './docusignJwt.js';
 import {
   StoragePaths,
+  applyProviderObservation,
   ensurePdfStored,
+  loadSubmissionForBroker,
   setCompletionIfMissing,
-  updateSubmission,
 } from './submissionRepo.js';
 import { sha256HexOfBytes } from './sha256.js';
 import { refreshViaDocumenso } from './documensoSigning.js';
@@ -120,7 +121,25 @@ async function reconcileViaDocusign({ submissionId, row, broker }) {
     }
   }
 
-  const updated = Object.keys(patch).length ? await updateSubmission(submissionId, patch) : row;
+  if (!Object.keys(patch).length) {
+    return { row, provider: 'docusign', refreshed: true, observedStatus, evidenceErrors };
+  }
+  // Same rule as the Documenso path: an observation is applied only while the row can still
+  // legitimately move, so a stale read never overwrites a concurrently completed record.
+  const updated = await applyProviderObservation(submissionId, broker, patch, {
+    completion: observedStatus === 'completed',
+  });
+  if (!updated) {
+    const latest = (await loadSubmissionForBroker(submissionId, broker)) || row;
+    return {
+      row: latest,
+      provider: 'docusign',
+      refreshed: false,
+      raceLost: true,
+      observedStatus,
+      evidenceErrors,
+    };
+  }
   return {
     row: updated,
     provider: 'docusign',
