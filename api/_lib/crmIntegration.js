@@ -27,6 +27,22 @@ function numberOrNull(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+/** True for an amendment (revision 2 or later). Legacy and first-submission rows are revision 1. */
+export function isAmendedRevision(row) {
+  return Number(row?.revision_no) > 1;
+}
+
+/**
+ * Revision metadata is a NEW field on the CRM contract and the deployed CRM validates its
+ * payload strictly (unknown fields are rejected with 422). It is therefore only sent — and
+ * amended revisions are only synced at all — once the CRM release that understands it is
+ * live and this flag is switched on. Until then revisions are deferred without touching any
+ * sync state, so nothing is mis-filed and revision 1 behaves exactly as before.
+ */
+export function crmRevisionSyncEnabled() {
+  return process.env.CRM_REVISION_METADATA === 'enabled';
+}
+
 export function buildCrmSyncPayload(row) {
   const snapshot = row.snapshot_json || {};
   const personal = row.roa_type === 'Personal';
@@ -34,7 +50,7 @@ export function buildCrmSyncPayload(row) {
     ? [snapshot.initials || snapshot.firstName, snapshot.surname].filter(Boolean).join(' ').trim()
     : text(snapshot.companyName);
   if (!displayName) throw new CrmSyncError('missing_client_identity', 422);
-  return {
+  const payload = {
     submissionId: row.id,
     roaType: row.roa_type,
     adviser: { email: row.advisor_email, name: text(snapshot.brokerName) },
@@ -64,6 +80,19 @@ export function buildCrmSyncPayload(row) {
       inceptionDate: text(snapshot.inceptionDate),
     },
   };
+  if (isAmendedRevision(row)) {
+    // Identity matching is unchanged: the CRM still matches the client only by ID number /
+    // company registration from the frozen snapshot, never by email or revision data. The
+    // free-text amendment note is deliberately not sent.
+    payload.revision = {
+      revisionNo: Number(row.revision_no),
+      parentSubmissionId: row.parent_submission_id,
+      supersedesSubmissionId: row.supersedes_submission_id,
+      amendmentReason: row.amendment_reason,
+      amendedAt: row.amended_at,
+    };
+  }
+  return payload;
 }
 
 export function verifyEvidenceBytes(bytes, expectedHash) {
@@ -118,6 +147,10 @@ function crmHeaders(secret) {
 }
 
 export async function syncSubmissionToCrm(row) {
+  // Deferred, not failed: no sync state is written, so enabling the flag later simply works.
+  if (isAmendedRevision(row) && !crmRevisionSyncEnabled()) {
+    throw new CrmSyncError('crm_revision_sync_not_enabled', 409);
+  }
   const attemptedAt = new Date().toISOString();
   let current = await updateSubmission(row.id, {
     crm_sync_attempted_at: attemptedAt,
@@ -173,6 +206,7 @@ export async function syncSubmissionToCrm(row) {
 export async function maybeSyncCompletedSubmissionToCrm(row) {
   if (row?.status !== 'completed' || !hasRequiredSigningEvidence(row)) return row;
   if (isCrmEvidenceComplete(row)) return row;
+  if (isAmendedRevision(row) && !crmRevisionSyncEnabled()) return row;
   try { return await syncSubmissionToCrm(row); }
   catch (error) {
     console.warn('CRM sync after evidence reconciliation failed:', error?.code || 'crm_sync_failed');

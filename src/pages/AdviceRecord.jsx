@@ -22,15 +22,21 @@ import { buildPersonalNotificationEmail } from '@/lib/personalEmail';
 import { createSubmissionSnapshot } from '@/lib/roaSubmissionSnapshot';
 import { createSubmission, sendNotificationEmail, getSubmission } from '@/lib/roaSubmissionClient';
 import { rememberLastSubmission, forgetLastSubmission, readLastSubmission } from '@/lib/roaSubmissionRecovery';
+import AmendmentBanner from '../components/hrs/AmendmentBanner';
+import { AMENDMENT_BLOCK_MESSAGES, withAmendmentNotice } from '@/lib/roaAmendment';
 
 const TOTAL_STEPS = PERSONAL_STEPS.length;
 const FLOW_TYPE = 'personal';
 
-export default function AdviceRecord() {
+// `amendment` (Issue #8) switches the wizard into amend mode: it opens pre-populated from the
+// frozen source snapshot, keeps its draft under a separate per-revision key, and submits the
+// NEXT REVISION of the ROA instead of an independent one.
+export default function AdviceRecord({ amendment = null }) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const draftScope = amendment?.supersedesSubmissionId;
   const [currentStep, setCurrentStep] = useState(0);
-  const [formData, setFormData] = useState(getInitialFormData);
+  const [formData, setFormData] = useState(() => (amendment ? amendment.initialFormData : getInitialFormData()));
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
@@ -39,8 +45,10 @@ export default function AdviceRecord() {
 
   // Recover the post-submit view after a browser refresh — the durable
   // roa_submissions row is the source of truth; the id in sessionStorage is
-  // only the pointer to it.
+  // only the pointer to it. Not used for amendments: a reload of an amendment whose
+  // revision already exists is told so by the amend page instead.
   useEffect(() => {
+    if (amendment) return;
     const last = readLastSubmission(FLOW_TYPE);
     if (!last) return;
     let cancelled = false;
@@ -59,7 +67,7 @@ export default function AdviceRecord() {
   }, []);
 
   useEffect(() => {
-    const { status, draft } = getDraftStatus(FLOW_TYPE);
+    const { status, draft } = getDraftStatus(FLOW_TYPE, draftScope);
     if (status === 'expired') {
       toast({
         title: "Draft expired",
@@ -90,17 +98,17 @@ export default function AdviceRecord() {
       const raw = typeof updater === 'function' ? updater(prev) : updater;
       const next = applyConditionalCleanup(raw);
       // Never autosave over a draft the user hasn't yet chosen to restore or discard.
-      if (!pendingDraftRef.current) saveRoaDraft(FLOW_TYPE, { currentStep, formData: next });
+      if (!pendingDraftRef.current) saveRoaDraft(FLOW_TYPE, { currentStep, formData: next }, draftScope);
       return next;
     });
-  }, [currentStep]);
+  }, [currentStep, draftScope]);
 
   // Persist the current step alongside the latest formData whenever the step changes
   // (formData itself is only re-saved when it actually changes, via updateFormData above).
   useEffect(() => {
     if (submitted) return;
     if (pendingDraftRef.current) return;
-    saveRoaDraft(FLOW_TYPE, { currentStep, formData });
+    saveRoaDraft(FLOW_TYPE, { currentStep, formData }, draftScope);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStep, submitted]);
 
@@ -115,7 +123,7 @@ export default function AdviceRecord() {
   };
 
   const handleDismissRestore = () => {
-    clearRoaDraft(FLOW_TYPE);
+    clearRoaDraft(FLOW_TYPE, draftScope);
     pendingDraftRef.current = null;
     setShowRestoreBanner(false);
   };
@@ -184,12 +192,24 @@ export default function AdviceRecord() {
         snapshot: frozen.snapshotForDb,
         versions: frozen.versions,
         pdfBytes: bytes,
+        // Amend mode: the server creates the NEXT REVISION of the ROA being amended and
+        // derives the revision number, lineage and amender itself.
+        ...(amendment ? {
+          amendment: {
+            supersedesSubmissionId: amendment.supersedesSubmissionId,
+            reason: amendment.reason,
+            reasonDetail: amendment.reasonDetail,
+          },
+        } : {}),
       });
 
       // 4. Notify the broker — email attaches the SERVER'S copy of the
       //    canonical bytes (privacy-hardened body from ROA-0).
       const brokerEmail = BROKER_EMAIL_MAP[formData.brokerName] || DEFAULT_BROKER_EMAIL;
-      const { subject, body } = buildPersonalNotificationEmail(formData);
+      const baseEmail = buildPersonalNotificationEmail(formData);
+      const { subject, body } = amendment
+        ? withAmendmentNotice(baseEmail, { nextRevisionNo: amendment.nextRevisionNo, reason: amendment.reason })
+        : baseEmail;
       try {
         await sendNotificationEmail({
           submissionId: created.submissionId,
@@ -207,8 +227,9 @@ export default function AdviceRecord() {
         });
       }
 
-      rememberLastSubmission(FLOW_TYPE, { submissionId: created.submissionId });
-      clearRoaDraft(FLOW_TYPE);
+      // An amended revision is not the "last new ROA": do not let it hijack the new-ROA recovery pointer.
+      if (!amendment) rememberLastSubmission(FLOW_TYPE, { submissionId: created.submissionId });
+      clearRoaDraft(FLOW_TYPE, draftScope);
       const record = await getSubmission(created.submissionId).catch(() => null);
       setSubmission(record);
       setSubmitted(true);
@@ -217,7 +238,7 @@ export default function AdviceRecord() {
       toast({
         variant: "destructive",
         title: "Submission failed",
-        description: err.message || "Could not save the submission. Please try again — no evidence was lost.",
+        description: AMENDMENT_BLOCK_MESSAGES[err.code] || err.message || "Could not save the submission. Please try again — no evidence was lost.",
       });
     } finally {
       setIsSubmitting(false);
@@ -225,6 +246,8 @@ export default function AdviceRecord() {
   };
 
   const handleRestart = () => {
+    // After an amendment "new record" means a genuinely new ROA, not another edit of this one.
+    if (amendment) { navigate('/personal'); return; }
     clearRoaDraft(FLOW_TYPE);
     forgetLastSubmission(FLOW_TYPE);
     setSubmission(null);
@@ -240,7 +263,7 @@ export default function AdviceRecord() {
       const confirm = window.confirm('You have an ROA in progress. Are you sure you want to go back to the home screen? Your progress will be saved in this session.');
       if (!confirm) return;
     }
-    navigate('/');
+    navigate(amendment ? '/roas' : '/');
   };
 
   const renderStep = () => {
@@ -282,12 +305,16 @@ export default function AdviceRecord() {
             className="flex items-center gap-1.5 text-white/70 hover:text-white text-[0.78rem] transition-colors"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            Back to Home
+            {amendment ? 'Back to My ROAs' : 'Back to Home'}
           </button>
           <span className="text-white/20 text-[0.75rem]">|</span>
-          <span className="text-white/50 text-[0.75rem]">Personal Lines ROA</span>
+          <span className="text-white/50 text-[0.75rem]">
+            {amendment ? `Personal Lines ROA — Amendment (Revision ${amendment.nextRevisionNo})` : 'Personal Lines ROA'}
+          </span>
         </div>
       )}
+
+      {!submitted && <AmendmentBanner amendment={amendment} />}
 
       {showRestoreBanner && (
         <div className="bg-hrs-blue text-white text-[0.82rem] px-4 py-2.5 flex items-center justify-between gap-4">

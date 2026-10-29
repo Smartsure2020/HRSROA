@@ -62,6 +62,9 @@ export async function listSubmissionsForBroker(broker) {
     'audit_log_storage_path', 'signing_meta', 'crm_client_id', 'crm_deal_id',
     'crm_sync_status', 'crm_sync_error', 'crm_sync_attempted_at', 'crm_synced_at',
     'crm_signed_roa_document_id', 'crm_certificate_document_id', 'crm_audit_log_document_id',
+    'revision_no', 'parent_submission_id', 'supersedes_submission_id',
+    'superseded_by_submission_id', 'amendment_reason', 'amendment_reason_detail',
+    'amended_by', 'amended_at',
   ].join(',');
   const { data, error } = await supabase
     .from('roa_submissions')
@@ -218,6 +221,137 @@ export async function releaseSigningReservation(submissionId, broker, provider, 
     .eq('status', 'awaiting_signature')
     .is('signing_envelope_id', null);
   if (error) throw new Error(`Release signing reservation failed: ${error.message}`);
+}
+
+// ---------- Amendments (Issue #8) --------------------------------------------
+
+export class RevisionCreateError extends Error {
+  constructor(code, status) {
+    super(code);
+    this.name = 'RevisionCreateError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+// SQLSTATEs raised by public.roa_create_revision / the revision guard triggers
+// (supabase/migrations/20261029_roa_amendments.sql).
+const REVISION_SQLSTATES = {
+  RA001: ['predecessor_not_found', 404],
+  RA002: ['predecessor_not_found', 404], // another broker's row: indistinguishable from "missing"
+  RA003: ['roa_type_mismatch', 409],
+  RA004: ['revision_conflict', 409],
+  RA005: ['revision_conflict', 409],
+  RA006: ['already_superseded', 409],
+  RA007: ['submission_conflict', 409],
+  RA008: ['revision_conflict', 409],
+  '23505': ['revision_conflict', 409], // unique successor / unique revision number
+};
+
+function revisionErrorFrom(error) {
+  const code = String(error?.code || '');
+  const mapped = REVISION_SQLSTATES[code];
+  if (mapped) return new RevisionCreateError(mapped[0], mapped[1]);
+  // Fall back to the stable message token if the code was not surfaced.
+  const token = String(error?.message || '').match(/roa_revision_[a-z_]+/)?.[0];
+  const byToken = {
+    roa_revision_predecessor_not_found: REVISION_SQLSTATES.RA001,
+    roa_revision_owner_mismatch: REVISION_SQLSTATES.RA002,
+    roa_revision_type_mismatch: REVISION_SQLSTATES.RA003,
+    roa_revision_already_superseded: REVISION_SQLSTATES.RA006,
+    roa_revision_id_conflict: REVISION_SQLSTATES.RA007,
+  }[token];
+  if (byToken) return new RevisionCreateError(byToken[0], byToken[1]);
+  return new RevisionCreateError('revision_create_failed', 500);
+}
+
+/**
+ * Creates the next revision in ONE database transaction (roa_create_revision): the
+ * predecessor is locked, verified to be the head of the chain and owned by `broker`,
+ * the new row is inserted and the predecessor's forward link is written. A retry with
+ * the same `submissionId` and identical content returns the existing row, so a lost
+ * response or a partial failure on the caller's side is always safe to repeat.
+ *
+ * Nothing about the predecessor changes except its write-once forward link.
+ */
+export async function createRevision({
+  submissionId,
+  supersedesId,
+  broker,
+  roaType,
+  clientReference,
+  snapshot,
+  versions,
+  pdf,
+  reason,
+  reasonDetail,
+}) {
+  ownerEmailPattern(broker); // throws for an unusable identity, never degrades to unscoped
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase.rpc('roa_create_revision', {
+    p_new_id: submissionId,
+    p_supersedes_id: supersedesId,
+    p_owner_email: broker.normalizedEmail,
+    p_advisor_user_id: broker.id,
+    p_roa_type: roaType,
+    p_client_reference: clientReference,
+    p_snapshot: snapshot,
+    p_template_version: versions.templateVersion,
+    p_statutory_disclosure_version: versions.statutoryDisclosureVersion,
+    p_broker_appointment_version: versions.brokerAppointmentVersion,
+    p_broker_fee_version: versions.brokerFeeVersion,
+    p_letter_investigation_version: versions.letterInvestigationVersion || null,
+    p_pdf_sha256: pdf.sha256,
+    p_pdf_storage_path: pdf.path,
+    p_pdf_byte_length: pdf.byteLength,
+    p_amendment_reason: reason,
+    p_amendment_reason_detail: reasonDetail || null,
+    p_amended_by: broker.normalizedEmail,
+  });
+  if (error) throw revisionErrorFrom(error);
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.id) throw new RevisionCreateError('revision_create_failed', 500);
+  return row;
+}
+
+// Rows whose signing request may still be live or never sent. A concurrently-completed
+// (or otherwise terminal) row never matches, so a stale cancellation cannot overwrite it.
+const SUPERSEDABLE_STATUSES = ['awaiting_signature', 'submitted', 'signature_failed'];
+
+/** Persists the cancel intent BEFORE the provider is asked to cancel. Null if the row moved on. */
+export async function recordSupersessionIntent(submissionId, broker, signingMeta) {
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .update({ signing_meta: signingMeta })
+    .eq('id', submissionId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
+    .in('status', SUPERSEDABLE_STATUSES)
+    .is('completed_at', null)
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Record supersession intent failed: ${error.message}`);
+  return data || null;
+}
+
+/**
+ * Marks a superseded request as voided once the provider has verifiably cancelled it.
+ * Compare-and-swap on status + completed_at: returns null (and changes nothing) if the
+ * row completed or otherwise changed in the meantime.
+ */
+export async function markSupersededVoided(submissionId, broker, signingMeta) {
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .update({ status: 'voided', signing_status: 'cancelled', signing_meta: signingMeta })
+    .eq('id', submissionId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
+    .in('status', SUPERSEDABLE_STATUSES)
+    .is('completed_at', null)
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Mark superseded request voided failed: ${error.message}`);
+  return data || null;
 }
 
 // ---------- Storage ---------------------------------------------------------

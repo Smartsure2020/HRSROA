@@ -28,7 +28,7 @@ import { reminderBlockReason, reminderCooldownSeconds } from '../../src/lib/sign
 const PROVIDER = 'documenso';
 const SEND_IN_FLIGHT_GRACE_MS = 60 * 1000;
 
-function reservationMayStillBeInFlight(sentForSignatureAt) {
+export function reservationMayStillBeInFlight(sentForSignatureAt) {
   const sentAt = Date.parse(sentForSignatureAt || '');
   if (!Number.isFinite(sentAt)) return false;
   const age = Date.now() - sentAt;
@@ -250,7 +250,22 @@ export async function refreshViaDocumenso({ submissionId, row, broker }) {
     return { refreshed: false, row };
   }
 
-  const observed = await getDocumensoEnvelopeStatus(row.signing_envelope_id);
+  let observed;
+  try {
+    observed = await getDocumensoEnvelopeStatus(row.signing_envelope_id);
+  } catch (err) {
+    // The provider no longer knows the envelope. That is a verified cancellation ONLY when
+    // our own persisted amendment intent says we asked for it (a cancel that died before
+    // the row was updated). Any other 404 stays an error — it is never guessed at.
+    const cancelRequested = Boolean(row.signing_meta?.supersession?.cancelRequestedAt);
+    const stillOpen = ['awaiting_signature', 'submitted', 'signature_failed'].includes(row.status)
+      && !row.completed_at;
+    if (err?.status === 404 && cancelRequested && stillOpen) {
+      const voided = await updateSubmission(submissionId, { status: 'voided', signing_status: 'cancelled' });
+      return { refreshed: true, observedStatus: 'CANCELLED', evidenceErrors: [], row: voided };
+    }
+    throw err;
+  }
   const patch = {
     signing_status: observed.status.toLowerCase(),
   };
@@ -344,6 +359,9 @@ function reminderError(code, status, extra = {}) {
  * Eligibility is checked against the stored row first, then against the live provider state.
  */
 export async function sendReminderViaDocumenso({ submissionId, row }) {
+  // Never nudge a client to sign a request that is about to be (or has been) replaced.
+  if (row.superseded_by_submission_id) throw reminderError('submission_superseded', 409);
+
   const blocked = reminderBlockReason({
     provider: row.signing_provider,
     hasEnvelope: Boolean(row.signing_envelope_id),

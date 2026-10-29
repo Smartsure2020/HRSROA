@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Download, RefreshCw, Send } from 'lucide-react';
+import { ArrowLeft, Download, Pencil, RefreshCw, Send } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AppHeader from '../components/hrs/AppHeader';
 import SignatureReminderButton from '../components/hrs/SignatureReminderButton';
@@ -11,6 +11,18 @@ import {
   sendForSignature,
   syncCrmSubmission,
 } from '../lib/roaSubmissionClient';
+import {
+  AMENDMENT_BLOCK_MESSAGES,
+  amendReasonLabel,
+  chainForItem,
+  lineageSummary,
+  revisionLabel,
+  revisionNumber,
+  revisionStateLabel,
+  summariseChain,
+} from '../lib/roaAmendment';
+import { describeSignatureSendError } from '../lib/signatureSendFeedback';
+import { describeCrmSyncError } from '../lib/crmAdapter';
 
 const FILTERS = [
   ['all', 'All'],
@@ -135,7 +147,7 @@ export default function RoaRegister() {
       const updated = await syncCrmSubmission(selected.submissionId);
       applyItems(items.map((item) => item.submissionId === updated.submissionId ? updated : item));
     } catch (err) {
-      setError(err.message || 'CRM sync failed. The ROA evidence is still safely retained.');
+      setError(describeCrmSyncError(err.message) || 'CRM sync failed. The ROA evidence is still safely retained.');
       await load();
     } finally { setCrmRetrying(false); }
   }, [selected?.submissionId, crmRetrying, applyItems, items, load]);
@@ -153,10 +165,21 @@ export default function RoaRegister() {
         await load();
       }
     } catch (err) {
-      setError(err.message || 'Could not send this ROA for signature. Please try again.');
+      setError(describeSignatureSendError(err));
       await load();
     } finally { setSignatureSending(false); }
   }, [selected, signatureSending, applyItems, items, load]);
+
+  const chain = useMemo(
+    () => (selected ? summariseChain(chainForItem(items, selected)) : null),
+    [items, selected],
+  );
+  const successor = useMemo(
+    () => (selected?.supersededBySubmissionId
+      ? items.find((item) => item.submissionId === selected.supersededBySubmissionId) || null
+      : null),
+    [items, selected],
+  );
 
   return (
     <div className="min-h-screen bg-background">
@@ -194,7 +217,19 @@ export default function RoaRegister() {
               {!loading && visible.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-hrs-muted text-sm">No ROAs match this filter.</td></tr>}
               {visible.map((item) => (
                 <tr key={item.submissionId} onClick={() => setSelected(item)} className="border-t border-hrs-border hover:bg-hrs-blue/5 cursor-pointer text-[0.8rem]">
-                  <td className="p-3 font-semibold text-hrs-blue">{item.clientReference || item.submissionId}</td>
+                  <td className="p-3 font-semibold text-hrs-blue">
+                    {item.clientReference || item.submissionId}
+                    {(revisionNumber(item) > 1 || item.supersededBySubmissionId) && (
+                      <span className="ml-2 inline-block rounded border border-hrs-border bg-secondary px-1.5 py-0.5 text-[0.65rem] font-semibold text-hrs-blue2 align-middle">
+                        {revisionLabel(item)}
+                      </span>
+                    )}
+                    {item.supersededBySubmissionId && (
+                      <span className="ml-1 inline-block rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[0.65rem] font-semibold text-amber-800 align-middle">
+                        Superseded
+                      </span>
+                    )}
+                  </td>
                   <td className="p-3 text-hrs-muted">{item.roaType}</td>
                   <td className="p-3 text-hrs-muted">{formatDate(item.submittedAt)}</td>
                   <td className="p-3 text-hrs-blue2">{item.signingStatus || item.status || 'Not sent'}</td>
@@ -208,9 +243,61 @@ export default function RoaRegister() {
         {selected && (
           <section className="mt-6 rounded-xl border border-hrs-border bg-card p-5">
             <div className="flex items-start justify-between gap-4 mb-4">
-              <div><h2 className="font-heading text-lg text-hrs-blue">{selected.clientReference || 'ROA detail'}</h2><p className="text-[0.72rem] text-hrs-muted mt-1 break-all">{selected.submissionId}</p></div>
+              <div>
+                <h2 className="font-heading text-lg text-hrs-blue">
+                  {selected.clientReference || 'ROA detail'}
+                  {(revisionNumber(selected) > 1 || selected.supersededBySubmissionId) && (
+                    <span className="ml-2 text-[0.8rem] font-semibold text-hrs-blue2">· {revisionLabel(selected)}</span>
+                  )}
+                </h2>
+                <p className="text-[0.72rem] text-hrs-muted mt-1 break-all">{selected.submissionId}</p>
+              </div>
               <button onClick={() => setSelected(null)} className="text-hrs-muted text-sm">Close</button>
             </div>
+
+            {selected.supersededBySubmissionId && (
+              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-[0.78rem] text-amber-900">
+                Superseded by {successor ? revisionLabel(successor) : 'a newer revision'}. This revision&apos;s
+                own status and signed documents below are unchanged and remain downloadable.
+              </div>
+            )}
+
+            {chain && chain.revisions.length > 1 && (
+              <div className="mb-5">
+                <p className="text-[0.7rem] uppercase tracking-[0.1em] text-hrs-muted mb-2">Revision history</p>
+                <ul className="space-y-1.5">
+                  {chain.revisions.map((rev) => {
+                    const isViewing = rev.submissionId === selected.submissionId;
+                    return (
+                      <li key={rev.submissionId}>
+                        <button
+                          type="button"
+                          onClick={() => setSelected(rev)}
+                          aria-current={isViewing ? 'true' : undefined}
+                          className={`w-full text-left rounded-md border px-3 py-2 text-[0.76rem] ${isViewing ? 'border-hrs-blue bg-hrs-blue/5' : 'border-hrs-border hover:border-hrs-orange'}`}
+                        >
+                          <span className="font-semibold text-hrs-blue">{revisionLabel(rev)}</span>
+                          <span className="text-hrs-blue2"> · {revisionStateLabel(rev)}</span>
+                          {rev.submissionId === chain.lastSigned?.submissionId && <span className="text-hrs-green font-semibold"> · Last signed</span>}
+                          {rev.submissionId === chain.replacementPending?.submissionId && <span className="text-amber-700 font-semibold"> · Replacement</span>}
+                          {rev.supersededBySubmissionId && <span className="text-hrs-muted"> · Superseded</span>}
+                          {rev.amendmentReason && (
+                            <span className="block text-hrs-muted mt-0.5">
+                              Amended: {amendReasonLabel(rev.amendmentReason)}
+                              {rev.amendmentReasonDetail ? ` — ${rev.amendmentReasonDetail}` : ''} · {formatDate(rev.amendedAt)}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {lineageSummary(selected, items) && (
+                  <p className="text-[0.76rem] text-hrs-blue2 mt-2">{lineageSummary(selected, items)}</p>
+                )}
+              </div>
+            )}
+
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 text-[0.78rem] mb-5">
               <div><span className="text-hrs-muted">Adviser</span><p className="text-hrs-blue">{selected.adviser || '—'}</p></div>
               <div><span className="text-hrs-muted">Signing provider</span><p className="text-hrs-blue">{selected.signingProvider || 'Not sent'}</p></div>
@@ -242,7 +329,21 @@ export default function RoaRegister() {
                 label="Letter of Investigation"
                 available={selected.hasLetterInvestigationDownload}
               />
-              {!selected.signingEnvelopeId && !selected.docusignEnvelopeId && ['submitted', 'signature_failed'].includes(selected.status) && (
+              {selected.amendable && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/amend/${encodeURIComponent(selected.submissionId)}`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-hrs-orange bg-hrs-orange/10 text-[0.75rem] font-semibold text-hrs-blue"
+                >
+                  <Pencil className="w-3.5 h-3.5" /> Amend ROA
+                </button>
+              )}
+              {!selected.amendable && selected.amendBlockReason && selected.amendBlockReason !== 'already_superseded' && (
+                <p className="basis-full text-[0.74rem] text-hrs-muted">
+                  {AMENDMENT_BLOCK_MESSAGES[selected.amendBlockReason]}
+                </p>
+              )}
+              {!selected.supersededBySubmissionId && !selected.signingEnvelopeId && !selected.docusignEnvelopeId && ['submitted', 'signature_failed'].includes(selected.status) && (
                 <button
                   type="button"
                   onClick={sendSelectedForSignature}

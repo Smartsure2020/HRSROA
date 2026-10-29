@@ -37,6 +37,8 @@ import {
 } from '../../src/lib/brokerDirectory.js';
 import { toClientView } from './get.js';
 import { sendViaDocumenso } from '../_lib/documensoSigning.js';
+import { resolvePredecessorForReplacement, SupersessionError } from '../_lib/supersession.js';
+import { hasSigningEnvelope } from '../_lib/signingLifecycle.js';
 
 const DOCUSIGN_TRANSACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DOCUSIGN_SEND_IN_FLIGHT_GRACE_MS = 60 * 1000;
@@ -190,6 +192,34 @@ export default async function handler(req, res) {
   const signer = signerForSubmission(row);
   if (!signer) return res.status(409).json({ error: 'frozen_signer_identity_invalid' });
   const { signerName, signerEmail } = signer;
+
+  // Amendments (Issue #8) — controlled finalisation. Before ANY envelope can be created or
+  // distributed for a replacement revision, the revision it replaces must be verifiably not
+  // signable. Fails closed: on any doubt the replacement stays unsent. Rows that already
+  // hold an envelope skip this (a retry after the send succeeded just returns it).
+  if (!hasSigningEnvelope(row)) {
+    if (row.superseded_by_submission_id) {
+      // A newer revision exists; this one must never be circulated.
+      return res.status(409).json({ error: 'submission_superseded', submission: toClientView(row) });
+    }
+    if (row.supersedes_submission_id) {
+      try {
+        await resolvePredecessorForReplacement({ replacement: row, broker: user });
+      } catch (err) {
+        if (err instanceof SupersessionError) {
+          if (err.status >= 500) console.error('send-for-signature: replacement gate blocked send', err.code);
+          return res.status(err.status).json({
+            error: err.code,
+            retryable: err.retryable,
+            submission: toClientView(row),
+            predecessor: err.predecessor ? toClientView(err.predecessor) : undefined,
+          });
+        }
+        console.error('send-for-signature: replacement gate failed', err?.message);
+        return res.status(500).json({ error: 'replacement_gate_failed', retryable: true });
+      }
+    }
+  }
 
   const configuredProvider = String(process.env.ROA_SIGNING_PROVIDER || '').toLowerCase();
   const selectedProvider = row.signing_provider || configuredProvider;

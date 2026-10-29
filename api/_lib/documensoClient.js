@@ -228,6 +228,28 @@ export async function redistributeDocumensoEnvelope({ envelopeId, recipientIds }
   });
 }
 
+// Withdraws an envelope. Documenso v2 has no separate "cancel": POST /envelope/delete is the
+// only withdrawal call (the migration guide maps v1 DELETE /documents/{id} to it). For a
+// PENDING envelope the vendor documents it as irreversible — signatures are voided and the
+// recipients are told — so the caller MUST NOT treat a successful response as proof: it
+// verifies the outcome with a follow-up GET (see ./supersession.js). The response body is
+// not relied on, so an empty or non-JSON 2xx is accepted.
+export async function deleteDocumensoEnvelope(envelopeId) {
+  const { apiBase, apiToken } = getConfig();
+  const response = await fetch(`${apiBase}/envelope/delete`, {
+    method: 'POST',
+    headers: {
+      Authorization: apiToken,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ envelopeId }),
+  });
+  if (!response.ok) throw await parseError(response);
+  const body = await response.json().catch(() => ({}));
+  return { requested: true, body };
+}
+
 export async function getDocumensoEnvelopeStatus(envelopeId) {
   const envelope = await getDocumensoEnvelope(envelopeId);
   return {

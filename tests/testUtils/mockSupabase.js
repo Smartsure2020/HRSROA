@@ -6,12 +6,81 @@
 //
 // Never talks to the network. Storage objects are held as Node Buffers.
 
+import { isDeepStrictEqual } from 'node:util';
+
 export function makeMockSupabase() {
   /** @type {Map<string, object>} */ const rows = new Map();
   /** @type {Map<string, Buffer>} */ const storage = new Map();
   /** @type {Map<string, {user: {id: string, email: string}} | null>} */
   const authUsers = new Map();
   let nextInsertError = null;
+  let nextRpcError = null;
+  let dropNextRpcResponse = false;
+  const rpcCalls = [];
+
+  const rpcFailure = (code, message) => ({ data: null, error: { code, message } });
+
+  // Mirrors public.roa_create_revision (supabase/migrations/20261029_roa_amendments.sql): one
+  // atomic step that locks nothing in JS only because a JS test is single-threaded — the
+  // check-then-write below has no await in it, so two "concurrent" calls serialise exactly
+  // like the real function's FOR UPDATE. The SQL is verified against a real Postgres in
+  // tests/amendmentSql.test.js; this keeps the endpoint tests honest about its contract.
+  function emulateCreateRevision(a) {
+    const prev = rows.get(a.p_supersedes_id);
+    if (!prev || String(prev.advisor_email).toLowerCase() !== String(a.p_owner_email).toLowerCase()) {
+      return rpcFailure('RA001', 'roa_revision_predecessor_not_found');
+    }
+    const existing = rows.get(a.p_new_id);
+    if (existing) {
+      const same = existing.supersedes_submission_id === a.p_supersedes_id
+        && String(existing.advisor_email).toLowerCase() === String(a.p_owner_email).toLowerCase()
+        && existing.roa_type === a.p_roa_type
+        && existing.pdf_sha256 === a.p_pdf_sha256
+        && existing.pdf_storage_path === a.p_pdf_storage_path
+        && existing.pdf_byte_length === a.p_pdf_byte_length
+        && isDeepStrictEqual(existing.snapshot_json, a.p_snapshot)
+        && (existing.amendment_reason ?? null) === (a.p_amendment_reason ?? null)
+        && (existing.amendment_reason_detail ?? null) === (a.p_amendment_reason_detail ?? null);
+      if (!same) return rpcFailure('RA007', 'roa_revision_id_conflict');
+      if (!prev.superseded_by_submission_id) prev.superseded_by_submission_id = a.p_new_id; // heal a missing link
+      return { data: { ...existing }, error: null };
+    }
+    if (prev.superseded_by_submission_id) return rpcFailure('RA006', 'roa_revision_already_superseded');
+    if (prev.roa_type !== a.p_roa_type) return rpcFailure('RA003', 'roa_revision_type_mismatch');
+
+    const now = new Date().toISOString();
+    const created = {
+      id: a.p_new_id,
+      roa_type: a.p_roa_type,
+      status: 'submitted',
+      advisor_user_id: a.p_advisor_user_id,
+      advisor_email: String(a.p_owner_email).toLowerCase(),
+      client_reference: a.p_client_reference,
+      snapshot_json: a.p_snapshot,
+      template_version: a.p_template_version,
+      statutory_disclosure_version: a.p_statutory_disclosure_version,
+      broker_appointment_version: a.p_broker_appointment_version,
+      broker_fee_version: a.p_broker_fee_version,
+      letter_investigation_version: a.p_letter_investigation_version,
+      pdf_sha256: a.p_pdf_sha256,
+      pdf_storage_path: a.p_pdf_storage_path,
+      pdf_byte_length: a.p_pdf_byte_length,
+      revision_no: (prev.revision_no || 1) + 1,
+      parent_submission_id: prev.parent_submission_id || prev.id,
+      supersedes_submission_id: prev.id,
+      superseded_by_submission_id: null,
+      amendment_reason: a.p_amendment_reason,
+      amendment_reason_detail: a.p_amendment_reason_detail,
+      amended_by: String(a.p_amended_by).toLowerCase(),
+      amended_at: now,
+      submitted_at: now,
+      created_at: now,
+      updated_at: now,
+    };
+    rows.set(created.id, created);
+    prev.superseded_by_submission_id = created.id;
+    return { data: { ...created }, error: null };
+  }
 
   function respondUserForToken(token) {
     const entry = authUsers.get(token);
@@ -173,6 +242,23 @@ export function makeMockSupabase() {
       if (table !== 'roa_submissions') throw new Error(`Unexpected table ${table}`);
       return tableQuery();
     },
+    async rpc(name, args) {
+      rpcCalls.push({ name, args });
+      if (nextRpcError) {
+        const message = nextRpcError;
+        nextRpcError = null;
+        return rpcFailure('XX000', message);
+      }
+      if (name !== 'roa_create_revision') return rpcFailure('42883', `unknown function ${name}`);
+      const outcome = emulateCreateRevision(args);
+      if (outcome.error) return outcome;
+      if (dropNextRpcResponse) {
+        // The transaction committed but the caller never hears about it.
+        dropNextRpcResponse = false;
+        return rpcFailure('08006', 'connection lost');
+      }
+      return outcome;
+    },
     storage: {
       from(bucket) {
         if (bucket !== 'roa-pdfs') throw new Error(`Unexpected bucket ${bucket}`);
@@ -217,11 +303,19 @@ export function makeMockSupabase() {
       // legacy ROA Auth id and a mixed-case advisor_email).
       insertRow: (row) => { rows.set(row.id, { ...row }); },
       failNextInsert: (message = 'injected insert failure') => { nextInsertError = message; },
+      // The next revision RPC fails before doing anything (a definite failure).
+      failNextRpc: (message = 'injected rpc failure') => { nextRpcError = message; },
+      // The next revision RPC COMMITS but its response is lost (an ambiguous failure).
+      loseNextRpcResponse: () => { dropNextRpcResponse = true; },
+      rpcCalls: () => rpcCalls.map((call) => ({ ...call })),
       reset() {
         rows.clear();
         storage.clear();
         authUsers.clear();
         nextInsertError = null;
+        nextRpcError = null;
+        dropNextRpcResponse = false;
+        rpcCalls.length = 0;
       },
     },
   };

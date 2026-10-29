@@ -44,10 +44,19 @@ const IDENTITY_FIELDS = {
   commercial: ['companyName', 'registrationNo', 'contactFirstName', 'contactSurname', 'email'],
 };
 
-function keyFor(flowType) {
+// Amendments (Issue #8) keep their drafts under a separate key per revision being replaced,
+// so an amendment draft can never overwrite — or be restored into — a brand-new ROA draft
+// (or another amendment's). `scope` is the submission id being amended.
+const AMEND_SCOPE = /^ROA-[0-9a-fA-F-]{36}$/;
+
+function keyFor(flowType, scope) {
   const key = KEYS[flowType];
   if (!key) throw new Error(`Unknown ROA flow type: ${flowType}`);
-  return key;
+  if (scope === undefined || scope === null) return key;
+  if (typeof scope !== 'string' || !AMEND_SCOPE.test(scope)) {
+    throw new Error('Invalid ROA draft scope');
+  }
+  return `${key}__amend__${scope}`;
 }
 
 function readRaw(key) {
@@ -77,8 +86,8 @@ export function sanitiseDraftFormData(formData) {
   return clean;
 }
 
-/** Saves { currentStep, formData } for the given flow. Never throws. */
-export function saveRoaDraft(flowType, { currentStep, formData }) {
+/** Saves { currentStep, formData } for the given flow (and amendment scope). Never throws. */
+export function saveRoaDraft(flowType, { currentStep, formData }, scope) {
   try {
     const wrapper = {
       schemaVersion: DRAFT_SCHEMA_VERSION,
@@ -87,7 +96,7 @@ export function saveRoaDraft(flowType, { currentStep, formData }) {
       currentStep,
       formData: sanitiseDraftFormData(formData),
     };
-    sessionStorage.setItem(keyFor(flowType), JSON.stringify(wrapper));
+    sessionStorage.setItem(keyFor(flowType, scope), JSON.stringify(wrapper));
   } catch {
     // sessionStorage unavailable (private browsing, quota exceeded, storage disabled) —
     // drafts are a convenience feature, so fail silently rather than breaking the wizard.
@@ -102,12 +111,21 @@ export function isRoaDraftExpired(draft) {
   return Date.now() - savedAt > DRAFT_TTL_MS;
 }
 
-/** Removes the draft for one flow only — never touches the other flow's key. */
-export function clearRoaDraft(flowType) {
-  removeKey(keyFor(flowType));
+/** Removes the draft for one flow (and scope) only — never touches any other key. */
+export function clearRoaDraft(flowType, scope) {
+  try {
+    removeKey(keyFor(flowType, scope));
+  } catch {
+    // an invalid scope has no draft to remove
+  }
 }
 
-function normaliseFormData(flowType, rawFormData) {
+/**
+ * Merges stored/frozen form data into the CURRENT initial shape for the flow: unknown or
+ * deprecated keys are dropped, new fields take today's defaults, and the conditional-cleanup
+ * invariants are re-applied. Shared by draft restore and by amendment prefill.
+ */
+export function normaliseFormData(flowType, rawFormData) {
   const initial = flowType === 'commercial' ? getCommercialInitialFormData() : getInitialFormData();
   const applyCleanup = flowType === 'commercial' ? applyCommercialCleanup : applyPersonalCleanup;
   const source = rawFormData && typeof rawFormData === 'object' ? rawFormData : {};
@@ -184,14 +202,21 @@ function migrateLegacyPersonalDraft() {
  * Returns { status: 'none' | 'valid' | 'expired', draft }.
  * An 'expired' draft has already been deleted from storage by the time this returns.
  */
-export function getDraftStatus(flowType) {
-  if (flowType === 'personal') migrateLegacyPersonalDraft();
+export function getDraftStatus(flowType, scope) {
+  // The one-time legacy migration only ever concerned the un-scoped Personal draft.
+  if (flowType === 'personal' && (scope === undefined || scope === null)) migrateLegacyPersonalDraft();
 
-  const raw = readRaw(keyFor(flowType));
+  let key;
+  try {
+    key = keyFor(flowType, scope);
+  } catch {
+    return { status: 'none', draft: null };
+  }
+  const raw = readRaw(key);
   if (!raw) return { status: 'none', draft: null };
 
   if (isRoaDraftExpired(raw)) {
-    clearRoaDraft(flowType);
+    clearRoaDraft(flowType, scope);
     return { status: 'expired', draft: null };
   }
 
@@ -205,8 +230,8 @@ export function getDraftStatus(flowType) {
 }
 
 /** Convenience wrapper — returns the usable draft (already normalised), or null. */
-export function readRoaDraft(flowType) {
-  return getDraftStatus(flowType).draft;
+export function readRoaDraft(flowType, scope) {
+  return getDraftStatus(flowType, scope).draft;
 }
 
 /** Whether there's enough real client/company data entered to justify a beforeunload warning. */

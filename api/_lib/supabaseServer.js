@@ -53,4 +53,8 @@ export const StoragePaths = Object.freeze({
   signed: (submissionId) => `${submissionId}/signed.pdf`,
   certificate: (submissionId) => `${submissionId}/certificate.pdf`,
   auditLog: (submissionId) => `${submissionId}/audit-log.pdf`,
+  // Provider audit log captured (best effort) just before a pending request is cancelled
+  // for an amendment. Distinct from `auditLog`, which only ever holds a completed
+  // request's log, so the two can never be confused or overwrite each other.
+  supersededAuditLog: (submissionId) => `${submissionId}/superseded-audit-log.pdf`,
 });
