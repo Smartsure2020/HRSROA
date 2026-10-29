@@ -23,6 +23,7 @@ const MIGRATIONS = [
   '20260930_crm_integration.sql',
   '20261005_crm_audit_log_document.sql',
   '20261029_roa_amendments.sql',
+  '20261030_roa_completed_status_guard.sql',
 ];
 const sqlOf = (file) => readFileSync(path.join(process.cwd(), 'supabase/migrations', file), 'utf8');
 
@@ -426,6 +427,238 @@ describe('guards that hold even when the function is bypassed', () => {
     await db.query("update public.roa_submissions set status = 'voided', signing_status = 'cancelled' where id = $1", [root]);
     await db.query("update public.roa_submissions set status = 'signature_failed', sent_for_signature_at = null where id = $1", [root]);
     expect((await rowOf(root)).status).toBe('signature_failed');
+  });
+});
+
+describe('completed-lifecycle guard (20261030_roa_completed_status_guard.sql)', () => {
+  const OTHER_STATUSES = ['submitted', 'awaiting_signature', 'signature_failed', 'voided', 'declined', 'expired'];
+
+  async function completedRoot(n = 1) {
+    const root = await insertRoot(n);
+    await db.query(
+      `update public.roa_submissions set status = 'completed', signing_provider = 'documenso',
+         signing_envelope_id = 'env-1', signing_status = 'completed', completed_at = '2026-10-29T09:00:00Z'
+       where id = $1`,
+      [root],
+    );
+    return root;
+  }
+
+  it('re-applies cleanly (idempotent) and rolls back cleanly, exactly as its header documents', async () => {
+    await db.exec('reset role');
+    await db.exec(sqlOf('20261030_roa_completed_status_guard.sql'));
+    const triggers = async () => (await db.query(
+      `select tgname from pg_trigger where tgrelid = 'public.roa_submissions'::regclass and tgname = 'roa_submissions_guard_completed_status'`,
+    )).rows.length;
+    expect(await triggers()).toBe(1);
+
+    await db.exec('set role service_role');
+    const root = await completedRoot();
+    await expectSqlError(db.query("update public.roa_submissions set status = 'voided' where id = $1", [root]), 'RA014');
+
+    // Rollback block from the migration header.
+    await db.exec('reset role');
+    await db.exec(`
+      drop trigger if exists roa_submissions_guard_completed_status on public.roa_submissions;
+      drop function if exists public.roa_submissions_guard_completed_status();
+    `);
+    expect(await triggers()).toBe(0);
+    await db.exec('set role service_role');
+    await db.query("update public.roa_submissions set status = 'voided' where id = $1", [root]); // no longer guarded
+
+    // Put it back for the rest of the suite.
+    await db.exec('reset role');
+    await db.exec(sqlOf('20261030_roa_completed_status_guard.sql'));
+    expect(await triggers()).toBe(1);
+    await db.exec('set role service_role');
+  });
+
+  it.each(OTHER_STATUSES)('a completed row cannot be moved to %s — a stale write is refused, the record is unchanged', async (status) => {
+    const root = await completedRoot();
+    const before = await rowOf(root);
+    await expectSqlError(
+      db.query('update public.roa_submissions set status = $2 where id = $1', [root, status]),
+      'RA014',
+    );
+    await expectSqlError(
+      db.query('update public.roa_submissions set status = $2, signing_status = $3 where id = $1', [root, status, status]),
+      'RA014',
+    );
+    expect(await rowOf(root)).toEqual(before);
+  });
+
+  it('a row with a completion time but a not-yet-completed status can only move forward to completed', async () => {
+    const root = await insertRoot(1);
+    await db.query(
+      `update public.roa_submissions set status = 'awaiting_signature', signing_status = 'pending',
+         signing_provider = 'documenso', signing_envelope_id = 'env-1' where id = $1`,
+      [root],
+    );
+    // What a reconcile that died half-way leaves behind: completion recorded, status not yet.
+    await db.query("update public.roa_submissions set completed_at = '2026-10-29T09:00:00Z' where id = $1", [root]);
+
+    for (const status of ['voided', 'declined', 'expired', 'signature_failed', 'submitted']) {
+      await expectSqlError(
+        db.query('update public.roa_submissions set status = $2 where id = $1', [root, status]),
+        'RA014',
+      );
+    }
+    // Writes that leave the status alone are fine in this window…
+    await db.query("update public.roa_submissions set crm_client_id = 'c-1' where id = $1", [root]);
+    // …and so is finishing the job.
+    await db.query("update public.roa_submissions set status = 'completed', signing_status = 'completed' where id = $1", [root]);
+    expect((await rowOf(root)).status).toBe('completed');
+  });
+
+  it('a stale "pending"/"cancelled" signing_status cannot sit next to a completed row', async () => {
+    const root = await completedRoot();
+    for (const stale of ['pending', 'cancelled', 'rejected', 'draft']) {
+      await expectSqlError(
+        db.query('update public.roa_submissions set signing_status = $2 where id = $1', [root, stale]),
+        'RA015',
+      );
+    }
+    await expectSqlError(
+      db.query('update public.roa_submissions set signing_status = null where id = $1', [root]),
+      'RA015',
+    );
+    expect((await rowOf(root)).signing_status).toBe('completed');
+    // Re-asserting the true value is harmless.
+    await db.query("update public.roa_submissions set signing_status = 'completed' where id = $1", [root]);
+    await db.query("update public.roa_submissions set signing_status = 'COMPLETED' where id = $1", [root]);
+  });
+
+  it('everything a completed row legitimately needs still works: evidence, CRM filing, reminders, bookkeeping', async () => {
+    const root = await completedRoot();
+    await db.query(
+      `update public.roa_submissions set signed_pdf_storage_path = 'p/signed.pdf', signed_pdf_sha256 = $2,
+         certificate_storage_path = 'p/c.pdf', certificate_sha256 = $2, audit_log_storage_path = 'p/a.pdf',
+         audit_log_sha256 = $2, evidence_retrieved_at = now() where id = $1`,
+      [root, SHA('1')],
+    );
+    await db.query(
+      `update public.roa_submissions set crm_client_id = 'c', crm_deal_id = 'd', crm_sync_status = 'linked',
+         crm_synced_at = now(), signing_meta = '{"lastReminderAt":"2026-10-29T09:00:00Z"}'::jsonb where id = $1`,
+      [root],
+    );
+    // The amendment link is still allowed on a signed record: a revision supersedes it.
+    await db.query(
+      `select * from public.roa_create_revision($1, $2, $3, $4::uuid, 'Personal', 'ref', '{}'::jsonb,
+         't','s','b','f', null, $5, $6, 10, 'incorrect_email', null, $3)`,
+      [id(2), root, 'andrew@hrsinsurance.co.za', '22222222-0000-4000-8000-000000000001', SHA('2'), `${id(2)}/canonical.pdf`],
+    );
+    const after = await rowOf(root);
+    expect(after.status).toBe('completed');
+    expect(after.superseded_by_submission_id).toBe(id(2));
+  });
+
+  it('rows that never completed are completely unaffected', async () => {
+    const root = await insertRoot(1);
+    for (const status of ['awaiting_signature', 'voided', 'signature_failed', 'submitted', 'declined', 'expired', 'awaiting_signature']) {
+      await db.query('update public.roa_submissions set status = $2, signing_status = $3 where id = $1', [root, status, status]);
+    }
+    await db.query("update public.roa_submissions set status = 'completed', signing_status = 'completed' where id = $1", [root]);
+  });
+
+  it('a database owner can still repair a wrongly completed record on purpose, with the documented steps', async () => {
+    const root = await completedRoot();
+    await db.exec('reset role');
+    await db.exec('alter table public.roa_submissions disable trigger roa_submissions_guard_completed_status');
+    // (The write-once evidence/completed_at trigger from 20261029 is separate and not touched here.)
+    await db.query("update public.roa_submissions set status = 'voided', signing_status = 'cancelled' where id = $1", [root]);
+    await db.exec('alter table public.roa_submissions enable trigger roa_submissions_guard_completed_status');
+    await db.exec('set role service_role');
+    expect((await rowOf(root)).status).toBe('voided');
+  });
+
+  it('is invoker-rights with a pinned search_path and grants nothing', async () => {
+    await db.exec('reset role');
+    const { rows } = await db.query(
+      `select prosecdef, proconfig from pg_proc where proname = 'roa_submissions_guard_completed_status'`,
+    );
+    await db.exec('set role service_role');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].prosecdef).toBe(false);
+    expect(String(rows[0].proconfig)).toContain('search_path=public, pg_temp');
+  });
+});
+
+describe('operator runbook (ROA_Amend_Deployment_and_Acceptance.md §10) runs exactly as written', () => {
+  const doc = readFileSync(path.join(process.cwd(), 'ROA_Amend_Deployment_and_Acceptance.md'), 'utf8');
+  const runbook = doc.slice(doc.indexOf('## 10. Operator runbook'));
+  const [findSql, resolveSql] = [...runbook.matchAll(/```sql\r?\n([\s\S]*?)```/g)].map((m) => m[1].trim().replace(/;$/, ''));
+
+  async function stuckPair() {
+    const old = await insertRoot(1);
+    await db.query(
+      `update public.roa_submissions set status = 'awaiting_signature', signing_provider = 'documenso',
+         signing_envelope_id = 'env-1', signing_status = 'pending' where id = $1`,
+      [old],
+    );
+    await createRevision(revisionArgs(2, 1));
+    await db.query(
+      `update public.roa_submissions set signing_meta = $2::jsonb where id = $1`,
+      [old, JSON.stringify({
+        externalId: old,
+        supersession: {
+          replacementId: id(2),
+          manualResolution: { required: true, reason: 'delete_unacknowledged', flaggedAt: '2026-10-29T09:00:00Z' },
+        },
+      })],
+    );
+    return old;
+  }
+
+  const bind = (sql) => sql
+    .replace('<ROA id of the OLD revision>', id(1))
+    .replace('<ROA id of the replacement>', id(2));
+
+  it('the document contains both statements', () => {
+    expect(findSql).toMatch(/^select id, revision_no/);
+    expect(resolveSql).toMatch(/^update public\.roa_submissions/);
+  });
+
+  it('finds the stuck request, then resolves exactly that one row and nothing else', async () => {
+    const old = await stuckPair();
+    await db.exec('reset role'); // a database owner, as the runbook says
+
+    const found = await db.query(findSql);
+    expect(found.rows).toHaveLength(1);
+    expect(found.rows[0]).toMatchObject({ id: old, reason: 'delete_unacknowledged', replacement: id(2) });
+
+    const replacementBefore = await rowOf(id(2));
+    const oldBefore = await rowOf(old);
+    const done = await db.query(bind(resolveSql));
+    expect(done.affectedRows).toBe(1);
+
+    const after = await rowOf(old);
+    expect(after).toMatchObject({ status: 'voided', signing_status: 'cancelled', superseded_by_submission_id: id(2) });
+    expect(after.signing_meta.supersession.manualResolution.resolvedAt).toBeTruthy();
+    expect(after.signing_meta.supersession.manualResolution.reason).toBe('delete_unacknowledged');
+    // The record itself — snapshot, canonical PDF and hash — is exactly as it was.
+    for (const column of ['snapshot_json', 'pdf_sha256', 'pdf_storage_path', 'pdf_byte_length', 'signing_envelope_id', 'revision_no']) {
+      expect(after[column], column).toEqual(oldBefore[column]);
+    }
+    expect(await rowOf(id(2))).toEqual(replacementBefore); // the replacement is not touched
+    expect((await db.query(findSql)).rows).toHaveLength(0); // no longer listed
+
+    // Running it again changes nothing (idempotent): the row is no longer open.
+    expect((await db.query(bind(resolveSql))).affectedRows).toBe(0);
+    await db.exec('set role service_role');
+  });
+
+  it('never touches a request that has completed', async () => {
+    const old = await stuckPair();
+    await db.query(
+      `update public.roa_submissions set status = 'completed', signing_status = 'completed',
+         completed_at = '2026-10-29T09:00:00Z' where id = $1`,
+      [old],
+    );
+    await db.exec('reset role');
+    expect((await db.query(findSql)).rows).toHaveLength(0);
+    expect((await db.query(bind(resolveSql))).affectedRows).toBe(0);
+    expect((await rowOf(old)).status).toBe('completed');
+    await db.exec('set role service_role');
   });
 });
 

@@ -22,6 +22,7 @@ import {
   summariseChain,
 } from '../lib/roaAmendment';
 import { describeSignatureSendError } from '../lib/signatureSendFeedback';
+import ManualResolutionNotice from '../components/hrs/ManualResolutionNotice';
 import { describeCrmSyncError } from '../lib/crmAdapter';
 
 const FILTERS = [
@@ -338,6 +339,7 @@ export default function RoaRegister() {
                   <Pencil className="w-3.5 h-3.5" /> Amend ROA
                 </button>
               )}
+              <ManualResolutionNotice reason={selected.supersessionManualResolution} />
               {!selected.amendable && selected.amendBlockReason && selected.amendBlockReason !== 'already_superseded' && (
                 <p className="basis-full text-[0.74rem] text-hrs-muted">
                   {AMENDMENT_BLOCK_MESSAGES[selected.amendBlockReason]}

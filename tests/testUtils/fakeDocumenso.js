@@ -159,13 +159,25 @@ export function makeFakeDocumenso() {
       env.completedAt = '2026-10-29T09:00:00.000Z';
       env.recipients.forEach((r) => { r.signingStatus = 'SIGNED'; });
     },
-    /** Script a response; consulted before the default behaviour. */
+    /**
+     * Script a response; consulted before the default behaviour. Returns a function that
+     * removes the override again (for a fault that is later "fixed").
+     */
     override(match, respond, { once = true } = {}) {
-      overrides.push({ match, respond, once });
+      const entry = { match, respond, once };
+      overrides.push(entry);
+      return () => {
+        const index = overrides.indexOf(entry);
+        if (index >= 0) overrides.splice(index, 1);
+      };
     },
     callsTo(method, pathPrefix) {
       return calls.filter((call) => call.method === method && call.path.startsWith(pathPrefix));
     },
     json: jsonResponse,
+    /** A PDF-bodied response, for scripting the download endpoints. */
+    pdf: pdfResponse,
+    /** The bytes the fake serves for an audit log, so tests can compute their hash. */
+    auditLogBytes: (envelopeId) => PDF(`audit-log ${envelopeId}`),
   };
 }

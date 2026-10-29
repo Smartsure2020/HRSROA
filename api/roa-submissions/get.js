@@ -14,7 +14,7 @@
 // never logged, and is never part of the normal get / list responses.
 
 import { requireAuthenticatedBroker } from '../_lib/auth.js';
-import { loadSubmissionForBroker } from '../_lib/submissionRepo.js';
+import { loadSubmissionForBroker, SUPERSEDABLE_STATUSES } from '../_lib/submissionRepo.js';
 import { isSubmissionId } from '../../src/lib/roaSubmissionSnapshot.js';
 import { derivedComplianceAvailability } from '../_lib/derivedCompliancePdf.js';
 import { hasSigningEnvelope, signingProviderFor } from '../_lib/signingLifecycle.js';
@@ -27,6 +27,14 @@ function amendmentFacts(row) {
     hasEnvelope: hasSigningEnvelope(row),
     signingProvider: signingProviderFor(row),
   };
+}
+
+function manualResolutionReason(row) {
+  const flag = row.signing_meta?.supersession?.manualResolution;
+  if (!flag?.required || flag.resolvedAt) return null;
+  // Only meaningful while the request is still open; once voided/completed it is history.
+  if (!SUPERSEDABLE_STATUSES.includes(row.status) || row.completed_at) return null;
+  return String(flag.reason || 'manual_resolution_required');
 }
 
 export function toClientView(row) {
@@ -86,6 +94,9 @@ export function toClientView(row) {
     amendedAt: row.amended_at || null,
     amendable: amendBlockReason === null,
     amendBlockReason,
+    // Set while a replacement could not be sent because this still-open request cannot be
+    // cancelled safely by automation; a person must resolve it (see the operator runbook).
+    supersessionManualResolution: manualResolutionReason(row),
     amendWillCancelSigningRequest: amendmentWillCancelSigningRequest({
       status: row.status,
       hasEnvelope: hasSigningEnvelope(row),

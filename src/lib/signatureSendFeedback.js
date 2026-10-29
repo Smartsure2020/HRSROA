@@ -25,9 +25,12 @@ const SEND_REFUSAL_MESSAGES = Object.freeze({
     'The signing provider refused to cancel the previous signature request, so nothing was sent.',
   predecessor_status_unavailable:
     'The previous signature request could not be checked just now, so nothing was sent. Please try again shortly.',
-  predecessor_unverifiable:
-    'The previous signature request could not be found at the signing provider, so it cannot be confirmed as cancelled. '
-    + 'Nothing was sent. Contact support before retrying.',
+  predecessor_audit_backup_failed:
+    'Someone has already signed the previous signature request, and its signing audit trail could not be saved just now. '
+    + 'The previous request has NOT been cancelled and nothing was sent. Please try again shortly.',
+  predecessor_manual_resolution_required:
+    'The previous signature request cannot be cancelled safely by the system, so it has been left exactly as it is '
+    + 'and nothing was sent. Please contact HRS compliance and quote this ROA reference; they will check the signing provider and resolve it.',
   predecessor_send_in_progress:
     'The previous revision is still being sent. Wait a minute, then try again.',
   predecessor_changed:
@@ -44,8 +47,32 @@ const SEND_REFUSAL_MESSAGES = Object.freeze({
   documenso_environment_misconfigured: 'The signing provider is not configured. Nothing was sent.',
 });
 
+// Why a person has to take over (reason given with predecessor_manual_resolution_required).
+const MANUAL_RESOLUTION_DETAIL = Object.freeze({
+  audit_backup_unavailable:
+    'Someone has already signed it and the signing audit trail could not be preserved automatically.',
+  envelope_missing_unexplained:
+    'The signing provider no longer has it and the system did not cancel it.',
+  delete_not_dispatched:
+    'The signing provider no longer has it, but the system had not yet asked for it to be cancelled.',
+  delete_unacknowledged:
+    'The signing provider no longer has it, but it never confirmed that it was cancelled by the system.',
+});
+
 /** Human message for a failed send; falls back to the raw server message. */
 export function describeSignatureSendError(err) {
   const code = err?.code || err?.message;
-  return SEND_REFUSAL_MESSAGES[code] || err?.message || 'Could not send signature request. Please try again.';
+  const base = SEND_REFUSAL_MESSAGES[code];
+  if (code === 'predecessor_manual_resolution_required') {
+    const detail = MANUAL_RESOLUTION_DETAIL[err?.data?.reason];
+    return detail ? `${detail} ${base}` : base;
+  }
+  return base || err?.message || 'Could not send signature request. Please try again.';
+}
+
+/** Notice shown against a request that is waiting for a person to resolve it. */
+export function describeManualResolution(reason) {
+  if (!reason) return null;
+  return `${MANUAL_RESOLUTION_DETAIL[reason] || 'It cannot be cancelled safely by the system.'} `
+    + 'The revision that replaces it has not been sent. Contact HRS compliance with this ROA reference.';
 }

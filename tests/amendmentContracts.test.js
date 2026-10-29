@@ -94,17 +94,85 @@ describe('replacement gate wiring', () => {
     expect(del).toBeGreaterThan(-1);
     expect(verify).toBeGreaterThan(del);
     expect(finalise).toBeGreaterThan(verify);
-    // The intent is persisted before the provider is touched.
-    expect(src.indexOf('await recordSupersessionIntent(predecessor.id, broker, { ...baseMeta, supersession })'))
-      .toBeLessThan(del);
   });
 
-  it('the status write that voids a request is a compare-and-swap on status and completion', () => {
+  it('the cancellation steps run in the safe order: intent → evidence → fresh read → dispatch → delete → acknowledgement', () => {
+    const src = code('api/_lib/supersession.js');
+    const run = src.slice(src.indexOf('async function runCancellation'));
+    const at = (needle, from = 0) => {
+      const index = run.indexOf(needle, from);
+      expect(index, needle).toBeGreaterThan(-1);
+      return index;
+    };
+    const intent = at('cancelRequestedAt:');
+    const evidence = at('await preserveAuditTrail(', intent);
+    const freshRead = at('await getDocumensoEnvelope(envelopeId)', evidence);
+    const dispatch = at('deleteDispatchedAt:', freshRead);
+    const del = at('await deleteDocumensoEnvelope(', dispatch);
+    const ack = at('deleteAcknowledgedAt:', del);
+    const verify = at('await observeEnvelope(envelopeId)', ack);
+    expect(intent).toBeLessThan(evidence);
+    expect(evidence).toBeLessThan(freshRead);
+    expect(freshRead).toBeLessThan(dispatch);
+    expect(dispatch).toBeLessThan(del);
+    expect(del).toBeLessThan(ack);
+    expect(ack).toBeLessThan(verify);
+  });
+
+  it('a 404 is only ever credited to us through the persisted provider acknowledgement', () => {
+    const signing = code('api/_lib/documensoSigning.js');
+    const refresh = signing.slice(signing.indexOf('export async function refreshViaDocumenso'));
+    expect(refresh).toMatch(/err\?\.status === 404 && providerAcknowledgedOurDelete\(row\)/);
+    // The recorded INTENT is not an input to either 404 decision.
+    expect(signing.slice(signing.indexOf('export function providerAcknowledgedOurDelete'), signing.indexOf('export async function refreshViaDocumenso')))
+      .not.toMatch(/cancelRequestedAt/);
+    const src = code('api/_lib/supersession.js');
+    const missing = src.slice(src.indexOf('async function settleMissingEnvelope'), src.indexOf('async function abortForCompletion'));
+    expect(missing).toMatch(/state\.deleteAcknowledgedAt/);
+    const accepting = missing.slice(0, missing.indexOf('verifiedBy:'));
+    expect(accepting).not.toMatch(/cancelRequestedAt/);
+  });
+
+  it('a partially signed request is never deleted before a verified copy of its audit log exists', () => {
+    const src = code('api/_lib/supersession.js');
+    const backup = src.slice(src.indexOf('async function downloadAndVerifyAuditLog'), src.indexOf('async function cancelLiveEnvelope'));
+    // downloaded → stored → READ BACK → hash compared
+    const order = ['downloadDocumensoAuditLog(', 'ensurePdfStored(', 'await downloadPdf(path)', 'sha256HexOfBytes(stored)']
+      .map((needle) => backup.indexOf(needle));
+    expect(order.every((index) => index > -1)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // A failed backup can only end in retry or manual resolution — never fall through to the delete.
+    const failure = backup.slice(backup.indexOf('} catch (err) {', backup.indexOf('async function preserveAuditTrail')));
+    expect(failure).toMatch(/requireManualResolution\(ctx, 'audit_backup_unavailable'\)/);
+    expect(failure).toMatch(/throw new SupersessionError\('predecessor_audit_backup_failed'/);
+    expect(failure).not.toMatch(/deleteDocumensoEnvelope/);
+  });
+
+  it('every status write on the predecessor is conditional and broker-scoped', () => {
     const repo = code('api/_lib/submissionRepo.js');
-    const fn = repo.slice(repo.indexOf('export async function markSupersededVoided'));
-    expect(fn).toMatch(/\.in\('status', SUPERSEDABLE_STATUSES\)/);
-    expect(fn).toMatch(/\.is\('completed_at', null\)/);
-    expect(fn).toMatch(/\.ilike\('advisor_email', ownerEmailPattern\(broker\)\)/);
+    const slice = (name) => repo.slice(repo.indexOf(`export async function ${name}`), repo.indexOf('export async function', repo.indexOf(`export async function ${name}`) + 10));
+    for (const name of ['markSupersededVoided', 'recordSupersessionState', 'applyProviderObservation', 'setCompletionIfMissing', 'adoptRecoveredEnvelope']) {
+      const fn = slice(name);
+      expect(fn, name).toMatch(/\.ilike\('advisor_email', ownerEmailPattern\(broker\)\)/);
+    }
+    for (const name of ['markSupersededVoided', 'recordSupersessionState', 'applyProviderObservation', 'setCompletionIfMissing']) {
+      expect(slice(name), name).toMatch(/SUPERSEDABLE_STATUSES/);
+    }
+    for (const name of ['markSupersededVoided', 'recordSupersessionState', 'adoptRecoveredEnvelope']) {
+      expect(slice(name), name).toMatch(/\.is\('completed_at', null\)/);
+    }
+    // Adopting a recovered envelope only ever applies to the exact reservation being recovered.
+    expect(slice('adoptRecoveredEnvelope')).toMatch(/\.eq\('status', 'awaiting_signature'\)[\s\S]*\.is\('signing_envelope_id', null\)/);
+    expect(slice('markSupersededVoided')).toMatch(/\.eq\('superseded_by_submission_id', replacementId\)/);
+    expect(slice('markSupersededVoided')).toMatch(/\.in\('status', SUPERSEDABLE_STATUSES\)/);
+    // The unconditional helper must not be used to write a provider observation or a supersession step.
+    for (const file of ['api/_lib/supersession.js', 'api/_lib/documensoSigning.js', 'api/_lib/signingReconciliation.js']) {
+      const src = code(file);
+      const body = file.endsWith('documensoSigning.js')
+        ? src.slice(src.indexOf('export async function refreshViaDocumenso'), src.indexOf('function reminderError'))
+        : src;
+      expect(body, file).not.toMatch(/\bupdateSubmission\(/);
+    }
   });
 });
 
@@ -192,6 +260,33 @@ describe('migration safety', () => {
     expect(rawSql).toMatch(/BEFORE the matching[\s-]+HRSROA build is deployed/i);
     expect(rawSql).toMatch(/Do NOT apply to production automatically/);
     expect(rawSql).toMatch(/Rollback/);
+  });
+});
+
+describe('completed-status guard migration safety', () => {
+  const rawSql = read('supabase/migrations/20261030_roa_completed_status_guard.sql');
+  const sql = rawSql.replace(/^\s*--.*$/gm, '');
+
+  it('is additive and only adds a check: no data, column, grant or policy changes', () => {
+    expect(sql).not.toMatch(/\b(drop\s+table|delete\s+from|truncate|alter\s+table|grant|revoke|create\s+policy|update\s+public)/i);
+    expect(sql).toMatch(/create trigger roa_submissions_guard_completed_status\s+before update on public\.roa_submissions/);
+    expect(sql).not.toMatch(/security definer/i);
+  });
+
+  it('only ever blocks a status CHANGE away from completed, never a write that leaves it alone', () => {
+    expect(sql).toMatch(/new\.status is distinct from old\.status and new\.status is distinct from 'completed'/);
+  });
+
+  it('documents deployment order, the deliberate-repair steps and rollback', () => {
+    expect(rawSql).toMatch(/Apply it together with 20261029_roa_amendments\.sql, BEFORE\s+-- the matching HRSROA build/);
+    expect(rawSql).toMatch(/Do NOT apply to production automatically/);
+    expect(rawSql).toMatch(/disable trigger roa_submissions_guard_completed_status/);
+    expect(rawSql).toMatch(/Rollback/);
+  });
+
+  it('leaves the amendments migration exactly as it was reviewed', () => {
+    // The first migration must not mention the follow-up: the two are independent and ordered.
+    expect(read('supabase/migrations/20261029_roa_amendments.sql')).not.toMatch(/completed_status_guard|RA014|RA015/);
   });
 });
 

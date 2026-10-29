@@ -33,7 +33,7 @@ import {
   applyConditionalCleanup as commercialCleanup,
 } from '../src/lib/hrsCommercialConstants.js';
 import { createSubmissionSnapshot, generateSubmissionId } from '../src/lib/roaSubmissionSnapshot.js';
-import { describeSignatureSendError } from '../src/lib/signatureSendFeedback.js';
+import { describeManualResolution, describeSignatureSendError } from '../src/lib/signatureSendFeedback.js';
 import { describeCrmSyncError, isCrmSyncDeferred } from '../src/lib/crmAdapter.js';
 
 describe('amendment reasons', () => {
@@ -181,7 +181,8 @@ describe('revision lineage presentation', () => {
   it('every refusal the send endpoint can give has a plain-language message', () => {
     const codes = [
       'submission_superseded', 'predecessor_completed', 'predecessor_cancel_unverified',
-      'predecessor_cancel_rejected', 'predecessor_status_unavailable', 'predecessor_unverifiable',
+      'predecessor_cancel_rejected', 'predecessor_status_unavailable',
+      'predecessor_audit_backup_failed', 'predecessor_manual_resolution_required',
       'predecessor_send_in_progress', 'predecessor_changed', 'predecessor_provider_unsupported',
       'predecessor_status_unrecognised', 'predecessor_missing', 'revision_chain_inconsistent',
       'replacement_gate_failed',
@@ -191,6 +192,14 @@ describe('revision lineage presentation', () => {
       expect(text, code).not.toBe(code);
       expect(text.length, code).toBeGreaterThan(20);
     }
+    // A person has to take over: the message says why, in plain words, for every reason.
+    for (const reason of ['audit_backup_unavailable', 'envelope_missing_unexplained', 'delete_not_dispatched', 'delete_unacknowledged']) {
+      const text = describeSignatureSendError({ code: 'predecessor_manual_resolution_required', data: { reason } });
+      expect(text, reason).toMatch(/contact HRS compliance/i);
+      expect(text, reason).not.toMatch(new RegExp(reason));
+      expect(describeManualResolution(reason), reason).toMatch(/not been sent/);
+    }
+    expect(describeManualResolution(null)).toBeNull();
     expect(describeSignatureSendError(new Error('something else'))).toBe('something else');
     expect(describeSignatureSendError({})).toMatch(/Could not send/);
   });

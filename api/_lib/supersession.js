@@ -19,17 +19,34 @@
 //       COMPLETED                               abort — keep it as the signed record,
 //                                               reconcile its evidence, block this send
 //       REJECTED / CANCELLED                    record it, send proceeds
-//       PENDING / DRAFT                         persist intent → capture audit log (best
-//                                               effort) → delete → VERIFY by re-reading →
-//                                               mark voided (compare-and-swap) → proceed
-//       404 / anything else                     block (404 only counts as "cancelled" when
-//                                               our own persisted intent says we asked)
+//       PENDING / DRAFT                         see "cancelling" below
+//       404                                     proof only if the provider ACKNOWLEDGED our
+//                                               own delete; otherwise manual resolution
 //   live DocuSign (legacy) envelope           block — this app cannot cancel it
 //
-// Every step is safe to repeat: the intent marker lives in signing_meta.supersession and
-// the database writes are compare-and-swap on status + completed_at, so a double click,
-// a second tab or a retry after a timeout converges on the same result and never
-// produces two live signing requests.
+// Cancelling a PENDING / DRAFT envelope (cancelLiveEnvelope), in this order:
+//   1. persist the INTENT (a marker only — it proves nothing about the provider);
+//   2. if anyone may already have signed: preserve the provider's audit log — downloaded,
+//      stored, read back and hash-verified — BEFORE anything is deleted. If that cannot be
+//      done the request is left exactly as it is (retryable, then manual resolution);
+//   3. re-read the envelope immediately before the delete, so the cancellation acts on a
+//      fresh observation, not the one taken before the (slow) backup;
+//   4. persist that the delete is being DISPATCHED, then send it;
+//   5. persist the provider's ACKNOWLEDGEMENT (a 2xx) of that delete;
+//   6. VERIFY by re-reading: only "gone"/"cancelled" after an acknowledged delete, or an
+//      explicit CANCELLED, counts; a 404 with no acknowledgement does not;
+//   7. compare-and-swap the row to voided (open + no completion time + linked successor).
+//
+// Every status write on the predecessor is conditional on its CURRENT lifecycle (open and
+// not completed) and scoped to the broker, so a stale observation or a stale cancellation
+// can never overwrite a concurrently completed record: that write simply matches nothing.
+// Every step is safe to repeat; a double click, a second tab or a retry after a timeout
+// converges on the same result and never produces two live signing requests.
+//
+// "Manual resolution" (predecessor_manual_resolution_required) is the explicit end state for
+// everything automation cannot prove safe: nothing is cancelled, nothing is sent, the row is
+// flagged in signing_meta.supersession.manualResolution, and the broker is told to contact
+// HRS compliance. See ROA_Amend_Deployment_and_Acceptance.md for the operator runbook.
 
 import {
   deleteDocumensoEnvelope,
@@ -38,20 +55,33 @@ import {
   getDocumensoEnvelope,
   isDocumensoConfigured,
 } from './documensoClient.js';
-import { refreshViaDocumenso, reservationMayStillBeInFlight } from './documensoSigning.js';
 import {
+  providerAcknowledgedOurDelete,
+  refreshViaDocumenso,
+  reservationMayStillBeInFlight,
+} from './documensoSigning.js';
+import {
+  adoptRecoveredEnvelope,
+  applyProviderObservation,
+  downloadPdf,
   ensurePdfStored,
   loadSubmissionForBroker,
   markSupersededVoided,
-  recordSupersessionIntent,
+  recordSupersessionState,
   releaseSigningReservation,
   StoragePaths,
-  updateSubmission,
+  SUPERSEDABLE_STATUSES,
 } from './submissionRepo.js';
 import { sha256HexOfBytes } from './sha256.js';
 import { hasSigningEnvelope, signingProviderFor } from './signingLifecycle.js';
 
 const NOT_LIVE_STATUSES = new Set(['completed', 'declined', 'voided', 'expired']);
+const SUPERSEDABLE = new Set(SUPERSEDABLE_STATUSES);
+
+/** Consecutive failed audit-log backups before the broker is sent to manual resolution. */
+export const AUDIT_BACKUP_MAX_ATTEMPTS = 3;
+/** How long a dispatched delete may still be being acknowledged by a concurrent request. */
+export const DELETE_IN_FLIGHT_GRACE_MS = 60 * 1000;
 
 export class SupersessionError extends Error {
   constructor(code, status, extra = {}) {
@@ -63,11 +93,26 @@ export class SupersessionError extends Error {
   }
 }
 
+/** Control flow only: a step found the row already settled, so the gate ends with that result. */
+class SettledEarly {
+  constructor(result) {
+    this.result = result;
+  }
+}
+
 function settled(predecessor, outcome) {
   return { required: true, outcome, predecessor };
 }
 
 const upper = (value) => String(value || '').toUpperCase();
+const nowIso = () => new Date().toISOString();
+
+function withinDeleteGrace(dispatchedAt) {
+  const at = Date.parse(dispatchedAt || '');
+  if (!Number.isFinite(at)) return false;
+  const age = Date.now() - at;
+  return age >= 0 && age < DELETE_IN_FLIGHT_GRACE_MS;
+}
 
 /** Recipient progress without any personal data: order, role and signing state only. */
 function summariseRecipients(envelope) {
@@ -77,6 +122,33 @@ function summariseRecipients(envelope) {
     role: recipient?.role ? String(recipient.role) : null,
     signingStatus: upper(recipient?.signingStatus) || null,
   }));
+}
+
+const KNOWN_SIGNING_STATES = new Set(['NOT_SIGNED', 'SIGNED', 'REJECTED']);
+
+/**
+ * Has anybody signed? Answers conservatively: a PENDING request whose recipients cannot be
+ * read, or are in a state we do not recognise, is treated as possibly signed — the evidence
+ * is preserved first or the request is left alone. A DRAFT was never distributed, so
+ * nobody can have signed it.
+ *
+ * `signedKey` identifies WHICH signatures exist, so a backup is only reused while the
+ * signing progress is the one it was taken at.
+ */
+function signingProgress(envelope, observed) {
+  const recipients = summariseRecipients(envelope);
+  if (observed === 'DRAFT') return { recipients, mayHaveSigned: false, signedKey: 'none' };
+
+  const readable = recipients.length > 0
+    && recipients.every((recipient) => KNOWN_SIGNING_STATES.has(recipient.signingStatus));
+  if (!readable) return { recipients, mayHaveSigned: true, signedKey: 'unknown' };
+
+  const signed = recipients
+    .map((recipient, index) => ({ ...recipient, index }))
+    .filter((recipient) => recipient.signingStatus === 'SIGNED')
+    .map((recipient) => String(recipient.signingOrder ?? `i${recipient.index}`))
+    .sort();
+  return { recipients, mayHaveSigned: signed.length > 0, signedKey: signed.length ? signed.join(',') : 'none' };
 }
 
 /**
@@ -96,7 +168,12 @@ export async function resolvePredecessorForReplacement({ replacement, broker }) 
   if (predecessor.superseded_by_submission_id !== replacement.id) {
     throw new SupersessionError('revision_chain_inconsistent', 409);
   }
-  return settlePredecessor({ predecessor, replacement, broker });
+  try {
+    return await settlePredecessor({ predecessor, replacement, broker });
+  } catch (err) {
+    if (err instanceof SettledEarly) return err.result;
+    throw err;
+  }
 }
 
 async function settlePredecessor({ predecessor, replacement, broker }) {
@@ -148,12 +225,17 @@ async function settleUnconfirmedSend({ predecessor, replacement, broker }) {
     return settled(reloaded || predecessor, 'predecessor_not_live');
   }
 
-  const adopted = await updateSubmission(predecessor.id, {
+  const adopted = await adoptRecoveredEnvelope(predecessor.id, broker, {
     signing_provider: 'documenso',
     signing_envelope_id: found.id,
     signing_status: String(found.status || 'pending').toLowerCase(),
     signing_meta: { ...(predecessor.signing_meta || {}), externalId: predecessor.id },
   });
+  if (!adopted) {
+    // The reservation moved on while we looked (envelope recorded, voided, completed…).
+    const latest = await loadSubmissionForBroker(predecessor.id, broker);
+    throw new SupersessionError('predecessor_changed', 409, { retryable: true, predecessor: latest || predecessor });
+  }
   return settleLiveDocumenso({ predecessor: adopted, replacement, broker });
 }
 
@@ -169,7 +251,7 @@ async function settleLiveDocumenso({ predecessor, replacement, broker }) {
   const observed = upper(envelope?.status);
   if (observed === 'COMPLETED') return abortForCompletion({ predecessor, broker });
   if (observed === 'REJECTED' || observed === 'CANCELLED') {
-    return settled(await recordProviderTerminal(predecessor, observed), 'predecessor_not_live');
+    return recordProviderTerminal(predecessor, observed, broker);
   }
   if (observed === 'PENDING' || observed === 'DRAFT') {
     return cancelLiveEnvelope({ predecessor, replacement, broker, envelope, observed });
@@ -178,24 +260,40 @@ async function settleLiveDocumenso({ predecessor, replacement, broker }) {
 }
 
 /**
- * The provider no longer knows the envelope. That is only accepted as "cancelled" when our
- * own persisted intent shows we asked for it (a previous attempt that died after the
- * provider acted but before we recorded it). Any other 404 could be a wrong environment,
- * a different account or a deletion we cannot explain — so it blocks.
+ * The provider no longer knows the envelope. By itself that proves nothing: it is also what
+ * a wrong environment, a deletion done by someone else, or a completed request that was
+ * soft-deleted looks like. It is accepted as "our cancellation succeeded" only when the
+ * provider ACKNOWLEDGED the delete we sent (persisted before this attempt). Our recorded
+ * intent is not evidence: it is written before the delete exists.
+ *
+ *   acknowledged delete                  → verified, finalise
+ *   delete dispatched a moment ago       → a concurrent request may still be acknowledging
+ *                                           it: retryable, nothing changed
+ *   anything else                        → manual resolution
  */
 async function settleMissingEnvelope({ predecessor, replacement, broker }) {
   const fresh = (await loadSubmissionForBroker(predecessor.id, broker)) || predecessor;
-  const intent = fresh.signing_meta?.supersession;
   if (NOT_LIVE_STATUSES.has(fresh.status)) return settled(fresh, 'predecessor_not_live');
-  if (intent?.cancelRequestedAt && intent.replacementId === replacement.id) {
+
+  const state = fresh.signing_meta?.supersession;
+  const ours = Boolean(state) && state.replacementId === replacement.id;
+
+  if (ours && state.deleteAcknowledgedAt) {
     return finaliseVoided({
-      predecessor: fresh,
-      broker,
-      supersession: { ...intent, verifiedBy: 'not_found_after_requested_cancel' },
+      ctx: makeContext({ row: fresh, broker, replacement }),
+      verifiedBy: 'not_found_after_acknowledged_delete',
       outcome: 'predecessor_already_cancelled',
     });
   }
-  throw new SupersessionError('predecessor_unverifiable', 409, { predecessor: fresh });
+  if (ours && state.deleteDispatchedAt && withinDeleteGrace(state.deleteDispatchedAt)) {
+    throw new SupersessionError('predecessor_cancel_unverified', 503, { retryable: true, predecessor: fresh });
+  }
+
+  let reason = 'envelope_missing_unexplained';
+  if (ours && state.cancelRequestedAt) {
+    reason = state.deleteDispatchedAt ? 'delete_unacknowledged' : 'delete_not_dispatched';
+  }
+  return requireManualResolution(makeContext({ row: fresh, broker, replacement }), reason);
 }
 
 /**
@@ -215,9 +313,35 @@ async function abortForCompletion({ predecessor, broker }) {
   throw new SupersessionError('predecessor_completed', 409, { predecessor: reconciled });
 }
 
-async function recordProviderTerminal(predecessor, observed) {
+/**
+ * A conditional write that the row no longer matched: someone else moved it first. Decide
+ * from its CURRENT state; a completion always wins and is never overwritten.
+ */
+async function resolveLostRace(row, broker) {
+  const latest = await loadSubmissionForBroker(row.id, broker);
+  if (latest && (latest.status === 'completed' || latest.completed_at)) {
+    return abortForCompletion({ predecessor: latest, broker });
+  }
+  if (latest?.status === 'voided') return settled(latest, 'predecessor_already_cancelled');
+  if (latest && NOT_LIVE_STATUSES.has(latest.status)) return settled(latest, 'predecessor_not_live');
+  throw new SupersessionError('predecessor_changed', 409, { retryable: true, predecessor: latest || row });
+}
+
+/**
+ * The provider reports the request as declined or cancelled. Recorded with the same
+ * conditional write as every other observation: if the row completed or otherwise moved
+ * meanwhile, it matches nothing and the current state decides.
+ */
+async function recordProviderTerminal(predecessor, observed, broker) {
   const status = observed === 'REJECTED' ? 'declined' : 'voided';
-  return updateSubmission(predecessor.id, { status, signing_status: observed.toLowerCase() });
+  const updated = await applyProviderObservation(
+    predecessor.id,
+    broker,
+    { status, signing_status: observed.toLowerCase() },
+    { completion: false },
+  );
+  if (updated) return settled(updated, 'predecessor_not_live');
+  return resolveLostRace(predecessor, broker);
 }
 
 async function observeEnvelope(envelopeId) {
@@ -227,7 +351,7 @@ async function observeEnvelope(envelopeId) {
     if (status === 'CANCELLED') return { state: 'cancelled' };
     if (status === 'COMPLETED') return { state: 'completed' };
     if (status === 'REJECTED') return { state: 'rejected' };
-    if (status === 'PENDING' || status === 'DRAFT') return { state: 'live' };
+    if (status === 'PENDING' || status === 'DRAFT') return { state: 'live', envelope };
     return { state: 'unknown' };
   } catch (err) {
     if (err?.status === 404) return { state: 'gone' };
@@ -235,63 +359,204 @@ async function observeEnvelope(envelopeId) {
   }
 }
 
+// ---------------------------------------------------------------------------------------
+// Cancellation state machine. `ctx` carries the broker, the replacement, the latest row we
+// persisted and the accumulated signing_meta.supersession state.
+
+function makeContext({ row, broker, replacement }) {
+  return { row, broker, replacement, state: { ...(row.signing_meta?.supersession || {}) } };
+}
+
 /**
- * Best effort: keep a copy of the provider's audit log before a partially-signed request
- * is withdrawn (the vendor documents deletion of a pending envelope as irreversible and
- * does not say whether its audit trail survives). A failure never blocks the amendment —
- * the recipient progress is recorded in signing_meta regardless.
+ * Persists a patch of the supersession state. Returns true when it was written; false when
+ * the row no longer matched (it moved on — the caller decides). The in-memory state always
+ * advances, so a step that could not be persisted is still reasoned about correctly.
  */
-async function captureAuditLog({ predecessor, envelopeId, now }) {
-  const previous = predecessor.signing_meta?.supersession?.auditLog;
-  if (previous?.sha256) return previous;
+async function commit(ctx, patch) {
+  ctx.state = { ...ctx.state, ...patch };
+  const next = await recordSupersessionState(ctx.row.id, ctx.broker, {
+    ...(ctx.row.signing_meta || {}),
+    supersession: ctx.state,
+  });
+  if (!next) return false;
+  ctx.row = next;
+  return true;
+}
+
+/** Commit that must land: if the row moved on, the gate ends with the row's current state. */
+async function commitOrSettle(ctx, patch) {
+  if (await commit(ctx, patch)) return;
+  throw new SettledEarly(await resolveLostRace(ctx.row, ctx.broker));
+}
+
+/**
+ * Automation cannot prove it is safe to continue. Flags the row (best effort — failing to
+ * flag never changes the outcome), changes nothing else and refuses the send.
+ */
+async function requireManualResolution(ctx, reason) {
+  const flaggedAt = nowIso();
   try {
-    const bytes = await downloadDocumensoAuditLog(envelopeId);
-    const sha256 = sha256HexOfBytes(bytes);
-    const path = StoragePaths.supersededAuditLog(predecessor.id);
-    await ensurePdfStored(path, bytes, { expectedSha256: sha256 });
-    return { path, sha256, capturedAt: now };
+    await commit(ctx, { manualResolution: { required: true, reason, flaggedAt } });
   } catch (err) {
-    console.error('supersession: audit-log capture failed', err?.message);
-    return { captured: false };
+    console.error('supersession: could not persist the manual-resolution flag', err?.message);
+  }
+  console.error('supersession: manual resolution required', reason);
+  throw new SupersessionError('predecessor_manual_resolution_required', 409, {
+    reason,
+    retryable: false,
+    predecessor: ctx.row,
+  });
+}
+
+// ---------------------------------------------------------------------------------------
+// Evidence preservation for a partially signed request.
+
+function looksLikePdf(bytes) {
+  return Buffer.isBuffer(bytes) && bytes.length >= 64 && bytes.subarray(0, 5).toString('latin1') === '%PDF-';
+}
+
+/** A 4xx other than "slow down / try later" will not fix itself; everything else may. */
+function isPermanentFailure(err) {
+  const status = Number(err?.status);
+  return Number.isFinite(status) && status >= 400 && status < 500 && ![408, 425, 429].includes(status);
+}
+
+/**
+ * Downloads the provider's audit log, stores it, reads it back and verifies the hash. Only
+ * a copy that has been proven durable counts. Throws on any shortfall.
+ */
+async function downloadAndVerifyAuditLog(submissionId, envelopeId) {
+  const bytes = await downloadDocumensoAuditLog(envelopeId);
+  if (!looksLikePdf(bytes)) {
+    const err = new Error('audit_log_not_a_pdf');
+    err.backupCode = 'not_a_pdf';
+    throw err;
+  }
+  const sha256 = sha256HexOfBytes(bytes);
+  const path = StoragePaths.supersededAuditLog(submissionId, sha256);
+  await ensurePdfStored(path, bytes, { expectedSha256: sha256 });
+  const stored = await downloadPdf(path);
+  if (sha256HexOfBytes(stored) !== sha256) {
+    const err = new Error('stored_audit_log_mismatch');
+    err.backupCode = 'stored_copy_mismatch';
+    throw err;
+  }
+  return { path, sha256, byteLength: bytes.length };
+}
+
+/**
+ * A signed recipient must never lose the signing audit trail because a backup failed. The
+ * delete is not sent until a verified copy for THIS signing progress exists. Anything less
+ * leaves the request untouched: retryable at first, manual resolution once it keeps failing
+ * or the provider says it will never be available.
+ */
+async function preserveAuditTrail(ctx, envelopeId, progress) {
+  const kept = ctx.state.auditLog;
+  if (kept?.verifiedAt && kept.signedKey === progress.signedKey) return; // already preserved
+
+  const attempts = Number(ctx.state.auditBackup?.attempts || 0);
+  let copy;
+  try {
+    copy = await downloadAndVerifyAuditLog(ctx.row.id, envelopeId);
+  } catch (err) {
+    const permanent = isPermanentFailure(err);
+    const failure = Number.isFinite(Number(err?.status)) ? `http_${Number(err.status)}` : (err?.backupCode || 'unavailable');
+    console.error('supersession: audit-log backup failed', failure);
+    try {
+      await commit(ctx, {
+        auditBackup: { attempts: attempts + 1, lastFailedAt: nowIso(), lastFailure: failure, permanent },
+      });
+    } catch (persistErr) {
+      console.error('supersession: could not persist the backup failure', persistErr?.message);
+    }
+    if (permanent || attempts + 1 >= AUDIT_BACKUP_MAX_ATTEMPTS) {
+      await requireManualResolution(ctx, 'audit_backup_unavailable'); // always throws
+    }
+    throw new SupersessionError('predecessor_audit_backup_failed', 503, { retryable: true, predecessor: ctx.row });
+  }
+
+  const verifiedAt = nowIso();
+  await commitOrSettle(ctx, {
+    auditLog: {
+      ...copy,
+      signedKey: progress.signedKey,
+      capturedAt: verifiedAt,
+      verifiedAt,
+    },
+    auditBackup: { attempts: 0, lastSucceededAt: verifiedAt },
+  });
+}
+
+// ---------------------------------------------------------------------------------------
+
+async function cancelLiveEnvelope({ predecessor, replacement, broker, envelope, observed }) {
+  const ctx = makeContext({ row: predecessor, broker, replacement });
+  try {
+    return await runCancellation(ctx, { envelope, observed });
+  } catch (err) {
+    if (err instanceof SettledEarly) return err.result;
+    throw err;
   }
 }
 
-async function cancelLiveEnvelope({ predecessor, replacement, broker, envelope, observed }) {
-  const envelopeId = predecessor.signing_envelope_id;
-  const now = new Date().toISOString();
-  const recipients = summariseRecipients(envelope);
-  const baseMeta = { ...(predecessor.signing_meta || {}) };
-  const supersession = {
-    ...(baseMeta.supersession || {}),
+async function runCancellation(ctx, { envelope, observed }) {
+  const { broker, replacement } = ctx;
+  const envelopeId = ctx.row.signing_envelope_id;
+  const initial = signingProgress(envelope, observed);
+
+  // 1. The INTENT. A marker so a crash is diagnosable — never evidence about the provider.
+  await commitOrSettle(ctx, {
     replacementId: replacement.id,
-    cancelRequestedAt: baseMeta.supersession?.cancelRequestedAt || now,
+    cancelRequestedAt: ctx.state.cancelRequestedAt || nowIso(),
     observedStatus: observed,
-    recipients,
-  };
+    recipients: initial.recipients,
+  });
 
-  // 1. Persist the intent BEFORE touching the provider, so a crash after the provider acts
-  //    is recoverable (a later 404 is then a verified cancellation, not a mystery).
-  const withIntent = await recordSupersessionIntent(predecessor.id, broker, { ...baseMeta, supersession });
-  if (!withIntent) {
-    const latest = await loadSubmissionForBroker(predecessor.id, broker);
-    if (latest?.status === 'completed') return abortForCompletion({ predecessor: latest, broker });
-    if (latest && NOT_LIVE_STATUSES.has(latest.status)) return settled(latest, 'predecessor_already_cancelled');
-    throw new SupersessionError('predecessor_changed', 409, { retryable: true, predecessor: latest || predecessor });
+  // 2. Preserve what the provider can tell us about a partially signed request, first.
+  if (initial.mayHaveSigned) await preserveAuditTrail(ctx, envelopeId, initial);
+
+  // 3. Act on a FRESH observation: the backup above may have taken seconds.
+  let fresh;
+  try {
+    fresh = await getDocumensoEnvelope(envelopeId);
+  } catch (err) {
+    if (err?.status === 404) {
+      // Vanished between our read and now, before we sent any delete: nothing of ours to
+      // credit it to.
+      throw new SettledEarly(await settleMissingEnvelope({ predecessor: ctx.row, replacement, broker }));
+    }
+    throw new SupersessionError('predecessor_status_unavailable', 503, { retryable: true, predecessor: ctx.row });
+  }
+  const freshStatus = upper(fresh?.status);
+  if (freshStatus === 'COMPLETED') return abortForCompletion({ predecessor: ctx.row, broker });
+  if (freshStatus === 'REJECTED' || freshStatus === 'CANCELLED') {
+    return recordProviderTerminal(ctx.row, freshStatus, broker);
+  }
+  if (freshStatus !== 'PENDING' && freshStatus !== 'DRAFT') {
+    throw new SupersessionError('predecessor_status_unrecognised', 409, { predecessor: ctx.row });
+  }
+  const current = signingProgress(fresh, freshStatus);
+  if (current.mayHaveSigned) {
+    const kept = ctx.state.auditLog;
+    if (!kept?.verifiedAt || kept.signedKey !== current.signedKey) {
+      // Someone signed after the backup was taken: the copy no longer covers everything.
+      throw new SupersessionError('predecessor_changed', 409, { retryable: true, predecessor: ctx.row });
+    }
   }
 
-  // 2. Preserve what the provider can still tell us about a partially signed request.
-  if (observed === 'PENDING' && recipients.some((r) => r.signingStatus === 'SIGNED')) {
-    supersession.auditLog = await captureAuditLog({ predecessor, envelopeId, now });
-    // Persist the pointer before the provider can destroy the original, so a crash between
-    // the delete and the final write cannot orphan the captured copy.
-    await recordSupersessionIntent(predecessor.id, broker, { ...baseMeta, supersession });
-  }
+  // 4. Record that the delete is being sent, then send it.
+  await commitOrSettle(ctx, {
+    deleteDispatchedAt: nowIso(),
+    deleteAttempts: Number(ctx.state.deleteAttempts || 0) + 1,
+    observedStatus: freshStatus,
+    recipients: current.recipients,
+  });
 
-  // 3. Ask the provider to withdraw it. A definite 4xx rejection means it is still live;
-  //    a 5xx / network failure is ambiguous. Neither is trusted — step 4 decides.
   let deleteError = null;
+  let acknowledgedAt = null;
   try {
     await deleteDocumensoEnvelope(envelopeId);
+    acknowledgedAt = nowIso();
   } catch (err) {
     deleteError = err;
   }
@@ -300,46 +565,74 @@ async function cancelLiveEnvelope({ predecessor, replacement, broker, envelope, 
     && deleteError.status < 500
     && deleteError.status !== 404;
 
-  // 4. VERIFY by re-reading the envelope. A success response is never taken as proof.
+  // 5. The provider's acknowledgement of THIS delete. Persisted at once: it is what lets a
+  //    later request accept a 404. A failure to persist keeps it in memory for this attempt.
+  if (acknowledgedAt) {
+    try {
+      await commit(ctx, { deleteAcknowledgedAt: acknowledgedAt });
+    } catch (err) {
+      console.error('supersession: could not persist the delete acknowledgement', err?.message);
+    }
+  }
+
+  // 6. VERIFY by re-reading. A success response is never taken as proof on its own.
   const verdict = await observeEnvelope(envelopeId);
 
   if (verdict.state === 'completed') {
     // Completed concurrently: abandon the stale cancellation, keep it as the signed record.
-    const latest = await loadSubmissionForBroker(predecessor.id, broker);
-    return abortForCompletion({ predecessor: latest || predecessor, broker });
+    return abortForCompletion({ predecessor: ctx.row, broker });
   }
-  if (verdict.state === 'rejected') {
-    return settled(await recordProviderTerminal(predecessor, 'REJECTED'), 'predecessor_not_live');
-  }
+  if (verdict.state === 'rejected') return recordProviderTerminal(ctx.row, 'REJECTED', broker);
   if (verdict.state === 'live') {
     throw new SupersessionError(
       definitelyRejected ? 'predecessor_cancel_rejected' : 'predecessor_cancel_unverified',
       definitelyRejected ? 502 : 503,
-      { retryable: true, predecessor },
+      { retryable: true, predecessor: ctx.row },
     );
   }
   if (verdict.state === 'unknown' || definitelyRejected) {
-    throw new SupersessionError('predecessor_cancel_unverified', 503, { retryable: true, predecessor });
+    throw new SupersessionError('predecessor_cancel_unverified', 503, { retryable: true, predecessor: ctx.row });
+  }
+  if (verdict.state === 'gone' && !acknowledgedAt) {
+    // It is gone, but the provider never confirmed OUR delete (an error response, a lost
+    // reply, or a deletion by someone else). That alone is not proof of our cancellation.
+    // The one thing that settles it is the acknowledgement of a concurrent request of ours
+    // (a second tab): the winner records it, and this request then follows it.
+    const latest = await loadSubmissionForBroker(ctx.row.id, broker);
+    if (latest?.status === 'voided') return settled(latest, 'predecessor_already_cancelled');
+    if (latest && SUPERSEDABLE.has(latest.status) && !latest.completed_at && providerAcknowledgedOurDelete(latest)) {
+      ctx.row = latest;
+      ctx.state = { ...latest.signing_meta.supersession };
+      return finaliseVoided({ ctx, verifiedBy: 'gone_after_acknowledged_delete', outcome: 'predecessor_cancelled' });
+    }
+    // Otherwise: retryable inside the grace window (settleMissingEnvelope), manual after it.
+    throw new SupersessionError('predecessor_cancel_unverified', 503, { retryable: true, predecessor: ctx.row });
   }
 
-  // 'gone' or 'cancelled': verified.
+  // 'cancelled' (explicit) or 'gone' after an acknowledged delete: verified.
   return finaliseVoided({
-    predecessor,
-    broker,
-    supersession: { ...supersession, cancelledAt: new Date().toISOString(), verifiedBy: verdict.state },
+    ctx,
+    verifiedBy: verdict.state === 'cancelled' ? 'cancelled' : 'gone_after_acknowledged_delete',
     outcome: 'predecessor_cancelled',
   });
 }
 
-async function finaliseVoided({ predecessor, broker, supersession, outcome }) {
-  const meta = { ...(predecessor.signing_meta || {}), supersession };
-  const voided = await markSupersededVoided(predecessor.id, broker, meta);
+async function finaliseVoided({ ctx, verifiedBy, outcome }) {
+  const { broker, replacement } = ctx;
+  const finishedAt = nowIso();
+  const supersession = {
+    ...ctx.state,
+    cancelledAt: finishedAt,
+    verifiedBy,
+    ...(ctx.state.manualResolution ? { manualResolution: { ...ctx.state.manualResolution, resolvedAt: finishedAt } } : {}),
+  };
+  const voided = await markSupersededVoided(
+    ctx.row.id,
+    broker,
+    { ...(ctx.row.signing_meta || {}), supersession },
+    replacement.id,
+  );
   if (voided) return settled(voided, outcome);
-
-  // The compare-and-swap found the row already moved on.
-  const latest = await loadSubmissionForBroker(predecessor.id, broker);
-  if (latest?.status === 'voided') return settled(latest, 'predecessor_already_cancelled');
-  if (latest?.status === 'completed') throw new SupersessionError('predecessor_completed', 409, { predecessor: latest });
-  if (latest && NOT_LIVE_STATUSES.has(latest.status)) return settled(latest, 'predecessor_not_live');
-  throw new SupersessionError('predecessor_changed', 409, { retryable: true, predecessor: latest || predecessor });
+  // The compare-and-swap found the row already moved on (e.g. completed).
+  return resolveLostRace(ctx.row, broker);
 }

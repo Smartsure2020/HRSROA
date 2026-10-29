@@ -124,7 +124,16 @@ export async function updateSubmission(submissionId, patch) {
   return data;
 }
 
-/** Records the first observed provider completion time without overwriting it. */
+// Lifecycle states in which a signing request may still be live (or was never sent). A row
+// in any other state (completed, declined, voided, expired) is final as far as a provider
+// OBSERVATION is concerned: a read taken a moment ago must never move it.
+export const SUPERSEDABLE_STATUSES = Object.freeze(['awaiting_signature', 'submitted', 'signature_failed']);
+
+/**
+ * Records the first observed provider completion time without overwriting it. Only a row
+ * that is still open (or already completed) can receive it, so a completion observed for a
+ * row that was meanwhile voided or declined does not leave a contradictory timestamp.
+ */
 export async function setCompletionIfMissing(submissionId, broker, completedAt) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
@@ -132,11 +141,40 @@ export async function setCompletionIfMissing(submissionId, broker, completedAt) 
     .update({ completed_at: completedAt })
     .eq('id', submissionId)
     .ilike('advisor_email', ownerEmailPattern(broker))
+    .in('status', [...SUPERSEDABLE_STATUSES, 'completed'])
     .is('completed_at', null)
     .select('*')
     .maybeSingle();
   if (error) throw new Error(`Set completion timestamp failed: ${error.message}`);
   return data;
+}
+
+/**
+ * Writes what a provider READ said about a signing request, without ever acting on a stale
+ * read. Broker-scoped and conditional on the row's CURRENT lifecycle:
+ *
+ *   - an observation that is not "completed" (pending, rejected, cancelled …) only applies
+ *     while the row is still open AND has no completion time. If a signature completed in
+ *     the meantime the write matches nothing, and the completed record is left exactly as it
+ *     is (status, signing_status, completion time and evidence);
+ *   - a "completed" observation may also be written to a row that is already completed, so
+ *     evidence that failed to download the first time can still be filled in.
+ *
+ * Returns the updated row, or null when the row no longer matches (the caller re-reads it).
+ */
+export async function applyProviderObservation(submissionId, broker, patch, { completion = false } = {}) {
+  const supabase = getServerSupabase();
+  let query = supabase
+    .from('roa_submissions')
+    .update(patch)
+    .eq('id', submissionId)
+    .ilike('advisor_email', ownerEmailPattern(broker));
+  query = completion
+    ? query.in('status', [...SUPERSEDABLE_STATUSES, 'completed'])
+    : query.in('status', SUPERSEDABLE_STATUSES).is('completed_at', null);
+  const { data, error } = await query.select('*').maybeSingle();
+  if (error) throw new Error(`Apply provider observation failed: ${error.message}`);
+  return data || null;
 }
 
 /**
@@ -314,12 +352,13 @@ export async function createRevision({
   return row;
 }
 
-// Rows whose signing request may still be live or never sent. A concurrently-completed
-// (or otherwise terminal) row never matches, so a stale cancellation cannot overwrite it.
-const SUPERSEDABLE_STATUSES = ['awaiting_signature', 'submitted', 'signature_failed'];
-
-/** Persists the cancel intent BEFORE the provider is asked to cancel. Null if the row moved on. */
-export async function recordSupersessionIntent(submissionId, broker, signingMeta) {
+/**
+ * Persists a step of the cancellation state machine (intent, evidence backup progress,
+ * delete dispatch / acknowledgement, manual-resolution flag) in `signing_meta.supersession`.
+ * Broker-scoped and conditional on the row still being open with no completion time, so a
+ * stale writer cannot touch a row that completed meanwhile. Null if the row moved on.
+ */
+export async function recordSupersessionState(submissionId, broker, signingMeta) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
     .from('roa_submissions')
@@ -330,27 +369,51 @@ export async function recordSupersessionIntent(submissionId, broker, signingMeta
     .is('completed_at', null)
     .select('*')
     .maybeSingle();
-  if (error) throw new Error(`Record supersession intent failed: ${error.message}`);
+  if (error) throw new Error(`Record supersession state failed: ${error.message}`);
   return data || null;
 }
 
 /**
  * Marks a superseded request as voided once the provider has verifiably cancelled it.
- * Compare-and-swap on status + completed_at: returns null (and changes nothing) if the
- * row completed or otherwise changed in the meantime.
+ * Compare-and-swap on status + completed_at (and on the forward link, so only the revision
+ * that actually replaces this one can void it): returns null, changing nothing, if the row
+ * completed or otherwise changed in the meantime.
  */
-export async function markSupersededVoided(submissionId, broker, signingMeta) {
+export async function markSupersededVoided(submissionId, broker, signingMeta, replacementId) {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
     .from('roa_submissions')
     .update({ status: 'voided', signing_status: 'cancelled', signing_meta: signingMeta })
     .eq('id', submissionId)
     .ilike('advisor_email', ownerEmailPattern(broker))
+    .eq('superseded_by_submission_id', replacementId)
     .in('status', SUPERSEDABLE_STATUSES)
     .is('completed_at', null)
     .select('*')
     .maybeSingle();
   if (error) throw new Error(`Mark superseded request voided failed: ${error.message}`);
+  return data || null;
+}
+
+/**
+ * Records an envelope that was created at the provider but never written back (a lost
+ * response). Conditional on the reservation still being the one we are recovering, so it
+ * cannot overwrite a row that completed, was cancelled or already received an envelope.
+ */
+export async function adoptRecoveredEnvelope(submissionId, broker, patch) {
+  const supabase = getServerSupabase();
+  const { data, error } = await supabase
+    .from('roa_submissions')
+    .update(patch)
+    .eq('id', submissionId)
+    .ilike('advisor_email', ownerEmailPattern(broker))
+    .eq('status', 'awaiting_signature')
+    .eq('signing_provider', 'documenso')
+    .is('signing_envelope_id', null)
+    .is('completed_at', null)
+    .select('*')
+    .maybeSingle();
+  if (error) throw new Error(`Adopt recovered envelope failed: ${error.message}`);
   return data || null;
 }
 

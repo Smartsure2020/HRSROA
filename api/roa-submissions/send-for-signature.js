@@ -210,6 +210,8 @@ export default async function handler(req, res) {
           if (err.status >= 500) console.error('send-for-signature: replacement gate blocked send', err.code);
           return res.status(err.status).json({
             error: err.code,
+            // Why automation stopped when a person has to take over (manual resolution).
+            reason: err.reason,
             retryable: err.retryable,
             submission: toClientView(row),
             predecessor: err.predecessor ? toClientView(err.predecessor) : undefined,

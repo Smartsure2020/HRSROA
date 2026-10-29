@@ -17,6 +17,26 @@ export function makeMockSupabase() {
   let nextRpcError = null;
   let dropNextRpcResponse = false;
   const rpcCalls = [];
+  /** @type {Array<{ match: Function, run: Function, once: boolean }>} */
+  const updateHooks = [];
+  let uploadMode = null; // null | 'fail' | 'corrupt' — applies to the next storage upload only
+
+  // Deterministic interleaving for concurrency tests: a hook runs at the instant an UPDATE is
+  // about to be applied, i.e. after the caller made its decision from an earlier read and
+  // before its write lands. It may mutate rows (another request got there first) and/or return
+  // `{ error }` to fail the write (the process died or the database refused). The write then
+  // evaluates its filters against whatever the hook left behind, exactly like the real thing.
+  function runUpdateHooks(patch) {
+    for (let i = 0; i < updateHooks.length; i += 1) {
+      const hook = updateHooks[i];
+      if (!hook.match(patch)) continue;
+      if (hook.once) updateHooks.splice(i, 1);
+      const outcome = hook.run(patch);
+      if (outcome?.error) return outcome;
+      return null;
+    }
+    return null;
+  }
 
   const rpcFailure = (code, message) => ({ data: null, error: { code, message } });
 
@@ -200,12 +220,16 @@ export function makeMockSupabase() {
           select() {
             return {
               async single() {
+                const intercepted = runUpdateHooks(patch);
+                if (intercepted) return { data: null, error: intercepted.error };
                 const matches = Array.from(rows.values()).filter((r) => whereMatches(r, filters));
                 if (matches.length !== 1) return { data: null, error: { message: `expected 1 row, got ${matches.length}` } };
                 Object.assign(matches[0], patch, { updated_at: new Date().toISOString() });
                 return { data: { ...matches[0] }, error: null };
               },
               async maybeSingle() {
+                const intercepted = runUpdateHooks(patch);
+                if (intercepted) return { data: null, error: intercepted.error };
                 const matches = Array.from(rows.values()).filter((r) => whereMatches(r, filters));
                 if (matches.length === 0) return { data: null, error: null };
                 Object.assign(matches[0], patch, { updated_at: new Date().toISOString() });
@@ -265,7 +289,12 @@ export function makeMockSupabase() {
         return {
           async upload(path, bytes, _opts) {
             if (storage.has(path)) return { error: { message: `object exists at ${path}` } };
-            const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+            const mode = uploadMode;
+            uploadMode = null;
+            if (mode === 'fail') return { error: { message: 'injected storage failure' } };
+            let buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+            // 'corrupt': the object is stored, but is not the bytes that were sent.
+            if (mode === 'corrupt') buf = Buffer.concat([buf, Buffer.from('corrupted')]);
             storage.set(path, buf);
             return { error: null };
           },
@@ -308,7 +337,16 @@ export function makeMockSupabase() {
       // The next revision RPC COMMITS but its response is lost (an ambiguous failure).
       loseNextRpcResponse: () => { dropNextRpcResponse = true; },
       rpcCalls: () => rpcCalls.map((call) => ({ ...call })),
+      // Runs `run(patch)` just before the next UPDATE whose patch satisfies `match(patch)` is
+      // applied (see runUpdateHooks). Return `{ error: { message } }` to fail that write.
+      onUpdate: (match, run, { once = true } = {}) => { updateHooks.push({ match, run, once }); },
+      pendingUpdateHooks: () => updateHooks.length,
+      // The next storage upload fails outright / is silently stored with the wrong bytes.
+      failNextUpload: () => { uploadMode = 'fail'; },
+      corruptNextUpload: () => { uploadMode = 'corrupt'; },
       reset() {
+        updateHooks.length = 0;
+        uploadMode = null;
         rows.clear();
         storage.clear();
         authUsers.clear();

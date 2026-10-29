@@ -639,10 +639,15 @@ describe('replacement gate — nothing is distributed until the previous request
     const old = rowOf(rev1);
     expect(old).toMatchObject({ status: 'voided', signing_status: 'cancelled' });
     expect(old.signing_meta.supersession).toMatchObject({
-      replacementId: rev2, observedStatus: 'PENDING', verifiedBy: 'gone',
+      replacementId: rev2, observedStatus: 'PENDING', verifiedBy: 'gone_after_acknowledged_delete',
     });
-    expect(old.signing_meta.supersession.cancelRequestedAt).toBeTruthy();
-    expect(old.signing_meta.supersession.cancelledAt).toBeTruthy();
+    // The state machine left its trail in order: intent → dispatch → provider acknowledgement.
+    const trail = old.signing_meta.supersession;
+    for (const key of ['cancelRequestedAt', 'deleteDispatchedAt', 'deleteAcknowledgedAt', 'cancelledAt']) {
+      expect(trail[key], key).toBeTruthy();
+    }
+    expect(trail.deleteAttempts).toBe(1);
+    expect(trail.manualResolution).toBeUndefined();
     // Recipient progress is recorded without any personal data.
     expect(JSON.stringify(old.signing_meta)).not.toMatch(/@/);
     // Its canonical PDF and snapshot are still exactly as submitted.
@@ -655,9 +660,11 @@ describe('replacement gate — nothing is distributed until the previous request
     expect((await send(rev2)).statusCode).toBe(200);
     const meta = rowOf(rev1).signing_meta.supersession;
     expect(meta.recipients.find((r) => r.signingOrder === 1).signingStatus).toBe('SIGNED');
-    expect(meta.auditLog.path).toBe(`${rev1}/superseded-audit-log.pdf`);
+    expect(meta.auditLog.path).toBe(`${rev1}/superseded-audit-log-${meta.auditLog.sha256.slice(0, 16)}.pdf`);
     const stored = mock.fixtures.getStorage(meta.auditLog.path);
     expect(sha256HexOfBytes(stored)).toBe(meta.auditLog.sha256);
+    expect(meta.auditLog).toMatchObject({ signedKey: '1', byteLength: stored.length });
+    expect(meta.auditLog.verifiedAt).toBeTruthy();
     // It is a separate object: the (never-created) completed-request audit log is untouched.
     expect(mock.fixtures.getStorage(`${rev1}/audit-log.pdf`)).toBeNull();
     expect(rowOf(rev1).audit_log_storage_path ?? null).toBeNull();
@@ -731,15 +738,19 @@ describe('replacement gate — nothing is distributed until the previous request
       expect(fake.liveEnvelopes()).toHaveLength(1);
     });
 
-    it('delete answers 500 but really worked → accepted only because the re-read proves it', async () => {
+    it('delete answers 500 but really worked → NOT enough: a 404 needs the provider to acknowledge our delete', async () => {
       const { rev1, rev2, envelopeId } = await pair({ prior: 'awaiting_signature', live: true });
       fake.override((c) => c.method === 'POST' && c.path === '/envelope/delete', () => {
         fake.envelope(envelopeId).deleted = true;
         return fake.json({ message: 'gateway timeout' }, 500);
       });
-      expect((await send(rev2)).statusCode).toBe(200);
-      expect(rowOf(rev1).status).toBe('voided');
-      expect(fake.liveEnvelopes()).toHaveLength(1);
+      const res = await send(rev2);
+      expect(res.statusCode).toBe(503);
+      expect(res.body).toMatchObject({ error: 'predecessor_cancel_unverified', retryable: true });
+      unsent(rev2);
+      expect(rowOf(rev1).status).toBe('awaiting_signature'); // never voided on a guess
+      expect(rowOf(rev1).signing_meta.supersession.deleteAcknowledgedAt).toBeUndefined();
+      expect(fake.liveEnvelopes()).toHaveLength(0); // nothing is live either: this is a safe stop
     });
 
     it('delete is refused (403) → blocked with a definite reason', async () => {
@@ -765,8 +776,9 @@ describe('replacement gate — nothing is distributed until the previous request
     it('cannot re-read the envelope after the delete → unverified, replacement stays unsent', async () => {
       const { rev1, rev2, envelopeId } = await pair({ prior: 'awaiting_signature', live: true });
       let reads = 0;
+      // Read 1 = first look, read 2 = fresh look right before the delete, read 3 = verification.
       fake.override(
-        (c) => c.method === 'GET' && c.path === `/envelope/${envelopeId}` && (reads += 1) === 2,
+        (c) => c.method === 'GET' && c.path === `/envelope/${envelopeId}` && (reads += 1) === 3,
         () => { throw new Error('network down'); },
       );
       const res = await send(rev2);
@@ -774,6 +786,29 @@ describe('replacement gate — nothing is distributed until the previous request
       expect(res.body.error).toBe('predecessor_cancel_unverified');
       unsent(rev2);
       expect(rowOf(rev1).status).toBe('awaiting_signature');
+      // The provider DID acknowledge the delete, so the retry can finish without guessing.
+      expect(rowOf(rev1).signing_meta.supersession.deleteAcknowledgedAt).toBeTruthy();
+      const retry = await send(rev2);
+      expect(retry.statusCode).toBe(200);
+      expect(rowOf(rev1)).toMatchObject({ status: 'voided' });
+      expect(rowOf(rev1).signing_meta.supersession.verifiedBy).toBe('not_found_after_acknowledged_delete');
+      expect(fake.liveEnvelopes()).toHaveLength(1);
+    });
+
+    it('cannot re-read the envelope right before the delete → nothing is deleted', async () => {
+      const { rev1, rev2, envelopeId } = await pair({ prior: 'awaiting_signature', live: true });
+      let reads = 0;
+      fake.override(
+        (c) => c.method === 'GET' && c.path === `/envelope/${envelopeId}` && (reads += 1) === 2,
+        () => fake.json({ message: 'down' }, 503),
+      );
+      const res = await send(rev2);
+      expect(res.statusCode).toBe(503);
+      expect(res.body).toMatchObject({ error: 'predecessor_status_unavailable', retryable: true });
+      expect(deletes()).toHaveLength(0);
+      unsent(rev2);
+      expect(rowOf(rev1).status).toBe('awaiting_signature');
+      expect(rowOf(rev1).signing_meta.supersession.deleteDispatchedAt).toBeUndefined();
     });
 
     it('cannot read the previous request at all → blocked before anything is cancelled', async () => {
@@ -787,27 +822,54 @@ describe('replacement gate — nothing is distributed until the previous request
       expect(rowOf(rev1).status).toBe('awaiting_signature');
     });
 
-    it('a 404 we cannot explain is not taken as cancelled', async () => {
+    it('a 404 we cannot explain is not taken as cancelled — it needs a person', async () => {
       const { rev1, rev2, envelopeId } = await pair({ prior: 'awaiting_signature', live: true });
       fake.envelope(envelopeId).deleted = true; // gone, but we never asked for that
       const res = await send(rev2);
       expect(res.statusCode).toBe(409);
-      expect(res.body.error).toBe('predecessor_unverifiable');
+      expect(res.body).toMatchObject({
+        error: 'predecessor_manual_resolution_required', reason: 'envelope_missing_unexplained', retryable: false,
+      });
+      expect(deletes()).toHaveLength(0);
+      unsent(rev2);
+      expect(rowOf(rev1).status).toBe('awaiting_signature');
+      expect(rowOf(rev1).signing_meta.supersession.manualResolution).toMatchObject({
+        required: true, reason: 'envelope_missing_unexplained',
+      });
+    });
+
+    it('a recorded INTENT alone is not proof: a 404 after intent but before any delete needs a person', async () => {
+      const { rev1, rev2, envelopeId } = await pair({ prior: 'awaiting_signature', live: true });
+      mock.fixtures.putRow(rev1, {
+        signing_meta: { externalId: rev1, supersession: { replacementId: rev2, cancelRequestedAt: '2026-10-29T08:00:00.000Z' } },
+      });
+      fake.envelope(envelopeId).deleted = true; // someone else removed it in the gap
+      const res = await send(rev2);
+      expect(res.statusCode).toBe(409);
+      expect(res.body).toMatchObject({ error: 'predecessor_manual_resolution_required', reason: 'delete_not_dispatched' });
       expect(deletes()).toHaveLength(0);
       unsent(rev2);
       expect(rowOf(rev1).status).toBe('awaiting_signature');
     });
 
-    it('a 404 after OUR recorded intent (we crashed after the provider acted) is accepted and finalised', async () => {
+    it('a 404 after OUR delete the provider ACKNOWLEDGED (we crashed before recording the result) is accepted', async () => {
       const { rev1, rev2, envelopeId } = await pair({ prior: 'awaiting_signature', live: true });
       mock.fixtures.putRow(rev1, {
-        signing_meta: { externalId: rev1, supersession: { replacementId: rev2, cancelRequestedAt: '2026-10-29T08:00:00.000Z' } },
+        signing_meta: {
+          externalId: rev1,
+          supersession: {
+            replacementId: rev2,
+            cancelRequestedAt: '2026-10-29T08:00:00.000Z',
+            deleteDispatchedAt: '2026-10-29T08:00:01.000Z',
+            deleteAcknowledgedAt: '2026-10-29T08:00:02.000Z',
+          },
+        },
       });
       fake.envelope(envelopeId).deleted = true;
       const res = await send(rev2);
       expect(res.statusCode).toBe(200);
       expect(rowOf(rev1)).toMatchObject({ status: 'voided', signing_status: 'cancelled' });
-      expect(rowOf(rev1).signing_meta.supersession.verifiedBy).toBe('not_found_after_requested_cancel');
+      expect(rowOf(rev1).signing_meta.supersession.verifiedBy).toBe('not_found_after_acknowledged_delete');
       expect(fake.liveEnvelopes()).toHaveLength(1);
     });
 
@@ -885,7 +947,12 @@ describe('replacement gate — nothing is distributed until the previous request
     const { rev1, rev2 } = await pair({ prior: 'awaiting_signature', live: true });
     const [a, b] = await Promise.all([send(rev2), send(rev2)]);
     expect([a.statusCode, b.statusCode].some((code) => code === 200)).toBe(true);
-    for (const res of [a, b]) expect([200, 409]).toContain(res.statusCode);
+    // The loser either follows the winner (200), is told a send is in flight (409) or, if the
+    // winner's acknowledgement was not yet visible to it, is asked to retry (503, retryable).
+    for (const res of [a, b]) {
+      expect([200, 409, 503]).toContain(res.statusCode);
+      if (res.statusCode === 503) expect(res.body).toMatchObject({ error: 'predecessor_cancel_unverified', retryable: true });
+    }
     expect(created()).toHaveLength(1);
     expect(fake.liveEnvelopes()).toHaveLength(1);
     expect(fake.liveEnvelopes()[0].externalId).toBe(rev2);
@@ -938,8 +1005,26 @@ describe('replacement gate — nothing is distributed until the previous request
     expect(unexplained.statusCode).toBeGreaterThanOrEqual(400);
     expect(rowOf(rev1).status).toBe('awaiting_signature');
 
+    // An intent alone (we never got as far as the delete) does not explain it either.
     mock.fixtures.putRow(rev1, {
       signing_meta: { externalId: rev1, supersession: { replacementId: rev2, cancelRequestedAt: '2026-10-29T08:00:00.000Z' } },
+    });
+    const intentOnly = mockRes();
+    await refreshHandler({ method: 'POST', headers: bearer(ANDREW), body: { submissionId: rev1 } }, intentOnly);
+    expect(intentOnly.statusCode).toBeGreaterThanOrEqual(400);
+    expect(rowOf(rev1).status).toBe('awaiting_signature');
+
+    // The provider acknowledged OUR delete: now the 404 is the cancellation we asked for.
+    mock.fixtures.putRow(rev1, {
+      signing_meta: {
+        externalId: rev1,
+        supersession: {
+          replacementId: rev2,
+          cancelRequestedAt: '2026-10-29T08:00:00.000Z',
+          deleteDispatchedAt: '2026-10-29T08:00:01.000Z',
+          deleteAcknowledgedAt: '2026-10-29T08:00:02.000Z',
+        },
+      },
     });
     const explained = mockRes();
     await refreshHandler({ method: 'POST', headers: bearer(ANDREW), body: { submissionId: rev1 } }, explained);
