@@ -6,6 +6,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { FS_SCAN_TIMEOUT_MS, readTextCached } from './testUtils/sourceTree.js';
 import {
   MIN_PASSWORD_LENGTH,
   exchangeRecoveryLink,
@@ -120,12 +121,13 @@ describe('contract: recovery is wired to the CRM auth client only', () => {
   }
 
   it('only passwordRecovery.js calls resetPasswordForEmail, and no browser file builds its own redirect', () => {
-    const callers = files(srcDir).filter((f) => readFileSync(f, 'utf8').includes('resetPasswordForEmail'));
+    const srcFiles = files(srcDir); // walked once; each file is read once (see testUtils/sourceTree.js)
+    const callers = srcFiles.filter((f) => readTextCached(f).includes('resetPasswordForEmail'));
     expect(callers.map((f) => f.replace(/\\/g, '/').split('/src/')[1])).toEqual(['lib/passwordRecovery.js']);
-    for (const file of files(srcDir)) {
-      expect(readFileSync(file, 'utf8'), file).not.toMatch(/redirectTo\s*:\s*`/);
+    for (const file of srcFiles) {
+      expect(readTextCached(file), file).not.toMatch(/redirectTo\s*:\s*`/);
     }
-  });
+  }, FS_SCAN_TIMEOUT_MS);
 
   it('the sign-in page uses the shared auth client and the recovery helper', () => {
     const login = readFileSync(new URL('src/pages/Login.jsx', root), 'utf8');

@@ -2,20 +2,26 @@
 // Static checks on the source and the migration: they cannot prove behaviour (the other
 // amendment suites do that) but they stop a refactor quietly removing a safeguard.
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { FS_SCAN_TIMEOUT_MS, readCodeCached, readTextCached } from './testUtils/sourceTree.js';
 
 const root = process.cwd();
-const read = (rel) => readFileSync(path.join(root, rel), 'utf8');
+// Files are read (and comment-stripped) once per test file; see testUtils/sourceTree.js.
+const read = (rel) => readTextCached(path.join(root, rel));
 /** Source without // line comments and block comments, so prose cannot satisfy a check. */
-const code = (rel) => read(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const code = (rel) => readCodeCached(path.join(root, rel));
 
+const walked = new Map();
 function walk(dir) {
-  return readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((entry) => {
-    const rel = `${dir}/${entry.name}`;
-    return entry.isDirectory() ? walk(rel) : [rel];
-  });
+  if (!walked.has(dir)) {
+    walked.set(dir, readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((entry) => {
+      const rel = `${dir}/${entry.name}`;
+      return entry.isDirectory() ? walk(rel) : [rel];
+    }));
+  }
+  return [...walked.get(dir)];
 }
 
 describe('Vercel Hobby function ceiling', () => {
@@ -84,7 +90,7 @@ describe('replacement gate wiring', () => {
       'api/_lib/documensoClient.js',
       'api/_lib/supersession.js',
     ]);
-  });
+  }, FS_SCAN_TIMEOUT_MS); // scans every file under api/ and src/
 
   it('verifies a cancellation by re-reading the envelope, never from the delete response alone', () => {
     const src = code('api/_lib/supersession.js');

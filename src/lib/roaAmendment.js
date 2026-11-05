@@ -21,6 +21,10 @@ export const AMEND_REASON_CODES = Object.freeze(AMEND_REASONS.map((reason) => re
 export const AMEND_DETAIL_MAX = 500;
 export const AMEND_DETAIL_MIN_FOR_OTHER = 3;
 
+/**
+ * @param {unknown} code
+ * @returns {code is string}
+ */
 export function isAmendReason(code) {
   return typeof code === 'string' && AMEND_REASON_CODES.includes(code);
 }
@@ -33,6 +37,9 @@ export function amendReasonLabel(code) {
  * Validates the broker-supplied reason. The detail is mandatory for "Other" and optional
  * otherwise; it is trimmed and length-bounded. Mirrors the database CHECK constraints.
  *
+ * Takes untrusted input, so both fields are typed `unknown` and narrowed before use.
+ *
+ * @param {{ reason?: unknown, reasonDetail?: unknown }} [input]
  * @returns {{ ok: true, reason: string, reasonDetail: string|null } | { ok: false, error: string }}
  */
 export function validateAmendmentReason({ reason, reasonDetail } = {}) {
@@ -69,6 +76,13 @@ const NOT_LIVE_STATUSES = new Set(['completed', 'declined', 'voided', 'expired']
  *     (see ./api/_lib/supersession.js), not whether the broker may edit;
  *   • a still-live legacy DocuSign envelope cannot be cancelled by this app, so the
  *     amendment fails closed until it is voided in DocuSign and the register refreshed.
+ *
+ * @param {{
+ *   status?: string | null,
+ *   supersededBySubmissionId?: string | null,
+ *   hasEnvelope?: boolean,
+ *   signingProvider?: string | null,
+ * }} [facts]
  */
 export function amendmentBlockReason({
   status,
@@ -84,7 +98,11 @@ export function amendmentBlockReason({
   return null;
 }
 
-/** True when sending the replacement will first have to cancel a live signing request. */
+/**
+ * True when sending the replacement will first have to cancel a live signing request.
+ *
+ * @param {{ status?: string | null, hasEnvelope?: boolean }} [facts]
+ */
 export function amendmentWillCancelSigningRequest({ status, hasEnvelope = false } = {}) {
   return Boolean(hasEnvelope) && !NOT_LIVE_STATUSES.has(status);
 }

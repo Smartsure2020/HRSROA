@@ -58,7 +58,8 @@ function ReasonStep({ source, onContinue }) {
 
   const submit = () => {
     const checked = validateAmendmentReason({ reason, reasonDetail: detail });
-    if (!checked.ok) {
+    // `=== false` (not `!checked.ok`) so the result narrows to its `{ ok: false, error }` arm.
+    if (checked.ok === false) {
       setError(AMENDMENT_BLOCK_MESSAGES[checked.error] || 'Please check the reason.');
       return;
     }
