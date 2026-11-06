@@ -6,6 +6,7 @@ import AdviceRecord from './pages/AdviceRecord';
 import CommercialAdviceRecord from './pages/CommercialAdviceRecord';
 import Login from './pages/Login';
 import RoaRegister from './pages/RoaRegister';
+import AmendRoa from './pages/AmendRoa';
 import ResetPassword from './pages/ResetPassword';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 
@@ -44,6 +45,7 @@ function App() {
                     <Route path="/personal" element={<AdviceRecord />} />
                     <Route path="/commercial" element={<CommercialAdviceRecord />} />
                     <Route path="/roas" element={<RoaRegister />} />
+                    <Route path="/amend/:submissionId" element={<AmendRoa />} />
                     <Route path="*" element={<PageNotFound />} />
                   </Routes>
                 </AuthGate>

@@ -27,6 +27,8 @@ import CommercialStepSignatures from '../components/hrs/commercial/steps/Commerc
 import CommercialStepReview from '../components/hrs/commercial/steps/CommercialStepReview';
 import CommercialStepChecklist from '../components/hrs/commercial/steps/CommercialStepChecklist';
 import { COMMERCIAL_STEPS, getActiveSteps, getNextButtonText, getStepId } from '../lib/flowSteps';
+import AmendmentBanner from '../components/hrs/AmendmentBanner';
+import { AMENDMENT_BLOCK_MESSAGES, withAmendmentNotice } from '../lib/roaAmendment';
 
 function CommercialStepProgress({ currentStep, onGoTo }) {
   const visibleSteps = COMMERCIAL_STEPS;
@@ -70,11 +72,15 @@ const TOTAL_STEPS = COMMERCIAL_STEPS.length + 1; // review steps + checklist
 const CHECKLIST_STEP = TOTAL_STEPS - 1; // 8
 const FLOW_TYPE = 'commercial';
 
-export default function CommercialAdviceRecord() {
+// `amendment` (Issue #8) switches the wizard into amend mode: pre-populated from the frozen
+// source snapshot, drafts kept under a separate per-revision key, and the submission is the
+// NEXT REVISION of the ROA being amended.
+export default function CommercialAdviceRecord({ amendment = null }) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const draftScope = amendment?.supersedesSubmissionId;
   const [step, setStep] = useState(0);
-  const [formData, setFormData] = useState(getCommercialInitialFormData());
+  const [formData, setFormData] = useState(() => (amendment ? amendment.initialFormData : getCommercialInitialFormData()));
   const [stepErrors, setStepErrors] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showRestoreBanner, setShowRestoreBanner] = useState(false);
@@ -82,6 +88,7 @@ export default function CommercialAdviceRecord() {
   const pendingDraftRef = useRef(null);
 
   useEffect(() => {
+    if (amendment) return; // amendments never reuse the new-ROA recovery pointer
     const last = readLastSubmission(FLOW_TYPE);
     if (!last) return;
     let cancelled = false;
@@ -100,7 +107,7 @@ export default function CommercialAdviceRecord() {
   }, []);
 
   useEffect(() => {
-    const { status, draft } = getDraftStatus(FLOW_TYPE);
+    const { status, draft } = getDraftStatus(FLOW_TYPE, draftScope);
     if (status === 'expired') {
       toast({
         title: "Draft expired",
@@ -122,8 +129,8 @@ export default function CommercialAdviceRecord() {
     const isChecklistStep = step === CHECKLIST_STEP;
     if (isChecklistStep) return;
     if (pendingDraftRef.current) return;
-    saveRoaDraft(FLOW_TYPE, { currentStep: step, formData });
-  }, [step, formData]);
+    saveRoaDraft(FLOW_TYPE, { currentStep: step, formData }, draftScope);
+  }, [step, formData, draftScope]);
 
   useEffect(() => {
     if (step === CHECKLIST_STEP) return; // submitted — nothing left to lose
@@ -151,7 +158,7 @@ export default function CommercialAdviceRecord() {
   };
 
   const handleDismissDraft = () => {
-    clearRoaDraft(FLOW_TYPE);
+    clearRoaDraft(FLOW_TYPE, draftScope);
     pendingDraftRef.current = null;
     setShowRestoreBanner(false);
   };
@@ -214,11 +221,20 @@ export default function CommercialAdviceRecord() {
         snapshot: frozen.snapshotForDb,
         versions: frozen.versions,
         pdfBytes: bytes,
+        // Amend mode: the server creates the NEXT REVISION and derives the revision number,
+        // lineage and amender itself.
+        ...(amendment ? {
+          amendment: {
+            supersedesSubmissionId: amendment.supersedesSubmissionId,
+            reason: amendment.reason,
+            reasonDetail: amendment.reasonDetail,
+          },
+        } : {}),
       });
 
       const brokerEmail = BROKER_EMAIL_MAP[formData.brokerName] || DEFAULT_BROKER_EMAIL;
-      const subject = `New Commercial Advice Record – ${formData.companyName} (${formData.brokerName})`;
-      const body = `New Commercial Lines Advice Record Submitted
+      const baseSubject = `New Commercial Advice Record – ${formData.companyName} (${formData.brokerName})`;
+      const baseBody = `New Commercial Lines Advice Record Submitted
 ============================================
 Broker / Advisor: ${formData.brokerName}
 Company Name: ${formData.companyName}
@@ -234,6 +250,12 @@ authoritative document.
 
 ---
 Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
+      const { subject, body } = amendment
+        ? withAmendmentNotice(
+          { subject: baseSubject, body: baseBody },
+          { nextRevisionNo: amendment.nextRevisionNo, reason: amendment.reason },
+        )
+        : { subject: baseSubject, body: baseBody };
 
       try {
         await sendNotificationEmail({
@@ -250,8 +272,9 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
         });
       }
 
-      rememberLastSubmission(FLOW_TYPE, { submissionId: created.submissionId });
-      clearRoaDraft(FLOW_TYPE);
+      // An amended revision is not the "last new ROA": do not let it hijack the new-ROA recovery pointer.
+      if (!amendment) rememberLastSubmission(FLOW_TYPE, { submissionId: created.submissionId });
+      clearRoaDraft(FLOW_TYPE, draftScope);
       const record = await getSubmission(created.submissionId).catch(() => null);
       setSubmission(record);
       setStep(CHECKLIST_STEP);
@@ -260,7 +283,7 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
       toast({
         variant: "destructive",
         title: "Submission failed",
-        description: err.message || "Could not save the submission. Please try again — no evidence was lost.",
+        description: AMENDMENT_BLOCK_MESSAGES[err.code] || err.message || "Could not save the submission. Please try again — no evidence was lost.",
       });
     } finally {
       setIsSubmitting(false);
@@ -268,6 +291,8 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
   };
 
   const restart = () => {
+    // After an amendment "new record" means a genuinely new ROA, not another edit of this one.
+    if (amendment) { navigate('/commercial'); return; }
     clearRoaDraft(FLOW_TYPE);
     forgetLastSubmission(FLOW_TYPE);
     setSubmission(null);
@@ -293,14 +318,18 @@ Holistic Risk Services (Pty) Ltd – FSP 28582`.trim();
 
       {!isChecklist && (
         <div className="bg-hrs-blue/95 border-b border-hrs-orange/40 px-4 py-2 flex items-center gap-3">
-          <button onClick={() => navigate('/')}
+          <button onClick={() => navigate(amendment ? '/roas' : '/')}
             className="flex items-center gap-1.5 text-white/70 hover:text-white text-[0.78rem] transition-colors">
-            ← Back to Home
+            {amendment ? '← Back to My ROAs' : '← Back to Home'}
           </button>
           <span className="text-white/20 text-[0.75rem]">|</span>
-          <span className="text-white/50 text-[0.75rem]">Commercial Lines ROA</span>
+          <span className="text-white/50 text-[0.75rem]">
+            {amendment ? `Commercial Lines ROA — Amendment (Revision ${amendment.nextRevisionNo})` : 'Commercial Lines ROA'}
+          </span>
         </div>
       )}
+
+      {!isChecklist && <AmendmentBanner amendment={amendment} />}
 
       {showRestoreBanner && (
         <div className="bg-hrs-blue text-white text-[0.82rem] px-4 py-2.5 flex items-center justify-between gap-4">

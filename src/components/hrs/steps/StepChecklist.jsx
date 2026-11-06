@@ -6,10 +6,10 @@ import WorkflowStatusPanel from "../WorkflowStatusPanel";
 import SignatureReminderButton from "../SignatureReminderButton";
 import { generateCombinedPDF } from "../../../lib/hrsPdfGenerator";
 import { MANAGER_NAME } from "../../../lib/hrsConstants";
-import { syncRoaSubmissionToCRM } from "../../../lib/crmAdapter";
+import { describeCrmSyncError, isCrmSyncDeferred, syncRoaSubmissionToCRM } from "../../../lib/crmAdapter";
 import { useCrmSyncStatus } from "../../../lib/useCrmSyncStatus";
 import { toast } from "@/components/ui/use-toast";
-import { buildSignatureSendFeedback } from "../../../lib/signatureSendFeedback";
+import { buildSignatureSendFeedback, describeSignatureSendError } from "../../../lib/signatureSendFeedback";
 import {
   downloadEvidencePdf,
   refreshSubmission,
@@ -232,7 +232,7 @@ export default function StepChecklist({ data, submission, onSubmissionUpdate, on
       if (result.submission && onSubmissionUpdate) onSubmissionUpdate(result.submission);
       toast(buildSignatureSendFeedback(result, clientEmail));
     } catch (err) {
-      setSigError(err.message || 'Could not send signature request. Please try again.');
+      setSigError(describeSignatureSendError(err));
     } finally {
       setSigSending(false);
     }
@@ -251,10 +251,18 @@ export default function StepChecklist({ data, submission, onSubmissionUpdate, on
       <div className="bg-gradient-to-br from-hrs-blue to-hrs-blue2 text-white rounded-xl p-5 mb-6 flex items-start gap-4">
         <CheckCircle className="w-9 h-9 text-hrs-orange flex-shrink-0 mt-0.5" />
         <div className="flex-1">
-          <h2 className="font-heading text-[1.2rem] text-hrs-orange mb-1">Advice Record Submitted</h2>
+          <h2 className="font-heading text-[1.2rem] text-hrs-orange mb-1">
+            {submission?.revisionNo > 1 ? `Amended Advice Record Submitted — Revision ${submission.revisionNo}` : 'Advice Record Submitted'}
+          </h2>
           <p className="text-[0.82rem] opacity-80 leading-relaxed">
             Record for <strong>{fullName}</strong> submitted. Complete the checklist and download or send for signature below.
           </p>
+          {submission?.revisionNo > 1 && (
+            <p className="text-[0.78rem] opacity-80 leading-relaxed mt-1">
+              This revision replaces Revision {submission.revisionNo - 1}, which is kept unchanged. If that revision is still
+              awaiting signature, its signature request is cancelled automatically only when you send this one.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2 mt-4">
             <button type="button" onClick={() => navigate('/')} className="px-3 py-2 rounded-md border border-white/30 bg-white/10 text-[0.76rem] font-semibold hover:bg-white/20">
               Back to Home
@@ -287,7 +295,12 @@ export default function StepChecklist({ data, submission, onSubmissionUpdate, on
           ✓ CRM synced successfully
         </div>
       )}
-      {crm.status === 'failed' && (
+      {crm.status === 'failed' && isCrmSyncDeferred(crm.result?.error) && (
+        <div className="mt-3 bg-hrs-blue/5 border border-hrs-border rounded-lg px-4 py-2.5 text-[0.8rem] text-hrs-blue2">
+          {describeCrmSyncError(crm.result.error)}
+        </div>
+      )}
+      {crm.status === 'failed' && !isCrmSyncDeferred(crm.result?.error) && (
         <div className="mt-3 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3">
           <p className="text-[0.82rem] font-semibold text-amber-800">The ROA was processed, but the CRM record could not be updated.</p>
           {crm.result?.error && <p className="text-[0.76rem] text-amber-700 mt-0.5">{crm.result.error}</p>}

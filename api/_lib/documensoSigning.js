@@ -12,8 +12,11 @@ import {
   redistributeDocumensoEnvelope,
 } from './documensoClient.js';
 import {
+  applyProviderObservation,
   downloadPdf,
   ensurePdfStored,
+  loadSubmissionForBroker,
+  markSupersededVoided,
   releaseSigningReservation,
   reserveSigningSlot,
   setCompletionIfMissing,
@@ -28,7 +31,7 @@ import { reminderBlockReason, reminderCooldownSeconds } from '../../src/lib/sign
 const PROVIDER = 'documenso';
 const SEND_IN_FLIGHT_GRACE_MS = 60 * 1000;
 
-function reservationMayStillBeInFlight(sentForSignatureAt) {
+export function reservationMayStillBeInFlight(sentForSignatureAt) {
   const sentAt = Date.parse(sentForSignatureAt || '');
   if (!Number.isFinite(sentAt)) return false;
   const age = Date.now() - sentAt;
@@ -245,12 +248,51 @@ export async function sendViaDocumenso({
   };
 }
 
+/**
+ * A provider 404 is NOT, on its own, a cancellation: it is also what a wrong environment, a
+ * deletion done by someone else, or a completed request that was soft-deleted looks like.
+ * It is accepted as "our own cancellation succeeded" only when the provider ACKNOWLEDGED the
+ * delete we sent (a 2xx, persisted in signing_meta.supersession.deleteAcknowledgedAt) for the
+ * replacement that really supersedes this row. An intent to cancel is not enough: it is
+ * written before the delete is sent, so it proves nothing about what the provider did.
+ */
+export function providerAcknowledgedOurDelete(row) {
+  const state = row?.signing_meta?.supersession;
+  return Boolean(
+    state?.deleteAcknowledgedAt
+    && row.superseded_by_submission_id
+    && state.replacementId === row.superseded_by_submission_id,
+  );
+}
+
 export async function refreshViaDocumenso({ submissionId, row, broker }) {
   if (!row.signing_envelope_id) {
     return { refreshed: false, row };
   }
 
-  const observed = await getDocumensoEnvelopeStatus(row.signing_envelope_id);
+  let observed;
+  try {
+    observed = await getDocumensoEnvelopeStatus(row.signing_envelope_id);
+  } catch (err) {
+    if (err?.status === 404 && providerAcknowledgedOurDelete(row)) {
+      const supersession = {
+        ...row.signing_meta.supersession,
+        cancelledAt: new Date().toISOString(),
+        verifiedBy: 'not_found_after_acknowledged_delete',
+      };
+      const voided = await markSupersededVoided(
+        submissionId,
+        broker,
+        { ...row.signing_meta, supersession },
+        row.superseded_by_submission_id,
+      );
+      if (voided) return { refreshed: true, observedStatus: 'CANCELLED', evidenceErrors: [], row: voided };
+      // The row completed (or otherwise moved on) first: leave it exactly as it is.
+      const latest = (await loadSubmissionForBroker(submissionId, broker)) || row;
+      return { refreshed: false, raceLost: true, evidenceErrors: [], row: latest };
+    }
+    throw err;
+  }
   const patch = {
     signing_status: observed.status.toLowerCase(),
   };
@@ -322,7 +364,22 @@ export async function refreshViaDocumenso({ submissionId, row, broker }) {
     }
   }
 
-  const updated = await updateSubmission(submissionId, patch);
+  // The observation above is already in the past. Apply it only if the row is still in a
+  // state it may legitimately move out of; otherwise someone else (a concurrent refresh, a
+  // webhook-style reconcile, a second tab) got there first and their result stands.
+  const updated = await applyProviderObservation(submissionId, broker, patch, {
+    completion: observed.status === 'COMPLETED',
+  });
+  if (!updated) {
+    const latest = (await loadSubmissionForBroker(submissionId, broker)) || row;
+    return {
+      refreshed: false,
+      raceLost: true,
+      observedStatus: observed.status,
+      evidenceErrors,
+      row: latest,
+    };
+  }
   return {
     refreshed: true,
     observedStatus: observed.status,
@@ -344,6 +401,9 @@ function reminderError(code, status, extra = {}) {
  * Eligibility is checked against the stored row first, then against the live provider state.
  */
 export async function sendReminderViaDocumenso({ submissionId, row }) {
+  // Never nudge a client to sign a request that is about to be (or has been) replaced.
+  if (row.superseded_by_submission_id) throw reminderError('submission_superseded', 409);
+
   const blocked = reminderBlockReason({
     provider: row.signing_provider,
     hasEnvelope: Boolean(row.signing_envelope_id),

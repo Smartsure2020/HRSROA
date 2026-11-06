@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { FS_SCAN_TIMEOUT_MS } from './testUtils/sourceTree.js';
 import {
   describeKey,
   evaluateAuthEnvironment,
@@ -338,5 +339,5 @@ describe('reconciliation script stays read-only and secret-safe', () => {
     expect(cli.status).toBe(2);
     expect(cli.stderr).toMatch(/environment, never on the command line/);
     expect(`${cli.stdout}${cli.stderr}`).not.toContain('super-secret-value');
-  });
+  }, FS_SCAN_TIMEOUT_MS); // launches two Node processes, which is slow with on-access antivirus
 });

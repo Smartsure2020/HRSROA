@@ -53,4 +53,11 @@ export const StoragePaths = Object.freeze({
   signed: (submissionId) => `${submissionId}/signed.pdf`,
   certificate: (submissionId) => `${submissionId}/certificate.pdf`,
   auditLog: (submissionId) => `${submissionId}/audit-log.pdf`,
+  // Provider audit log preserved before a partially signed request is withdrawn for an
+  // amendment. Distinct from `auditLog`, which only ever holds a completed request's log,
+  // so the two can never be confused or overwrite each other. The name carries the first
+  // 16 hex characters of the content hash: the provider regenerates this PDF on every
+  // download, so a fixed name would collide with the bytes of an earlier (interrupted)
+  // attempt, and storage never overwrites. Each distinct copy is kept; none is replaced.
+  supersededAuditLog: (submissionId, sha256) => `${submissionId}/superseded-audit-log-${String(sha256).slice(0, 16)}.pdf`,
 });
