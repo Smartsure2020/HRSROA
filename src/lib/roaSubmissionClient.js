@@ -8,6 +8,11 @@
 import { authHeader } from './apiAuth';
 import { isSubmissionId } from './roaSubmissionSnapshot';
 
+/**
+ * An Error that carries the server's machine-readable refusal alongside the message.
+ * @typedef {Error & { code?: string, data?: any }} RoaClientError
+ */
+
 async function postJson(url, body) {
   const res = await fetch(url, {
     method: 'POST',
@@ -17,6 +22,7 @@ async function postJson(url, body) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    /** @type {RoaClientError} */
     const err = new Error(data?.error || `${url} failed (${res.status})`);
     // Machine-readable detail so a screen can react to a specific refusal (for example an
     // amendment gate) without parsing the message.
@@ -52,6 +58,15 @@ function bytesToBase64(bytes) {
  * Freezes a submission. Pass `amendment` ({ supersedesSubmissionId, reason, reasonDetail })
  * to create the next REVISION of an existing ROA; the server derives the revision number,
  * lineage and amender itself.
+ *
+ * @param {{
+ *   submissionId: string,
+ *   roaType: string,
+ *   snapshot: any,
+ *   versions: any,
+ *   pdfBytes: Uint8Array,
+ *   amendment?: { supersedesSubmissionId: string, reason: string, reasonDetail: string | null },
+ * }} args
  */
 export async function createSubmission({ submissionId, roaType, snapshot, versions, pdfBytes, amendment }) {
   if (!isSubmissionId(submissionId)) throw new Error('createSubmission: invalid submissionId');
@@ -78,6 +93,7 @@ export async function getAmendmentSource(submissionId) {
   );
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    /** @type {RoaClientError} */
     const err = new Error(data?.error || `Amendment source failed (${res.status})`);
     err.code = data?.error || 'amendment_source_failed';
     throw err;

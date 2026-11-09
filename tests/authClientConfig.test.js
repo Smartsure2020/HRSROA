@@ -7,6 +7,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { FS_SCAN_TIMEOUT_MS, readCodeCached, readTextCached } from './testUtils/sourceTree.js';
 import {
   isCrmSessionHandoffEnabled,
   resolveAuthClientConfig,
@@ -252,9 +253,8 @@ describe('secrecy boundary: the browser holds no ROA data credentials', () => {
   const clientFiles = sourceFiles(fileURLToPath(new URL('src/', root)));
 
   // Full-line and block comments may legitimately describe what must NOT be here.
-  const code = (file) => readFileSync(file, 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+  // Files are read (and comment-stripped) once for the three scans below.
+  const code = readCodeCached;
 
   it('no browser source references a service-role key or a ROA_* server variable', () => {
     expect(clientFiles.length).toBeGreaterThan(50);
@@ -264,25 +264,25 @@ describe('secrecy boundary: the browser holds no ROA data credentials', () => {
       expect(source, file).not.toMatch(/ROA_SUPABASE/);
       expect(source, file).not.toMatch(/SUPABASE_SERVICE/);
     }
-  });
+  }, FS_SCAN_TIMEOUT_MS);
 
   it('the browser never queries the ROA database or storage directly', () => {
     for (const file of clientFiles) {
-      const source = readFileSync(file, 'utf8');
+      const source = readTextCached(file);
       expect(source, file).not.toMatch(/supabase\s*\.\s*from\s*\(/);
       expect(source, file).not.toMatch(/supabase\s*\.\s*storage/);
       expect(source, file).not.toMatch(/\.rpc\s*\(/);
     }
-  });
+  }, FS_SCAN_TIMEOUT_MS);
 
   it('the only Supabase client in the browser is the auth client built from authConfig', () => {
-    const creators = clientFiles.filter((file) => /createClient\s*\(/.test(readFileSync(file, 'utf8')));
+    const creators = clientFiles.filter((file) => /createClient\s*\(/.test(readTextCached(file)));
     expect(creators.map((f) => f.replace(/\\/g, '/').split('/src/')[1])).toEqual(['lib/supabaseClient.js']);
     const client = readFileSync(new URL('src/lib/supabaseClient.js', root), 'utf8');
     expect(client).toContain('resolveAuthClientConfig');
     // It delegates all env handling to authConfig rather than reading variables itself.
     expect(client).not.toContain('import.meta.env');
-  });
+  }, FS_SCAN_TIMEOUT_MS);
 
   it('.env.example documents the new variables without any service-role value', () => {
     const example = readFileSync(new URL('.env.example', root), 'utf8');
