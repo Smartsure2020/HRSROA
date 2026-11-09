@@ -12,7 +12,7 @@ describe('Personal and Commercial ROA acknowledgement layout', () => {
     const result = layoutAcknowledgement(doc, text, 180);
     expect(result.lines.length).toBeGreaterThan(1);
     expect(result.rowHeight).toBeGreaterThan(7);
-    expect(result.lines.join(' ').replace(/\\s+/g, ' ').trim()).toBe(text);
+    expect(result.lines.join(' ').replace(/\s+/g, ' ').trim()).toBe(text);
     for (const line of result.lines) {
       expect(doc.getTextWidth(line)).toBeLessThanOrEqual(result.availableWidth + 0.2);
     }
