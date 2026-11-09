@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf';
+import { layoutAcknowledgement } from './pdf/acknowledgementLayout';
 import { COMMERCIAL_RISK_CATEGORIES, COMMERCIAL_PRINCIPLES } from './hrsCommercialConstants';
 import logoUrl from '../assets/hrs-logo.png';
 import { HRS_COMPLIANCE_CONTENT, getStatutoryDisclosureEvidence } from './hrsComplianceContent';
@@ -204,7 +205,8 @@ class CommercialPDFBuilder {
 
   ackRow(label, checked, shade = false) {
     const d = this.doc;
-    const rh = 7;
+    // Reserve space for the complete acknowledgement, not just its first line.
+    const { lines, rowHeight: rh } = layoutAcknowledgement(d, label, CW);
     this._needSpace(rh);
     if (shade) d.setFillColor(...C.lightBg).rect(ML, this.cy, CW, rh, 'F');
     d.setDrawColor(...C.border); d.setLineWidth(0.2);
@@ -219,11 +221,12 @@ class CommercialPDFBuilder {
     const col = checked ? C.green : C.red;
     d.setFont('helvetica', 'bold'); d.setFontSize(7.2); d.setTextColor(...col);
     d.text(checked ? 'Acknowledged' : 'Not acknowledged', ML + 10, this.cy + 5);
-    d.setFont('helvetica', 'normal'); d.setTextColor(...C.black);
-    d.text(label, ML + 48, this.cy + 5);
+    d.setFont('helvetica', 'normal'); d.setFontSize(7.2); d.setTextColor(...C.black);
+    lines.forEach((line, i) => d.text(line, ML + 48, this.cy + 5 + i * 4.5));
     this.cy += rh;
   }
 
+  // Full-size lines are protected from the right margin by splitTextToSize.
   principleRow(number, text, checked, shade) {
     const d = this.doc;
     const lines = d.splitTextToSize(`${number}. ${text}`, CW - 20);
@@ -246,6 +249,8 @@ class CommercialPDFBuilder {
 
   disclosureBlock(title, bodyText, ackLabel, checked) {
     const d = this.doc;
+    // Text measurement and drawing must use the same font metrics.
+    d.setFont('helvetica', 'normal'); d.setFontSize(7);
     const allLines = d.splitTextToSize(bodyText, CW - 6);
     const bodyH = Math.max(10, allLines.length * 4.5 + 4);
     this._needSpace(Math.min(9 + bodyH + 7 + 2, 90));
