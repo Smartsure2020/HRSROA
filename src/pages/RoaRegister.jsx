@@ -23,6 +23,7 @@ import {
 } from '../lib/roaAmendment';
 import { describeSignatureSendError } from '../lib/signatureSendFeedback';
 import ManualResolutionNotice from '../components/hrs/ManualResolutionNotice';
+import FollowupSigning from '../components/hrs/FollowupSigning';
 import { describeCrmSyncError } from '../lib/crmAdapter';
 
 const FILTERS = [
@@ -98,6 +99,9 @@ export default function RoaRegister() {
   const [items, setItems] = useState([]);
   const [filter, setFilter] = useState('all');
   const [selected, setSelected] = useState(null);
+  const requestedSubmissionId = new URLSearchParams(window.location.search).get('submissionId');
+  const requestedAction = new URLSearchParams(window.location.search).get('action');
+  const deepLinkApplied = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [crmRetrying, setCrmRetrying] = useState(false);
@@ -132,6 +136,11 @@ export default function RoaRegister() {
   }, [applyItems]);
 
   useEffect(() => { load({ initial: true }); }, [load]);
+  useEffect(() => {
+    if (deepLinkApplied.current || !requestedSubmissionId || !items.length) return;
+    const target = items.find(item => item.submissionId === requestedSubmissionId);
+    if (target) { setSelected(target); deepLinkApplied.current = true; }
+  }, [items, requestedSubmissionId]);
   const hasPending = useMemo(() => items.some(isPendingSubmission), [items]);
   useEffect(() => {
     if (!hasPending) return undefined;
@@ -369,6 +378,11 @@ export default function RoaRegister() {
                 </button>
               )}
             </div>
+            <FollowupSigning
+              submissionId={selected.submissionId}
+              enabled={selected.status === 'completed' && selected.hasSignedPdf && selected.hasCertificate && (selected.signingProvider !== 'documenso' || selected.hasAuditLog)}
+              initialAction={selected.submissionId === requestedSubmissionId ? requestedAction : ''}
+            />
           </section>
         )}
       </main>

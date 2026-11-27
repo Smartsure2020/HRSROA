@@ -6,6 +6,7 @@ import AdviceRecord from './pages/AdviceRecord';
 import CommercialAdviceRecord from './pages/CommercialAdviceRecord';
 import Login from './pages/Login';
 import RoaRegister from './pages/RoaRegister';
+import BankingProof from './pages/BankingProof';
 import AmendRoa from './pages/AmendRoa';
 import ResetPassword from './pages/ResetPassword';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -36,6 +37,7 @@ function App() {
             {/* Password recovery must be reachable before sign-in: the emailed link
                 establishes its own short-lived recovery session. */}
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/banking-proof" element={<BankingProof />} />
             <Route
               path="*"
               element={(

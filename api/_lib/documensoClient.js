@@ -123,6 +123,61 @@ export async function createDocumensoEnvelope({
   return created.id;
 }
 
+/** A single-signer follow-up. Its externalId is the independent request UUID. */
+export async function createFollowupEnvelope({ request, pdfBytes, redirectUrl }) {
+  const { apiBase, apiToken } = getConfig();
+  const title = request.kind === 'schedule' ? 'Policy schedule' : 'Banking Details Confirmation';
+  const form = new FormData();
+  form.append('payload', JSON.stringify({
+    type: 'DOCUMENT', title: `${title} — ${request.id}`, externalId: request.id,
+    recipients: [{ email: request.signer_email, name: request.signer_name, role: 'SIGNER' }],
+    meta: {
+      subject: `Please sign your ${title} — HRS Insurance`,
+      message: `Please review and sign your ${title}.`,
+      distributionMethod: 'EMAIL', language: 'en',
+      typedSignatureEnabled: true, uploadSignatureEnabled: true,
+      drawSignatureEnabled: true,
+      ...(redirectUrl ? { redirectUrl } : {}),
+    },
+  }));
+  form.append('files', new Blob([pdfBytes], { type: 'application/pdf' }),
+    `${request.id}-${request.kind}.pdf`);
+  const response = await fetch(`${apiBase}/envelope/create`, {
+    method: 'POST', headers: { Authorization: apiToken, Accept: 'application/json' }, body: form,
+  });
+  if (!response.ok) throw await parseError(response);
+  const created = await response.json();
+  if (!created?.id) throw new Error('documenso_create_missing_id');
+  return created.id;
+}
+
+export async function addFollowupFields({ envelopeId, request }) {
+  const envelope = await getDocumensoEnvelope(envelopeId);
+  const recipientId = envelope?.recipients?.[0]?.id;
+  const envelopeItemId = envelope?.envelopeItems?.[0]?.id;
+  if (!recipientId || !envelopeItemId) throw new Error('documenso_followup_shape_invalid');
+  const expectedCount = request.kind === 'banking' ? 8 : 1;
+  const existingCount = (envelope?.fields || []).filter(field => field.recipientId === recipientId).length;
+  if (existingCount >= expectedCount) {
+    return envelopeItemId;
+  }
+  if (existingCount > 0) throw new Error('documenso_partial_fields_manual_review');
+  const { bankingFields } = await import('./followupDocuments.js');
+  const data = request.kind === 'banking'
+    ? bankingFields({ recipientId, envelopeItemId })
+    : [{
+      type: 'SIGNATURE', recipientId, envelopeItemId,
+      page: request.signature_page,
+      positionX: Number(request.signature_x), positionY: Number(request.signature_y),
+      width: 42, height: 7.5,
+      fieldMeta: { type: 'signature', required: true },
+    }];
+  await jsonRequest('/envelope/field/create-many', {
+    method: 'POST', body: JSON.stringify({ envelopeId, data }),
+  });
+  return envelopeItemId;
+}
+
 export async function getDocumensoEnvelope(envelopeId) {
   return jsonRequest(`/envelope/${encodeURIComponent(envelopeId)}`, { method: 'GET' });
 }
@@ -203,7 +258,7 @@ export async function addRoaSigningFields({ envelopeId, envelope }) {
   };
 }
 
-export async function distributeDocumensoEnvelope({ envelopeId, subject, message, brokerEmail }) {
+export async function distributeDocumensoEnvelope({ envelopeId, subject, message, brokerEmail, redirectUrl }) {
   return jsonRequest('/envelope/distribute', {
     method: 'POST',
     body: JSON.stringify({
@@ -213,6 +268,7 @@ export async function distributeDocumensoEnvelope({ envelopeId, subject, message
         message: message || 'Please review and sign your Record of Advice.',
         distributionMethod: 'EMAIL',
         emailReplyTo: brokerEmail,
+        ...(redirectUrl ? { redirectUrl } : {}),
       },
     }),
   });
