@@ -8,7 +8,14 @@
 
 import { requireAuthenticatedBroker } from './_lib/auth.js';
 
+export const config = { api: { bodyParser: { sizeLimit: '9mb' } } };
+
 export default async function handler(req, res) {
+  if (req.query?.operation === 'followup-proof') {
+    // Possession of the per-request token and a signed Documenso recipient is
+    // the public upload credential; the normal deprecated route stays broker-only.
+    return (await import('./_followups/proof.js')).default(req, res);
+  }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   // Auth is still checked so this endpoint cannot be used as an unauthenticated
   // probe against the deprecation contract.

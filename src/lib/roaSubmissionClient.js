@@ -166,6 +166,44 @@ export async function sendSignatureReminder(submissionId) {
   return postJson('/api/roa-submissions/send-reminder', { submissionId });
 }
 
+export async function listFollowupRequests(submissionId) {
+  const data = await getJson(`/api/send-for-signature?operation=followup-list&submissionId=${encodeURIComponent(submissionId)}`);
+  return data.requests || [];
+}
+
+export async function createFollowupRequest(payload) {
+  return postJson('/api/send-for-signature?operation=followup-create', payload);
+}
+
+export async function sendFollowupRequest(id) {
+  return postJson('/api/send-for-signature?operation=followup-send', { id });
+}
+
+export async function refreshFollowupRequest(id) {
+  return postJson('/api/send-for-signature?operation=followup-refresh', { id });
+}
+
+export async function remindFollowupRequest(id) {
+  return postJson('/api/send-for-signature?operation=followup-remind', { id });
+}
+
+export async function syncFollowupRequest(id) {
+  return postJson('/api/send-for-signature?operation=followup-sync-crm', { id });
+}
+
+export async function downloadFollowupEvidence(id, kind) {
+  const res = await fetch(`/api/send-for-signature?operation=followup-download&id=${encodeURIComponent(id)}&kind=${encodeURIComponent(kind)}`, {
+    headers: { ...(await authHeader()) }, cache: 'no-store',
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Download failed');
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `followup-${id}-${kind}.${kind === 'proof' ? (res.headers.get('content-type')?.includes('png') ? 'png' : res.headers.get('content-type')?.includes('jpeg') ? 'jpg' : 'pdf') : 'pdf'}`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 export async function sendNotificationEmail({ submissionId, to, subject, body }) {
   return postJson('/api/roa-submissions/notify-email', { submissionId, to, subject, body });
 }

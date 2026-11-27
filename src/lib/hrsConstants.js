@@ -23,18 +23,7 @@ export const RISK_CATEGORIES = [
 // compatibility with existing imports across the app.
 export { BROKER_EMAIL_MAP, DEFAULT_BROKER_EMAIL, EMAIL_TO_BROKER, MANAGER_NAME, ADVISORS, isHrsBrokerEmail } from './brokerDirectory';
 
-export const BANKS = [
-  "ABSA Bank",
-  "FNB (First National Bank)",
-  "Standard Bank",
-  "Nedbank",
-  "Capitec Bank",
-  "Investec",
-  "African Bank",
-  "Discovery Bank",
-  "TymeBank",
-  "Other",
-];
+export { BANKS } from './bankingChoices';
 
 export const DEDUCTION_DATES = [
   "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th",

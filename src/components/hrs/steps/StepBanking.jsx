@@ -5,6 +5,7 @@ import TextInput from "../TextInput";
 import SelectInput from "../SelectInput";
 import NavBar from "../NavBar";
 import { BANKS, DEDUCTION_DATES, INSURERS } from "../../../lib/hrsConstants";
+import { ACCOUNT_TYPES } from '../../../lib/bankingChoices';
 
 export default function StepBanking({ data, onChange, onNext, onPrev, nextLabel }) {
   const set = (key) => (val) => onChange({ ...data, [key]: val });
@@ -32,7 +33,7 @@ export default function StepBanking({ data, onChange, onNext, onPrev, nextLabel 
             <TextInput value={data.accountNumber} onChange={set("accountNumber")} placeholder="e.g. 1234567890" />
           </FormField>
           <FormField label="Account Type">
-            <SelectInput value={data.accountType} onChange={set("accountType")} options={["Cheque / Current Account", "Savings Account", "Transmission Account"]} />
+            <SelectInput value={data.accountType} onChange={set("accountType")} options={ACCOUNT_TYPES} />
           </FormField>
           <FormField label="Deduction Date">
             <SelectInput value={data.deductionDate} onChange={set("deductionDate")} options={DEDUCTION_DATES} placeholder="-- Select Day --" />
